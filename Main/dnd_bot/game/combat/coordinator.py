@@ -1170,7 +1170,7 @@ class CombatTurnCoordinator:
                     combatant_id=combatant.id,
                 ),
                 success=True,
-                description=f"{combatant.name} is caught off guard and cannot act!",
+                error=f"{combatant.name} is caught off guard and cannot act!",
             )
             results.append(surprised_result)
             await self.end_turn(combatant)

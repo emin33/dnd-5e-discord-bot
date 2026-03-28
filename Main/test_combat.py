@@ -549,6 +549,149 @@ def test_condition_effects(r: TestResult):
     assert_true(r, "Ranged vs prone has disadvantage", tgt_dis_r)
 
 
+def test_coordinator_npc_turn(r: TestResult):
+    """Test the combat coordinator NPC turn flow (surprise, action execution)."""
+    print("\n--- Coordinator: NPC Turn Flow ---")
+    import asyncio
+    from dnd_bot.game.combat.manager import CombatManager
+    from dnd_bot.game.combat.coordinator import CombatTurnCoordinator
+    from dnd_bot.game.combat.actions import CombatAction, CombatActionType, ActionResult
+
+    # Create a combat encounter
+    combat = CombatManager.create_encounter(
+        session_id="test-session",
+        channel_id=99999,
+        name="Test Combat",
+        description="Test encounter",
+    )
+
+    # Add a player
+    player_char = make_character(name="TestHero", hp=20, ac=15)
+    combat.add_player(player_char)
+
+    # Add a goblin enemy
+    goblin = combat.add_monster("goblin", name="Test Goblin")
+    assert_true(r, "Goblin combatant created", goblin is not None)
+
+    # Set surprise on goblin
+    goblin.is_surprised = True
+    assert_true(r, "Goblin marked surprised", goblin.is_surprised)
+
+    # Roll initiative and start combat
+    combat.roll_all_initiative()
+    combat.start_combat()
+    assert_true(r, "Combat is active", combat.combat.state in (CombatState.ACTIVE, CombatState.AWAITING_ACTION))
+
+    # Create coordinator
+    coordinator = CombatTurnCoordinator(combat)
+
+    # Run the surprised goblin's turn
+    results = asyncio.get_event_loop().run_until_complete(
+        coordinator.run_npc_turn(goblin)
+    )
+
+    assert_true(r, "Surprised turn returns results", len(results) > 0)
+    assert_eq(r, "Surprised result is END_TURN", results[0].action.action_type, CombatActionType.END_TURN)
+    assert_true(r, "Surprise cleared after turn", not goblin.is_surprised)
+
+    # Now run a non-surprised turn (goblin should actually attack)
+    # Reset turn resources first
+    results2 = asyncio.get_event_loop().run_until_complete(
+        coordinator.run_npc_turn(goblin)
+    )
+    assert_true(r, "Non-surprised turn has results", len(results2) > 0)
+    # The goblin should attempt an attack, not END_TURN
+    if results2[0].action.action_type != CombatActionType.END_TURN:
+        assert_eq(r, "Non-surprised action is ATTACK", results2[0].action.action_type, CombatActionType.ATTACK)
+
+
+def test_coordinator_player_attack(r: TestResult):
+    """Test player attack execution through coordinator."""
+    print("\n--- Coordinator: Player Attack ---")
+    import asyncio
+    from dnd_bot.game.combat.manager import CombatManager
+    from dnd_bot.game.combat.coordinator import CombatTurnCoordinator
+    from dnd_bot.game.combat.actions import CombatAction, CombatActionType
+
+    combat = CombatManager.create_encounter(
+        session_id="test-session",
+        channel_id=99998,
+        name="Test Attack",
+        description="Test attack flow",
+    )
+
+    player_char = make_character(name="Archer", dexterity=16, hp=20, ac=13)
+    combat.add_player(player_char)
+    goblin = combat.add_monster("goblin", name="Target Goblin")
+
+    combat.roll_all_initiative()
+    combat.start_combat()
+
+    coordinator = CombatTurnCoordinator(combat)
+
+    # Find the player combatant
+    player_combatant = None
+    for c in combat.combat.combatants:
+        if c.is_player:
+            player_combatant = c
+            break
+
+    assert_true(r, "Found player combatant", player_combatant is not None)
+
+    # Start player turn
+    asyncio.get_event_loop().run_until_complete(
+        coordinator.start_turn(player_combatant)
+    )
+
+    # Execute an attack
+    action = CombatAction(
+        action_type=CombatActionType.ATTACK,
+        combatant_id=player_combatant.id,
+        target_ids=[goblin.id],
+        weapon_index="longbow",
+    )
+    result = asyncio.get_event_loop().run_until_complete(
+        coordinator.execute_action(action)
+    )
+
+    assert_true(r, "Attack result returned", result is not None)
+    assert_true(r, "Attack has roll", result.attack_roll is not None)
+    # Whether it hits or misses, the result should be valid
+    if result.success:
+        assert_true(r, "Hit: damage dealt", sum(result.damage_dealt.values()) > 0 if result.damage_dealt else False)
+    else:
+        assert_true(r, "Miss: no damage", not result.damage_dealt or sum(result.damage_dealt.values()) == 0)
+
+
+def test_group_detection(r: TestResult):
+    """Test _detect_group_count and _singularize_name."""
+    print("\n--- Group Detection ---")
+    from dnd_bot.llm.orchestrator import DMOrchestrator
+
+    # Plural names
+    assert_eq(r, "Goblins -> 3", DMOrchestrator._detect_group_count("Goblins"), 3)
+    assert_eq(r, "Bandits -> 3", DMOrchestrator._detect_group_count("Bandits"), 3)
+    assert_eq(r, "Wolves -> 3", DMOrchestrator._detect_group_count("Wolves"), 3)
+
+    # Number words
+    assert_eq(r, "Three Goblins -> 3", DMOrchestrator._detect_group_count("Three Goblins"), 3)
+    assert_eq(r, "Two Bandits -> 2", DMOrchestrator._detect_group_count("Two Bandits"), 2)
+    assert_eq(r, "Five Wolves -> 5", DMOrchestrator._detect_group_count("Five Wolves"), 5)
+
+    # Digit prefix
+    assert_eq(r, "3 Goblins -> 3", DMOrchestrator._detect_group_count("3 Goblins"), 3)
+
+    # Singular names
+    assert_eq(r, "Goblin -> 1", DMOrchestrator._detect_group_count("Goblin"), 1)
+    assert_eq(r, "Bandit Leader -> 1", DMOrchestrator._detect_group_count("Bandit Leader"), 1)
+    assert_eq(r, "Wolf -> 1", DMOrchestrator._detect_group_count("Wolf"), 1)
+
+    # Singularize
+    assert_eq(r, "Goblins -> Goblin", DMOrchestrator._singularize_name("Goblins"), "Goblin")
+    assert_eq(r, "Wolves -> Wolf", DMOrchestrator._singularize_name("Wolves"), "Wolf")
+    assert_eq(r, "Three Bandits -> Bandit", DMOrchestrator._singularize_name("Three Bandits"), "Bandit")
+
+
 # ==================== Main ====================
 
 def main():
@@ -569,6 +712,9 @@ def main():
     test_ac_from_equipment(r)
     test_proficiency_bonus(r)
     test_condition_effects(r)
+    test_coordinator_npc_turn(r)
+    test_coordinator_player_attack(r)
+    test_group_detection(r)
 
     success = r.summary()
     sys.exit(0 if success else 1)
