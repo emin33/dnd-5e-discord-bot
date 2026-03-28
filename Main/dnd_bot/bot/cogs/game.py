@@ -532,11 +532,15 @@ class GameCog(commands.Cog):
             result_embed = ActionResultEmbed.build(result)
             await channel.send(embed=result_embed)
 
-            # Narrate both hits and misses — misses deserve dramatic description too
+            # Narrate both hits and misses — use embed to match regular narration style
             try:
                 narrative = await coordinator.narrate_result(result)
                 if narrative:
-                    await channel.send(f"*{narrative}*")
+                    narr_embed = discord.Embed(
+                        description=narrative,
+                        color=discord.Color.dark_gold(),
+                    )
+                    await channel.send(embed=narr_embed)
             except Exception as e:
                 logger.warning("narration_failed", error=str(e))
 
@@ -568,8 +572,11 @@ class GameCog(commands.Cog):
                 next_msg = f"**Round {end_result.new_round}**\n{next_msg}"
             await channel.send(next_msg)
 
+            # Auto-run NPC turns instead of requiring slash commands
             if not end_result.next_is_player:
-                await channel.send("*(Run `/combat turn` to process NPC turns, or `/combat npc_turn` to run all NPC turns)*")
+                next_combatant = manager.combat.get_current_combatant()
+                if next_combatant:
+                    await self._auto_run_npc_turns(channel, coordinator, manager)
 
         view = CombatActionView(
             coordinator=coordinator,
@@ -583,6 +590,63 @@ class GameCog(commands.Cog):
             embed=view.get_embed(),
             view=view,
         )
+
+    async def _auto_run_npc_turns(
+        self,
+        channel: discord.TextChannel,
+        coordinator,
+        manager,
+    ) -> None:
+        """Auto-run all consecutive NPC turns, then show player UI."""
+        from ..embeds.combat_embed import build_combat_end_embed
+        from ...game.combat.manager import clear_combat_for_channel
+        from ...game.combat.coordinator import clear_coordinator
+
+        max_turns = 10  # Safety limit
+        turns_run = 0
+
+        while turns_run < max_turns:
+            current = manager.combat.get_current_combatant()
+            if not current or current.is_player:
+                break
+
+            turns_run += 1
+            await channel.send(f":skull: **{current.name}**'s turn...")
+
+            results = await coordinator.run_npc_turn(current)
+
+            for result in results:
+                result_embed = ActionResultEmbed.build(result)
+                await channel.send(embed=result_embed)
+
+                try:
+                    narrative = await coordinator.narrate_result(result)
+                    if narrative:
+                        narr_embed = discord.Embed(
+                            description=narrative,
+                            color=discord.Color.dark_gold(),
+                        )
+                        await channel.send(embed=narr_embed)
+                except Exception as e:
+                    logger.warning("narration_failed", error=str(e))
+
+            # Check combat end
+            if manager.combat.is_combat_over():
+                players_alive = any(
+                    c.is_player and c.hp_current > 0
+                    for c in manager.combat.combatants
+                )
+                end_embed = build_combat_end_embed(manager.combat, victory=players_alive)
+                await channel.send(embed=end_embed)
+                manager.end_combat()
+                clear_combat_for_channel(channel.id)
+                clear_coordinator(channel.id)
+                return
+
+        # After NPC turns, show player turn UI if it's a player's turn
+        current = manager.combat.get_current_combatant()
+        if current and current.is_player:
+            await self._show_player_turn_ui(channel, coordinator, manager, current)
 
     async def _show_combat_ui(self, channel: discord.TextChannel) -> None:
         """Show the combat UI after combat is auto-triggered from narrative."""

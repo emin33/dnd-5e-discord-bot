@@ -982,7 +982,8 @@ class CombatTurnManager:
                     try:
                         narrative = await self.coordinator.narrate_result(result)
                         if narrative:
-                            await self.channel.send(f"*{narrative}*")
+                            narr_embed = discord.Embed(description=narrative, color=discord.Color.dark_gold())
+                            await self.channel.send(embed=narr_embed)
                     except Exception:
                         pass
             except Exception as e:

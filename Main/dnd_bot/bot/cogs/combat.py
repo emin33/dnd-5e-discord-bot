@@ -1469,7 +1469,8 @@ class CombatCog(commands.Cog):
                 try:
                     narrative = await coordinator.narrate_result(result)
                     if narrative:
-                        await ctx.send(f"*{narrative}*")
+                        narr_embed = discord.Embed(description=narrative, color=discord.Color.dark_gold())
+                        await ctx.send(embed=narr_embed)
                 except Exception as e:
                     logger.warning("narration_failed", error=str(e))
 
@@ -1489,11 +1490,15 @@ class CombatCog(commands.Cog):
                 result_embed = ActionResultEmbed.build(result)
                 await ctx.send(embed=result_embed)
 
-                # Narrate both hits and misses
+                # Narrate both hits and misses — use embed for consistent formatting
                 try:
                     narrative = await coordinator.narrate_result(result)
                     if narrative:
-                        await ctx.send(f"*{narrative}*")
+                        narr_embed = discord.Embed(
+                            description=narrative,
+                            color=discord.Color.dark_gold(),
+                        )
+                        await ctx.send(embed=narr_embed)
                 except Exception as e:
                     logger.warning("narration_failed", error=str(e))
 
@@ -1585,7 +1590,8 @@ class CombatCog(commands.Cog):
                 try:
                     narrative = await coordinator.narrate_result(result)
                     if narrative:
-                        await ctx.send(f"*{narrative}*")
+                        narr_embed = discord.Embed(description=narrative, color=discord.Color.dark_gold())
+                        await ctx.send(embed=narr_embed)
                 except Exception as e:
                     logger.warning("narration_failed", error=str(e))
 

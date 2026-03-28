@@ -777,7 +777,14 @@ class DMOrchestrator:
             )
 
         except Exception as e:
-            logger.error("triage_failed", error=str(e))
+            import traceback
+            logger.error(
+                "triage_failed",
+                error=str(e),
+                traceback=traceback.format_exc(),
+                action=action[:100],
+            )
+            _write_debug_log("TRIAGE_ERROR", f"Action: {action}\nError: {str(e)}\n{traceback.format_exc()}")
             # Default to roleplay on triage failure
             return TriageResult(
                 action_type="roleplay",
