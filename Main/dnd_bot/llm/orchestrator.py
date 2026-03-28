@@ -13,7 +13,7 @@ import uuid
 from pydantic import BaseModel
 import structlog
 
-from .client import get_llm_client, OllamaClient
+from .client import get_llm_client, OllamaClient, _write_debug_log
 from .brains.base import BrainContext, BrainResult
 from .brains.narrator import NarratorBrain, MechanicalOutcome, get_narrator
 from .brains.adjudicator import EffectsAdjudicator, get_adjudicator
