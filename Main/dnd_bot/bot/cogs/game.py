@@ -518,6 +518,68 @@ class GameCog(commands.Cog):
 
         await ctx.respond(embed=embed)
 
+    async def _show_player_turn_ui(
+        self,
+        channel: discord.TextChannel,
+        coordinator,
+        manager,
+        combatant,
+    ) -> None:
+        """Show the player action UI for a combatant's turn."""
+        turn_ctx = await coordinator.start_turn(combatant)
+
+        async def on_action_complete(result):
+            result_embed = ActionResultEmbed.build(result)
+            await channel.send(embed=result_embed)
+
+            if result.success:
+                try:
+                    narrative = await coordinator.narrate_result(result)
+                    if narrative:
+                        await channel.send(f"*{narrative}*")
+                except Exception as e:
+                    logger.warning("narration_failed", error=str(e))
+
+            # Check combat end
+            if manager.combat.is_combat_over():
+                from ..embeds.combat_embed import build_combat_end_embed
+                from ...game.combat.manager import clear_combat_for_channel
+                from ...game.combat.coordinator import clear_coordinator
+
+                players_alive = any(
+                    c.is_player and c.hp_current > 0
+                    for c in manager.combat.combatants
+                )
+                end_embed = build_combat_end_embed(manager.combat, victory=players_alive)
+                await channel.send(embed=end_embed)
+                manager.end_combat()
+                clear_combat_for_channel(channel.id)
+                clear_coordinator(channel.id)
+
+        async def on_turn_end():
+            end_result = await coordinator.end_turn(combatant)
+
+            next_msg = f":arrow_right: **{end_result.next_combatant_name}**'s turn!"
+            if end_result.round_advanced:
+                next_msg = f"**Round {end_result.new_round}**\n{next_msg}"
+            await channel.send(next_msg)
+
+            if not end_result.next_is_player:
+                await channel.send("*(Run `/combat turn` to process NPC turns, or `/combat npc_turn` to run all NPC turns)*")
+
+        view = CombatActionView(
+            coordinator=coordinator,
+            turn_context=turn_ctx,
+            on_action_complete=on_action_complete,
+            on_turn_end=on_turn_end,
+        )
+
+        await channel.send(
+            f":crossed_swords: **{combatant.name}**, it's your turn!",
+            embed=view.get_embed(),
+            view=view,
+        )
+
     async def _show_combat_ui(self, channel: discord.TextChannel) -> None:
         """Show the combat UI after combat is auto-triggered from narrative."""
         manager = get_combat_for_channel(channel.id)
@@ -535,119 +597,29 @@ class GameCog(commands.Cog):
         if not current:
             return
 
-        if current.is_player:
-            # Player's turn - show action UI with buttons
-            coordinator = get_coordinator(manager)
-            turn_ctx = await coordinator.start_turn(current)
+        coordinator = get_coordinator(manager)
 
-            async def on_action_complete(result):
-                result_embed = ActionResultEmbed.build(result)
-                await channel.send(embed=result_embed)
-
-                if result.success:
-                    try:
-                        narrative = await coordinator.narrate_result(result)
-                        if narrative:
-                            await channel.send(f"*{narrative}*")
-                    except Exception as e:
-                        logger.warning("narration_failed", error=str(e))
-
-                # Check combat end
-                if manager.combat.is_combat_over():
-                    from ..embeds.combat_embed import build_combat_end_embed
-                    from ...game.combat.manager import clear_combat_for_channel
-                    from ...game.combat.coordinator import clear_coordinator
-
-                    players_alive = any(
-                        c.is_player and c.hp_current > 0
-                        for c in manager.combat.combatants
-                    )
-                    end_embed = build_combat_end_embed(manager.combat, victory=players_alive)
-                    await channel.send(embed=end_embed)
-                    manager.end_combat()
-                    clear_combat_for_channel(channel.id)
-                    clear_coordinator(channel.id)
-
-            async def on_turn_end():
-                end_result = await coordinator.end_turn(current)
-
-                next_msg = f":arrow_right: **{end_result.next_combatant_name}**'s turn!"
-                if end_result.round_advanced:
-                    next_msg = f"**Round {end_result.new_round}**\n{next_msg}"
-                await channel.send(next_msg)
-
-                if not end_result.next_is_player:
-                    await channel.send("*(Run `/combat turn` to process NPC turns, or `/combat npc_turn` to run all NPC turns)*")
-
-            view = CombatActionView(
-                coordinator=coordinator,
-                turn_context=turn_ctx,
-                on_action_complete=on_action_complete,
-                on_turn_end=on_turn_end,
-            )
-
+        # Auto-skip surprised NPCs — they can't act but their turn must be processed
+        while current and not current.is_player and current.is_surprised:
             await channel.send(
-                f":crossed_swords: **{current.name}**, it's your turn!",
-                embed=view.get_embed(),
-                view=view,
+                f":dizzy_face: **{current.name}** is surprised and cannot act!"
             )
-        else:
-            # NPC goes first - show button to run NPC turns
-            coordinator = get_coordinator(manager)
+            await coordinator.start_turn(current)
+            await coordinator.end_turn(current)
+            current = manager.combat.get_current_combatant()
 
+        if not current:
+            return
+
+        if current.is_player:
+            await self._show_player_turn_ui(channel, coordinator, manager, current)
+        else:
+            # Non-surprised NPC goes first — show button to run NPC turns
             async def on_npc_turns_complete():
-                # After NPC turns, show player turn UI if applicable
                 next_combatant = manager.combat.get_current_combatant()
                 if next_combatant and next_combatant.is_player:
-                    # Show player action buttons
-                    turn_ctx = await coordinator.start_turn(next_combatant)
-
-                    async def on_action_complete(result):
-                        result_embed = ActionResultEmbed.build(result)
-                        await channel.send(embed=result_embed)
-
-                        if result.success:
-                            try:
-                                narrative = await coordinator.narrate_result(result)
-                                if narrative:
-                                    await channel.send(f"*{narrative}*")
-                            except Exception as e:
-                                logger.warning("narration_failed", error=str(e))
-
-                        if manager.combat.is_combat_over():
-                            from ..embeds.combat_embed import build_combat_end_embed
-                            from ...game.combat.manager import clear_combat_for_channel
-                            from ...game.combat.coordinator import clear_coordinator
-
-                            players_alive = any(
-                                c.is_player and c.hp_current > 0
-                                for c in manager.combat.combatants
-                            )
-                            end_embed = build_combat_end_embed(manager.combat, victory=players_alive)
-                            await channel.send(embed=end_embed)
-                            manager.end_combat()
-                            clear_combat_for_channel(channel.id)
-                            clear_coordinator(channel.id)
-
-                    async def on_turn_end():
-                        end_result = await coordinator.end_turn(next_combatant)
-
-                        next_msg = f":arrow_right: **{end_result.next_combatant_name}**'s turn!"
-                        if end_result.round_advanced:
-                            next_msg = f"**Round {end_result.new_round}**\n{next_msg}"
-                        await channel.send(next_msg)
-
-                    view = CombatActionView(
-                        coordinator=coordinator,
-                        turn_context=turn_ctx,
-                        on_action_complete=on_action_complete,
-                        on_turn_end=on_turn_end,
-                    )
-
-                    await channel.send(
-                        f":crossed_swords: **{next_combatant.name}**, it's your turn!",
-                        embed=view.get_embed(),
-                        view=view,
+                    await self._show_player_turn_ui(
+                        channel, coordinator, manager, next_combatant
                     )
 
             npc_view = NPCTurnView(

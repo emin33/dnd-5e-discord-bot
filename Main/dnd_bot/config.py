@@ -20,7 +20,7 @@ class Settings(BaseSettings):
 
     # Ollama
     ollama_host: str = "http://localhost:11434"
-    ollama_model: str = "qwen3:30b"
+    ollama_model: str = "qwen3:14b"
 
     # LLM Temperature
     narrator_temperature: float = 0.75

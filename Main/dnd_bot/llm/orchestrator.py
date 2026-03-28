@@ -100,14 +100,24 @@ Before deciding needs_roll, ask these questions:
 
 ## WHEN NOT TO ROLL — IMPORTANT
 
-- Trivial actions anyone could do (open door, walk across room)
-- No meaningful failure consequence AND no specialized knowledge needed
-- Observing OBVIOUS things (seeing a door exists, noticing a person is present)
+A real DM never asks for a roll unless failure would be INTERESTING. Ask yourself:
+- "If they fail, does anything change?" If no → don't roll, just narrate success.
+- "Could they just try again with no consequence?" If yes → don't roll, auto-succeed.
+- "Is this a routine task for an adventurer?" If yes → don't roll.
+
+Specific NO-ROLL situations:
+- Trivial actions anyone could do (open door, walk across room, step closer, pick up item)
+- Simple physical movement (walking, stepping forward, approaching something visible)
+- Observing OBVIOUS things (seeing a door, noticing a person, looking at something in plain sight)
 - Information the character would automatically know (common knowledge for their background)
 - Scanning a room for VISIBLE people or objects (they're in plain sight!)
 - Looking around when there is nothing hidden or concealed
+- Routine tasks with unlimited time and no pressure (setting up camp, lighting a fire normally)
+- Actions where the player is just adding narrative flair (no extra roll for a cool description)
 
-**CRITICAL: "I look around" / "I scan the room" / "I check who is here" in a safe, populated location = NO ROLL. The people are visible. Only roll Perception if something is actively hidden, concealed, or the environment is dangerous/obscured.**
+**CRITICAL: "I look around" / "I scan the room" / "I check who is here" / "I step closer" / "I approach" in a safe or explored location = NO ROLL. Only roll if something is actively hidden, the environment is dangerous, or specialized knowledge is needed.**
+
+**CRITICAL: Movement is NEVER a skill check.** "I step closer", "I walk to the well", "I approach the figure" = exploration or roleplay, NOT a skill check. Movement only requires a roll if the terrain itself is hazardous (climbing a cliff, crossing a tightrope, swimming rapids).
 
 ## ACTION TYPES
 
@@ -155,7 +165,23 @@ Before deciding needs_roll, ask these questions:
 - skill: The relevant skill (or "none" for raw ability check)
 - ability: dexterity, strength, wisdom, charisma, etc.
 - dc: 5=trivial, 10=easy, 15=moderate, 20=hard, 25=very hard, 30=nearly impossible
-- on_success/on_failure: What happens
+- on_success: What SPECIFICALLY the character discovers, achieves, or learns. Be concrete!
+- on_failure: What SPECIFICALLY happens on failure — what they miss, what goes wrong, or what consequence occurs. Never leave empty.
+
+on_success/on_failure are CRITICAL — the narrator uses these to know what to describe.
+Examples:
+- Perception check to scan for danger:
+  on_success: ["You spot movement in the treeline — two figures crouching behind brush"]
+  on_failure: ["The forest seems quiet and still — you notice nothing unusual"]
+- Investigation check on strange runes:
+  on_success: ["The runes are a warding spell, old but still active — touching them would be dangerous"]
+  on_failure: ["The symbols blur together — you can't make sense of the pattern"]
+- Athletics check to climb a cliff:
+  on_success: ["You find handholds and pull yourself up safely"]
+  on_failure: ["Your grip slips — you slide back down, taking 1d4 bludgeoning damage"]
+- Persuasion check on a guard:
+  on_success: ["The guard sighs and steps aside, waving you through"]
+  on_failure: ["The guard crosses his arms — 'Not happening. Move along.'"]
 
 ## RESOURCE CONSUMPTION
 
@@ -473,14 +499,11 @@ class DMOrchestrator:
             player=player_name,
         )
 
-        # Step 0: Check for player-initiated combat (attack before combat exists)
-        player_attack_triggered = await self._check_player_attack_initiation(action, context)
-        if player_attack_triggered:
-            # Combat was triggered by player attack - enemies are surprised
-            return DMResponse(
-                narrative="*Combat begins! Your sudden attack catches them off guard!*",
-                combat_triggered=True,
-            )
+        # Step 0: Removed pre-triage keyword-based attack check.
+        # It used fragile keyword matching + disposition filters that skipped friendly
+        # entities (e.g., player says "I attack the sailor" but sailor is friendly,
+        # so it grabbed the most hostile entity instead). The LLM triage below
+        # correctly classifies attacks with target_name and is_creature_target.
 
         # Step 1: Triage - classify the action
         triage = await self._triage_action(action, player_name, context)
@@ -1737,10 +1760,15 @@ Start with PROSE: immediately."""
             "content": (
                 "###INSTRUCTION###\n"
                 f"RESOLUTION: {narrator_context}\n\n"
-                "Narrate this outcome based on the resolution above.\n"
+                "Narrate this outcome. The RESOLUTION above is BINDING — your narration MUST reflect it:\n"
+                "- SUCCESS: The character accomplishes what they attempted. Describe what they discover/achieve.\n"
+                "- FAILURE: The character FAILS. They miss the clue, botch the climb, fail to persuade. "
+                "Show them struggling, missing, or being wrong. Do NOT describe a soft success.\n"
+                "- The MARGIN tells degree: critical success = exceptional result; narrow failure = almost but not quite; "
+                "critical failure = embarrassing or dangerous consequences.\n\n"
                 "Do NOT invent discoveries beyond what is authorized.\n\n"
-                "Remember your storytelling principles:\n"
-                "- Show the world's REACTION to the outcome\n"
+                "Storytelling principles:\n"
+                "- Show the world's REACTION to the success or failure\n"
                 "- Connect to ongoing tension or stakes\n"
                 "- End with forward momentum\n\n"
                 "Output ONLY these two blocks:\n"
@@ -1845,8 +1873,26 @@ Start with PROSE: immediately."""
 
         if resolution:
             outcome_word = "SUCCESS" if resolution.success else "FAILURE"
-            parts.append(f"Roll Result: {outcome_word}")
-            parts.append(f"The character {'succeeds' if resolution.success else 'fails'} at their attempt.")
+            skill_label = resolution.skill or resolution.ability or triage.action_type
+            parts.append(f"{skill_label.title()} Check: {outcome_word}")
+            parts.append(f"Rolled {resolution.total} vs DC {resolution.dc} (margin: {resolution.margin:+d})")
+
+            # Degree of success/failure affects narration
+            abs_margin = abs(resolution.margin)
+            if resolution.success:
+                if abs_margin >= 10:
+                    parts.append("CRITICAL SUCCESS — reveal everything clearly, with bonus detail")
+                elif abs_margin >= 5:
+                    parts.append("SOLID SUCCESS — reveal the information clearly")
+                else:
+                    parts.append("NARROW SUCCESS — reveal the basics, but incompletely")
+            else:
+                if abs_margin >= 10:
+                    parts.append("CRITICAL FAILURE — the character is completely wrong or oblivious, with consequences")
+                elif abs_margin >= 5:
+                    parts.append("CLEAR FAILURE — the character misses the mark, narrate what they fail to notice or accomplish")
+                else:
+                    parts.append("NARROW FAILURE — the character almost succeeds but falls short, hint at what they missed")
 
             if resolution.reveals:
                 parts.append(f"AUTHORIZED REVEALS (narrate ONLY these): {', '.join(resolution.reveals)}")
@@ -2062,13 +2108,11 @@ Start with PROSE: immediately."""
             return False
 
         # Look for a target entity mentioned in the action
+        # NOTE: Do NOT filter by disposition — if a player says "I attack the sailor"
+        # and the sailor is friendly, they should still be able to attack them. This is D&D.
         target_entity = None
         best_score = 0
         for entity in self._scene_registry.get_all_entities():
-            # Skip friendly entities
-            if entity.disposition in ("friendly", "ally"):
-                continue
-
             score = self._entity_name_match_score(entity, action_lower)
             if score > best_score:
                 best_score = score
@@ -2270,14 +2314,26 @@ Start with PROSE: immediately."""
         target_entity = self._scene_registry.get_by_name(target_name)
 
         if not target_entity:
-            # Fuzzy match using scoring
+            # Fuzzy match using scoring — require minimum threshold of 30
+            # to avoid grabbing the wrong entity on weak partial matches
             target_lower = target_name.lower()
             best_score = 0
+            best_candidate = None
             for entity in self._scene_registry.get_all_entities():
                 score = self._entity_name_match_score(entity, target_lower)
                 if score > best_score:
                     best_score = score
-                    target_entity = entity
+                    best_candidate = entity
+
+            if best_candidate and best_score >= 30:
+                target_entity = best_candidate
+            elif best_candidate:
+                logger.debug(
+                    "fuzzy_match_below_threshold",
+                    target=target_name,
+                    best_match=best_candidate.name,
+                    score=best_score,
+                )
 
         if not target_entity:
             logger.debug(
@@ -2355,7 +2411,7 @@ Start with PROSE: immediately."""
             # Create combat encounter
             description = f"Combat erupts with {', '.join(hostile_names)}!"
             if player_initiated:
-                description = f"You strike first! {description}"
+                description = f"Your surprise attack catches them off guard! {description}"
 
             combat = CombatManager.create_encounter(
                 session_id=self._current_session.id,

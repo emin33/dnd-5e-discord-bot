@@ -1158,8 +1158,24 @@ class CombatTurnCoordinator:
         brain = get_npc_brain()
         results = []
 
-        # Start the turn
+        # Start the turn (applies surprise: sets action=False if surprised)
         await self.start_turn(combatant)
+
+        # If surprised, skip action phase with informative feedback
+        if combatant.is_surprised:
+            logger.info("npc_turn_surprised_skip", combatant=combatant.name)
+            surprised_result = ActionResult(
+                action=CombatAction(
+                    action_type=CombatActionType.END_TURN,
+                    combatant_id=combatant.id,
+                    combatant_name=combatant.name,
+                ),
+                success=True,
+                description=f"{combatant.name} is caught off guard and cannot act!",
+            )
+            results.append(surprised_result)
+            await self.end_turn(combatant)
+            return results
 
         # Roll recharge for any used abilities
         recharged = brain.roll_recharge(combatant)

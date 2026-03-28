@@ -116,6 +116,37 @@ You MUST respect the party's power level when introducing threats:
 - Do NOT describe armies, swarms, or overwhelming forces as direct combatants. These can be narrative backdrop but not actual threats that enter combat.
 - Magical effects, environmental hazards, and spell effects are FLAVOR — do not describe them as creatures that would enter combat (e.g., "writhing vines" or "shadow tendrils" are atmosphere, not monsters).
 
+## NARRATING MECHANICAL RESULTS (from [RESOLUTION: ...])
+
+When you receive a [RESOLUTION], it is BINDING. Your narration MUST reflect the outcome.
+
+**Degrees of Success (how WELL they succeeded):**
+- CRITICAL SUCCESS (beat DC by 10+): Exceptional result. Reveal everything plus bonus detail. The character looks masterful.
+- SOLID SUCCESS (beat DC by 5-9): Clear success. Reveal the information/outcome fully.
+- NARROW SUCCESS (beat DC by 1-4): Barely made it. Reveal the basics but incompletely — partial information, success with a minor cost or complication.
+
+**Degrees of Failure (how BADLY they failed):**
+- NARROW FAILURE (missed DC by 1-4): Almost succeeded. Hint at what they missed — "something feels off but you can't place it." Consider "success at a cost" — they get what they wanted but with a complication.
+- CLEAR FAILURE (missed DC by 5-9): They clearly fail. Describe what they miss, botch, or get wrong. The world responds to their failure.
+- CRITICAL FAILURE (missed DC by 10+): Embarrassing or dangerous. Consequences beyond just "nothing happens" — they alert enemies, break a tool, draw unwanted attention, misidentify something.
+
+**IMPORTANT: Failure is NOT "nothing happens."** A good DM makes failure interesting:
+- Perception failure: You don't just "see nothing" — you feel confident the area is safe (false confidence), or you're distracted by something else
+- Athletics failure: You don't just "fail to climb" — your handhold crumbles, you slide back, you pull a muscle
+- Persuasion failure: The NPC doesn't just say no — they get annoyed, suspicious, or raise their price
+- Investigation failure: You misread the clue, waste time on a red herring, or overlook the obvious
+
+**AUTHORIZED REVEALS** limit what you can describe about the outcome. Do NOT invent discoveries or information beyond what is listed.
+
+## NARRATING COMBAT
+
+When narrating attacks, hits, and misses:
+- **Hits**: Describe the attack vividly. Consider how much damage was dealt — a 2-damage hit is a scratch, a 15-damage hit is devastating. Reference the weapon and fighting style.
+- **Misses**: Make misses interesting, not boring. WHY did it miss? If the target has a shield and the roll barely missed, the shield blocked it. If it missed by a lot, the attacker overextended or the target dodged easily.
+- **Critical hits**: Describe with extra drama — the blow finds a gap in armor, strikes a vital spot, or sends the target reeling.
+- **Killing blows**: Build to a dramatic finish. The creature staggers, collapses, or is sent flying.
+- **Monster personality**: An ogre swings clumsily, a duelist strikes precisely, an undead is unfazed by wounds.
+
 ## CRITICAL RULES
 
 1. **If you describe it, intent it** - If your prose introduces an object, NPC, offer, or hazard, add the matching intent.
@@ -282,12 +313,15 @@ class NarratorBrain(Brain):
 
         messages = self._build_messages(enhanced_context)
 
-        # Add instruction for narrating the outcome
+        # Add instruction for narrating the outcome — explicitly tell the model
+        # NOT to use PROSE:/INTENTS: format (it follows the main system prompt otherwise)
         messages.append({
             "role": "system",
             "content": (
                 "Narrate the mechanical result above in a dramatic, engaging way. "
-                "Do NOT change or add to the mechanical outcome - just describe it vividly."
+                "Do NOT change or add to the mechanical outcome - just describe it vividly. "
+                "Output ONLY the narrative prose directly. Do NOT use PROSE:/INTENTS: "
+                "format headers or code blocks. Just write the narrative."
             ),
         })
 
@@ -300,18 +334,32 @@ class NarratorBrain(Brain):
 
         result = self._parse_response(response)
 
-        # Strip PROSE/INTENTS format if the model used it (combat narration doesn't need intents)
+        # Strip PROSE/INTENTS format if the model used it despite instructions
         if result.content:
-            content = result.content.strip()
-            # Remove "PROSE:" prefix (with optional whitespace/newline after colon)
             import re
-            prose_match = re.match(r'^PROSE\s*:\s*', content, re.IGNORECASE)
-            if prose_match:
-                content = content[prose_match.end():].strip()
+            content = result.content.strip()
+
+            # Strip code fence wrappers first (```...```)
+            # The model sometimes wraps the entire output in triple backticks
+            code_fence = re.match(r'^```\w*\s*\n?(.*?)```\s*$', content, re.DOTALL)
+            if code_fence:
+                content = code_fence.group(1).strip()
+
+            # Remove PROSE: prefix in various formats:
+            # PROSE:, **PROSE:**, ## PROSE:, **PROSE:**
+            content = re.sub(
+                r'^(?:#{1,3}\s*)?(?:\*{1,2})?PROSE(?:\*{1,2})?\s*:?\s*(?:\*{1,2})?\s*',
+                '',
+                content,
+                count=1,
+                flags=re.IGNORECASE,
+            ).strip()
+
             # Remove INTENTS block if present (everything from INTENTS: onward)
-            intents_match = re.search(r'\n\s*INTENTS\s*:', content, re.IGNORECASE)
+            intents_match = re.search(r'\n\s*(?:\*{1,2})?INTENTS(?:\*{1,2})?\s*:', content, re.IGNORECASE)
             if intents_match:
                 content = content[:intents_match.start()].strip()
+
             result.content = content
 
         # Validate non-empty response
