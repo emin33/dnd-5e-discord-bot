@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environment
+venv/
+.venv/
+
+# Environment variables
+.env
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Claude Code
+.claude/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Generated docs / clutter
+AUDIT_REPORT.md
+TODO.md
+docs/
+
+# Test artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Test/debug logs
+data/test_logs/
+data/test_output.txt
+data/test_run.log
+data/test_combat_flow.txt
+data/test_tavern.txt
+data/llm_debug.log

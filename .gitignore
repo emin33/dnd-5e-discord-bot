@@ -1,0 +1,59 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environment
+venv/
+.venv/
+
+# Environment variables
+.env
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Claude Code
+.claude/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Third-party repos (have their own .git)
+5e-database/
+5e-srd-api/
+
+# Reference / research material
+Docs/
+Third Party Approach Reference/
+
+# Generated docs / clutter
+AUDIT_REPORT.md
+TODO.md
+Main/docs/
+
+# Test artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Test/debug logs
+Main/data/test_logs/
+Main/data/test_output.txt
+Main/data/test_run.log
+Main/data/test_combat_flow.txt
+Main/data/test_tavern.txt
+Main/data/llm_debug.log
