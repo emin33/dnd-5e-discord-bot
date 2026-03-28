@@ -9,6 +9,7 @@ from ...game.session import get_session_manager, SessionState
 from ...data.repositories import get_character_repo, get_campaign_repo
 from ...game.combat.manager import get_combat_for_channel
 from ...game.combat.coordinator import get_coordinator
+from ...game.combat.actions import CombatActionType
 from ..embeds.combat_embed import build_combat_tracker_embed, build_combat_start_embed
 from ..views.campaign_lobby import get_active_campaign_id
 from ..views.combat_actions import CombatActionView, ActionResultEmbed, NPCTurnView
@@ -613,11 +614,25 @@ class GameCog(commands.Cog):
             turns_run += 1
             await channel.send(f":skull: **{current.name}**'s turn...")
 
-            results = await coordinator.run_npc_turn(current)
+            try:
+                results = await coordinator.run_npc_turn(current)
+            except Exception as e:
+                logger.error("npc_turn_failed", combatant=current.name, error=str(e))
+                await channel.send(f"*{current.name} hesitates...* (Error: {str(e)[:80]})")
+                # Force end turn to prevent stuck combat
+                try:
+                    await coordinator.end_turn(current)
+                except Exception:
+                    pass
+                continue
 
             for result in results:
                 result_embed = ActionResultEmbed.build(result)
                 await channel.send(embed=result_embed)
+
+                # Skip narration for END_TURN actions (surprised NPCs, etc.)
+                if result.action.action_type == CombatActionType.END_TURN:
+                    continue
 
                 try:
                     narrative = await coordinator.narrate_result(result)
