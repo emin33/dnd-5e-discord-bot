@@ -18,9 +18,16 @@ class Settings(BaseSettings):
     # Discord
     discord_bot_token: str
 
-    # Ollama
+    # LLM Provider: "ollama" for local, "groq" for Groq cloud API
+    llm_provider: str = "ollama"
+
+    # Ollama (local)
     ollama_host: str = "http://localhost:11434"
     ollama_model: str = "qwen3:14b"
+
+    # Groq (cloud)
+    groq_api_key: str = ""
+    groq_model: str = "qwen/qwen3-32b"
 
     # LLM Temperature
     narrator_temperature: float = 0.75

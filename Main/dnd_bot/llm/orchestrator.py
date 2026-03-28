@@ -2291,6 +2291,54 @@ Start with PROSE: immediately."""
 
         return None
 
+    @staticmethod
+    def _detect_group_count(name: str) -> int:
+        """Detect if an entity name represents a group and return the count.
+
+        Returns 1 for singular entities, >1 for groups.
+        Examples: "Goblins" → 3, "Three Bandits" → 3, "Goblin" → 1
+        """
+        import re
+        name_lower = name.lower().strip()
+
+        # Check for explicit number words
+        number_words = {
+            "two": 2, "three": 3, "four": 4, "five": 5, "six": 6,
+            "pair": 2, "couple": 2, "trio": 3,
+        }
+        for word, count in number_words.items():
+            if word in name_lower:
+                return count
+
+        # Check for digit prefix: "3 goblins"
+        digit_match = re.match(r'^(\d+)\s+', name_lower)
+        if digit_match:
+            return min(int(digit_match.group(1)), 6)  # Cap at 6
+
+        # Check for simple plural (ends in 's' but not 'ss')
+        # Common D&D creature names that are plural: goblins, bandits, wolves, skeletons
+        if name_lower.endswith('s') and not name_lower.endswith('ss'):
+            return 3  # Default group size for unnamed plurals
+
+        return 1
+
+    @staticmethod
+    def _singularize_name(name: str) -> str:
+        """Convert a plural group name to singular for individual combatants."""
+        import re
+        # Strip number prefixes: "Three Goblins" → "Goblins", "3 Bandits" → "Bandits"
+        name = re.sub(r'^(?:two|three|four|five|six|pair|couple|trio|\d+)\s+', '', name, flags=re.IGNORECASE).strip()
+
+        # Basic singularize: "Goblins" → "Goblin", "Wolves" → "Wolf"
+        if name.lower().endswith('ves'):
+            return name[:-3] + 'f'  # wolves → wolf
+        if name.lower().endswith('ies'):
+            return name[:-3] + 'y'  # harpies → harpy
+        if name.lower().endswith('s') and not name.lower().endswith('ss'):
+            return name[:-1]
+
+        return name
+
     async def _initiate_combat_from_attack(
         self,
         target_name: Optional[str],
@@ -2433,6 +2481,31 @@ Start with PROSE: immediately."""
                 # If no monster_index, try fuzzy SRD lookup by name
                 if not monster_index:
                     monster_index = self._guess_monster_index(entity.name)
+
+                # Detect group entities (plural names like "Goblins", "Three Bandits")
+                # and spawn multiple individual combatants
+                count = self._detect_group_count(entity.name)
+                if count > 1:
+                    # Singular name for individual combatants
+                    singular = self._singularize_name(entity.name)
+                    for i in range(count):
+                        individual_name = f"{singular} {i + 1}" if count > 1 else singular
+                        ind_combatant = None
+                        if monster_index:
+                            try:
+                                ind_combatant = combat.add_monster(monster_index, name=individual_name)
+                            except Exception:
+                                pass
+                        if not ind_combatant:
+                            ind_combatant = combat.add_custom_combatant(
+                                name=individual_name,
+                                hp=entity.hp_estimate or 20,
+                                ac=entity.ac_estimate or 12,
+                                is_player=False,
+                            )
+                        if ind_combatant and player_initiated:
+                            ind_combatant.is_surprised = True
+                    continue  # Skip the single-combatant path below
 
                 if monster_index:
                     # CR cap: don't spawn monsters too strong for the party

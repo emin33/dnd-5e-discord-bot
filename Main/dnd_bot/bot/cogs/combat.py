@@ -1489,14 +1489,13 @@ class CombatCog(commands.Cog):
                 result_embed = ActionResultEmbed.build(result)
                 await ctx.send(embed=result_embed)
 
-                # Narrate if successful
-                if result.success:
-                    try:
-                        narrative = await coordinator.narrate_result(result)
-                        if narrative:
-                            await ctx.send(f"*{narrative}*")
-                    except Exception as e:
-                        logger.warning("narration_failed", error=str(e))
+                # Narrate both hits and misses
+                try:
+                    narrative = await coordinator.narrate_result(result)
+                    if narrative:
+                        await ctx.send(f"*{narrative}*")
+                except Exception as e:
+                    logger.warning("narration_failed", error=str(e))
 
                 # Check combat end
                 if manager.combat.is_combat_over():
@@ -1510,6 +1509,10 @@ class CombatCog(commands.Cog):
                     manager.end_combat()
                     clear_combat_for_channel(ctx.channel_id)
                     clear_coordinator(ctx.channel_id)
+                    return
+
+                # End turn and advance to next combatant
+                await on_turn_end()
 
             async def on_turn_end():
                 await self._sync_player_characters(manager)

@@ -13,6 +13,7 @@ dependencies = [
 
     # LLM
     "ollama>=0.4.0",
+    "groq>=0.25.0",
 
     # Data validation
     "pydantic>=2.9.0",

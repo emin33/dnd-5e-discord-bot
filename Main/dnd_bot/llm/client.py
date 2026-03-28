@@ -1,6 +1,7 @@
-"""Ollama LLM client wrapper."""
+"""LLM client wrappers — Ollama (local) and Groq (cloud API)."""
 
 import asyncio
+import re
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -65,6 +66,22 @@ class ToolCall:
     name: str
     arguments: dict[str, Any]
     id: str = ""
+
+
+def _clean_llm_content(content: str) -> str:
+    """Strip Qwen3 thinking tags and leaked CJK characters from LLM output."""
+    if "</think>" in content:
+        think_end = content.find("</think>")
+        content = content[think_end + len("</think>"):].strip()
+    elif "<think>" in content:
+        think_start = content.find("<think>")
+        before = content[:think_start].strip()
+        after = content[think_start + len("<think>"):].strip()
+        content = before if before else after
+
+    # Strip CJK characters that Qwen occasionally leaks
+    content = re.sub(r'[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef]+', '', content).strip()
+    return content
 
 
 class OllamaClient:
@@ -191,27 +208,7 @@ class OllamaClient:
                         "arguments": func.get("arguments", {}),
                     })
 
-            content = message.get("content", "")
-
-            # Strip Qwen3 thinking content if present
-            # Handle various cases: <think>...</think>, just </think>, or unclosed <think>
-            if "</think>" in content:
-                # Find the closing tag and take everything after it
-                think_end = content.find("</think>")
-                content = content[think_end + len("</think>"):].strip()
-            elif "<think>" in content:
-                # Opening tag but no closing — the model is likely still in thinking mode.
-                # Take content AFTER the think tag (the thinking IS the content),
-                # or if there's content before the tag, try that first.
-                think_start = content.find("<think>")
-                before = content[:think_start].strip()
-                after = content[think_start + len("<think>"):].strip()
-                # Prefer content before tag if it exists, else take after
-                content = before if before else after
-
-            # Strip CJK characters that Qwen occasionally leaks
-            import re
-            content = re.sub(r'[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef]+', '', content).strip()
+            content = _clean_llm_content(message.get("content", ""))
 
             return LLMResponse(
                 content=content,
@@ -296,15 +293,159 @@ class OllamaClient:
         self._executor.shutdown(wait=False)
 
 
+class GroqClient:
+    """Async client for Groq cloud API (OpenAI-compatible)."""
+
+    def __init__(
+        self,
+        model: Optional[str] = None,
+        api_key: Optional[str] = None,
+    ):
+        try:
+            from groq import AsyncGroq
+        except ImportError:
+            raise ImportError(
+                "groq package required for Groq provider. Install with: pip install groq"
+            )
+
+        settings = get_settings()
+        self.model = model or settings.groq_model
+        self.timeout = settings.llm_timeout
+        key = api_key or settings.groq_api_key
+        if not key:
+            raise ValueError("GROQ_API_KEY must be set when using Groq provider")
+        self._client = AsyncGroq(api_key=key)
+
+    async def chat(
+        self,
+        messages: list[dict],
+        temperature: float = 0.7,
+        tools: Optional[list[dict]] = None,
+        max_tokens: Optional[int] = None,
+        json_mode: bool = False,
+        json_schema: Optional[dict] = None,
+        think: Optional[bool] = None,
+    ) -> LLMResponse:
+        """Send a chat request to Groq API. Same interface as OllamaClient."""
+        kwargs: dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": temperature,
+        }
+
+        if max_tokens:
+            kwargs["max_tokens"] = max_tokens
+
+        if tools:
+            kwargs["tools"] = tools
+
+        # JSON mode — Groq uses OpenAI-style response_format
+        if json_schema or json_mode:
+            kwargs["response_format"] = {"type": "json_object"}
+
+        # Thinking/reasoning mode for Qwen3 on Groq
+        if think is False:
+            # Disable thinking — hide reasoning entirely
+            kwargs["reasoning_format"] = "hidden"
+        elif think is True:
+            # Enable thinking — parse separately so it doesn't pollute content
+            kwargs["reasoning_format"] = "parsed"
+
+        try:
+            response = await asyncio.wait_for(
+                self._client.chat.completions.create(**kwargs),
+                timeout=self.timeout,
+            )
+
+            choice = response.choices[0] if response.choices else None
+            message = choice.message if choice else None
+
+            raw_content = message.content if message else ""
+            raw_thinking = getattr(message, "reasoning", None)
+
+            # Debug log
+            _write_debug_log(
+                "LLM_RESPONSE",
+                raw_content or "(empty)",
+                str(raw_thinking) if raw_thinking else None,
+            )
+
+            logger.info(
+                "groq_response",
+                content_length=len(raw_content) if raw_content else 0,
+                content_preview=(raw_content or "")[:200],
+                has_thinking=raw_thinking is not None,
+                model=response.model,
+            )
+
+            content = _clean_llm_content(raw_content or "")
+
+            # Extract tool calls
+            tool_calls = []
+            if message and message.tool_calls:
+                for tc in message.tool_calls:
+                    args = tc.function.arguments
+                    # Groq returns arguments as JSON string
+                    if isinstance(args, str):
+                        try:
+                            args = json.loads(args)
+                        except json.JSONDecodeError:
+                            args = {}
+                    tool_calls.append({
+                        "name": tc.function.name,
+                        "arguments": args,
+                    })
+
+            usage = response.usage
+            return LLMResponse(
+                content=content,
+                tool_calls=tool_calls,
+                model=response.model or self.model,
+                finish_reason=choice.finish_reason if choice else "",
+                prompt_tokens=usage.prompt_tokens if usage else 0,
+                completion_tokens=usage.completion_tokens if usage else 0,
+            )
+
+        except asyncio.TimeoutError:
+            logger.error("groq_chat_timeout", timeout=self.timeout, model=self.model)
+            raise TimeoutError(
+                f"Groq API call timed out after {self.timeout}s."
+            )
+        except Exception as e:
+            logger.error("groq_chat_error", error=str(e))
+            raise
+
+    async def is_available(self) -> bool:
+        """Check if Groq API is reachable."""
+        try:
+            await asyncio.wait_for(
+                self._client.models.list(),
+                timeout=10,
+            )
+            return True
+        except Exception:
+            return False
+
+    def close(self):
+        """No-op — async client cleans up automatically."""
+        pass
+
+
 # Global client instance
-_client: Optional[OllamaClient] = None
+_client = None
 
 
-def get_llm_client() -> OllamaClient:
-    """Get the global Ollama client."""
+def get_llm_client():
+    """Get the global LLM client based on configured provider."""
     global _client
     if _client is None:
-        _client = OllamaClient()
+        settings = get_settings()
+        if settings.llm_provider == "groq":
+            _client = GroqClient()
+            logger.info("llm_client_init", provider="groq", model=settings.groq_model)
+        else:
+            _client = OllamaClient()
+            logger.info("llm_client_init", provider="ollama", model=settings.ollama_model)
     return _client
 
 
