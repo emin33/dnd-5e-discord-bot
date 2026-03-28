@@ -352,10 +352,15 @@ class GroqClient:
             kwargs["reasoning_format"] = "parsed"
 
         try:
+            import time as _time
+            _t0 = _time.monotonic()
+
             response = await asyncio.wait_for(
                 self._client.chat.completions.create(**kwargs),
                 timeout=self.timeout,
             )
+
+            _elapsed = _time.monotonic() - _t0
 
             choice = response.choices[0] if response.choices else None
             message = choice.message if choice else None
@@ -363,9 +368,9 @@ class GroqClient:
             raw_content = message.content if message else ""
             raw_thinking = getattr(message, "reasoning", None)
 
-            # Debug log
+            # Debug log with timing
             _write_debug_log(
-                "LLM_RESPONSE",
+                f"LLM_RESPONSE (api={_elapsed:.1f}s, think={'yes' if raw_thinking else 'no'})",
                 raw_content or "(empty)",
                 str(raw_thinking) if raw_thinking else None,
             )

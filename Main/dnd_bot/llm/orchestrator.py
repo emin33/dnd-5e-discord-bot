@@ -1404,7 +1404,7 @@ Start with PROSE: immediately."""
                 messages=messages,
                 temperature=self.narrator.temperature,
                 max_tokens=8000,  # High limit for thinking models - thinking consumes tokens
-                think=True,  # Keep thinking in separate block, not main output
+                think=False,
             )
             raw_response = response.content.strip() if response.content else ""
 
@@ -1425,7 +1425,7 @@ Start with PROSE: immediately."""
                     messages=messages,
                     temperature=self.narrator.temperature,
                     max_tokens=8000,  # High limit for thinking models
-                    think=True,  # Keep thinking separate on reprompt too
+                    think=False,
                 )
                 raw_response = response.content.strip() if response.content else ""
 
@@ -1627,8 +1627,8 @@ Start with PROSE: immediately."""
         response = await self.narrator.client.chat(
             messages=messages,
             temperature=self.narrator.temperature,
-            max_tokens=8000,  # High limit for thinking models - thinking consumes tokens
-            think=True,
+            max_tokens=2000,
+            think=False,
         )
 
         raw_content = response.content.strip() if response.content else ""
@@ -1668,7 +1668,7 @@ Start with PROSE: immediately."""
                 messages=messages,
                 temperature=self.narrator.temperature,
                 max_tokens=8000,  # High limit for thinking models
-                think=True,  # Keep thinking separate on reprompt too
+                think=False,
             )
             raw_content = response.content.strip() if response.content else ""
 
@@ -1790,8 +1790,8 @@ Start with PROSE: immediately."""
         response = await self.narrator.client.chat(
             messages=messages,
             temperature=self.narrator.temperature,
-            max_tokens=8000,  # High limit for thinking models - thinking consumes tokens
-            think=True,  # Keep thinking in separate block, not main output
+            max_tokens=2000,
+            think=False,  # Thinking adds 10-50s latency on Groq for minimal quality gain
         )
 
         raw_response = response.content.strip() if response.content else ""
@@ -1823,7 +1823,7 @@ Start with PROSE: immediately."""
                 messages=messages,
                 temperature=self.narrator.temperature,
                 max_tokens=8000,  # High limit for thinking models
-                think=True,  # Keep thinking separate on reprompt too
+                think=False,
             )
             raw_response = response.content.strip() if response.content else ""
 

@@ -533,8 +533,8 @@ Output ONLY the PROSE and INTENTS blocks. No commentary, no planning, no explana
         response = await self.client.chat(
             messages=messages,
             temperature=self.temperature,
-            max_tokens=8000,  # High limit for thinking models
-            think=True,  # Keep thinking in separate block
+            max_tokens=2000,
+            think=False,
         )
 
         content = response.content.strip() if response.content else ""
@@ -556,8 +556,8 @@ Output ONLY the PROSE and INTENTS blocks. No commentary, no planning, no explana
             response = await self.client.chat(
                 messages=messages,
                 temperature=self.temperature,
-                max_tokens=8000,
-                think=True,
+                max_tokens=2000,
+                think=False,
             )
             content = response.content.strip() if response.content else ""
 
