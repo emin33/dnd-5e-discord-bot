@@ -572,7 +572,9 @@ class DMOrchestrator:
                     )
                 # Fall through to narrator below
             elif not context.in_combat:
-                # Attacking a creature - try to properly trigger combat
+                # Attacking a creature — start combat, but do NOT consume resources.
+                # No actual attack happens here; the real attack comes through the
+                # combat UI. Resource consumption (arrows, etc.) happens there.
                 combat_started = await self._initiate_combat_from_attack(
                     triage.target_name, player_name
                 )

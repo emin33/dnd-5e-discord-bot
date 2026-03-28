@@ -384,6 +384,10 @@ class CombatTurnCoordinator:
         result.critical_miss = is_fumble
         result.success = hit
 
+        # Consume ammunition for ranged weapons (arrow fired regardless of hit/miss)
+        if attacker.is_player and attacker.character_id and "ammunition" in weapon.properties:
+            await self._consume_ammunition(attacker.character_id, weapon)
+
         if hit:
             # Roll damage
             damage_roll = self.roller.roll_damage(weapon.damage_dice, critical=is_crit)
@@ -430,6 +434,52 @@ class CombatTurnCoordinator:
         )
 
         return result
+
+    # Weapon index → ammo item index mapping
+    WEAPON_AMMO_MAP = {
+        "longbow": "arrow",
+        "shortbow": "arrow",
+        "crossbow-light": "crossbow-bolt",
+        "crossbow-hand": "crossbow-bolt",
+        "crossbow-heavy": "crossbow-bolt",
+        "blowgun": "blowgun-needle",
+        "sling": "sling-bullet",
+    }
+
+    async def _consume_ammunition(self, character_id: str, weapon: WeaponStats) -> None:
+        """Consume 1 ammunition for a ranged weapon attack."""
+        # Determine ammo type from weapon name
+        weapon_key = weapon.name.lower().replace(" ", "-")
+        ammo_index = self.WEAPON_AMMO_MAP.get(weapon_key)
+        if not ammo_index:
+            # Try partial match (e.g., "Longbow +1" → "longbow")
+            for key, ammo in self.WEAPON_AMMO_MAP.items():
+                if key in weapon_key:
+                    ammo_index = ammo
+                    break
+
+        if not ammo_index:
+            return
+
+        try:
+            repo = await get_inventory_repo()
+            ammo_item = await repo.get_item_by_index(character_id, ammo_index)
+            if ammo_item and ammo_item.quantity > 0:
+                await repo.remove_item(ammo_item.id, quantity=1)
+                logger.info(
+                    "ammo_consumed",
+                    character_id=character_id,
+                    ammo=ammo_index,
+                    remaining=ammo_item.quantity - 1,
+                )
+            else:
+                logger.warning(
+                    "ammo_depleted",
+                    character_id=character_id,
+                    ammo=ammo_index,
+                )
+        except Exception as e:
+            logger.warning("ammo_consume_failed", error=str(e))
 
     async def _get_weapon_for_attack(
         self,
