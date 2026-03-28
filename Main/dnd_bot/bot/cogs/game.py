@@ -530,12 +530,16 @@ class GameCog(commands.Cog):
         turn_ctx = await coordinator.start_turn(combatant)
 
         async def on_action_complete(result):
+            import time as _time
             result_embed = ActionResultEmbed.build(result)
             await channel.send(embed=result_embed)
 
             # Narrate both hits and misses — use embed to match regular narration style
+            _t0 = _time.monotonic()
             try:
                 narrative = await coordinator.narrate_result(result)
+                _t1 = _time.monotonic()
+                logger.info("timing_player_narration", elapsed=f"{_t1 - _t0:.1f}s")
                 if narrative:
                     narr_embed = discord.Embed(
                         description=narrative,
@@ -614,17 +618,21 @@ class GameCog(commands.Cog):
             turns_run += 1
             await channel.send(f":skull: **{current.name}**'s turn...")
 
+            import time as _time
+
+            _t0 = _time.monotonic()
             try:
                 results = await coordinator.run_npc_turn(current)
             except Exception as e:
                 logger.error("npc_turn_failed", combatant=current.name, error=str(e))
                 await channel.send(f"*{current.name} hesitates...* (Error: {str(e)[:80]})")
-                # Force end turn to prevent stuck combat
                 try:
                     await coordinator.end_turn(current)
                 except Exception:
                     pass
                 continue
+            _t1 = _time.monotonic()
+            logger.info("timing_npc_turn", combatant=current.name, elapsed=f"{_t1 - _t0:.1f}s")
 
             for result in results:
                 result_embed = ActionResultEmbed.build(result)
@@ -634,8 +642,11 @@ class GameCog(commands.Cog):
                 if result.action.action_type == CombatActionType.END_TURN:
                     continue
 
+                _t2 = _time.monotonic()
                 try:
                     narrative = await coordinator.narrate_result(result)
+                    _t3 = _time.monotonic()
+                    logger.info("timing_npc_narration", combatant=current.name, elapsed=f"{_t3 - _t2:.1f}s")
                     if narrative:
                         narr_embed = discord.Embed(
                             description=narrative,
