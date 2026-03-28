@@ -1168,7 +1168,6 @@ class CombatTurnCoordinator:
                 action=CombatAction(
                     action_type=CombatActionType.END_TURN,
                     combatant_id=combatant.id,
-                    combatant_name=combatant.name,
                 ),
                 success=True,
                 description=f"{combatant.name} is caught off guard and cannot act!",
