@@ -311,11 +311,13 @@ class GroqClient:
         settings = get_settings()
         self.model = model or settings.groq_model
         self.timeout = settings.llm_timeout
+        self._max_retries = settings.groq_max_retries
+        self._fallback_enabled = settings.groq_fallback_to_ollama
         key = api_key or settings.groq_api_key
         if not key:
             raise ValueError("GROQ_API_KEY must be set when using Groq provider")
-        # max_retries=1: Let our fallback handle rate limits instead of SDK's long backoff
-        self._client = AsyncGroq(api_key=key, max_retries=1)
+        # Let the SDK retry up to max_retries before we fall back
+        self._client = AsyncGroq(api_key=key, max_retries=self._max_retries)
 
     async def chat(
         self,
@@ -418,13 +420,19 @@ class GroqClient:
                 f"Groq API call timed out after {self.timeout}s."
             )
         except Exception as e:
-            # Check for rate limit (429) — fall back to local Ollama if available
             error_str = str(e)
-            if "429" in error_str or "Too Many Requests" in error_str or "rate" in error_str.lower():
-                logger.warning("groq_rate_limited_falling_back_to_ollama", error=error_str[:100])
+            is_rate_limit = "429" in error_str or "Too Many Requests" in error_str or "rate" in error_str.lower()
+
+            if is_rate_limit and self._fallback_enabled:
+                logger.warning(
+                    "groq_rate_limited_falling_back_to_ollama",
+                    error=error_str[:100],
+                    retries_exhausted=self._max_retries,
+                )
                 return await self._fallback_ollama(
                     messages, temperature, tools, max_tokens, json_mode, json_schema, think
                 )
+
             logger.error("groq_chat_error", error=error_str)
             raise
 

@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     # Groq (cloud)
     groq_api_key: str = ""
     groq_model: str = "qwen/qwen3-32b"
+    groq_max_retries: int = 3          # Retries before falling back to Ollama
+    groq_fallback_to_ollama: bool = True  # Fall back to local Ollama on rate limit
 
     # LLM Temperature
     narrator_temperature: float = 0.75
