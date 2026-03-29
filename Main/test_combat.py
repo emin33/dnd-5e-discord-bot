@@ -697,6 +697,259 @@ def test_group_detection(r: TestResult):
     assert_eq(r, "Three Bandits -> Bandit", DMOrchestrator._singularize_name("Three Bandits"), "Bandit")
 
 
+def test_multiplayer_session(r: TestResult):
+    """Test multiple players in a session and combat."""
+    print("\n--- Multi-Player Session ---")
+    import asyncio
+    from dnd_bot.game.session import GameSession, SessionState, PlayerInfo
+
+    session = GameSession(
+        id="test-mp-session",
+        channel_id=88888,
+        guild_id=88888,
+        campaign_id="test-campaign",
+        state=SessionState.ACTIVE,
+    )
+
+    # Create 3 different player characters
+    player1 = make_character(name="Aragorn", strength=16, dexterity=12, hp=25, ac=16, class_index="fighter")
+    player1.id = "char-1"
+    player1.discord_user_id = 1001
+
+    player2 = make_character(name="Legolas", strength=10, dexterity=18, hp=18, ac=14, class_index="ranger")
+    player2.id = "char-2"
+    player2.discord_user_id = 1002
+
+    player3 = make_character(name="Gandalf", strength=8, dexterity=10, hp=15, ac=12, class_index="wizard")
+    player3.id = "char-3"
+    player3.discord_user_id = 1003
+
+    # Join all 3 players
+    p1 = session.add_player(1001, "Player1", player1)
+    p2 = session.add_player(1002, "Player2", player2)
+    p3 = session.add_player(1003, "Player3", player3)
+
+    assert_eq(r, "3 players joined", len(session.players), 3)
+    assert_true(r, "Player1 found by user_id", session.get_player(1001) is not None)
+    assert_true(r, "Player2 found by user_id", session.get_player(1002) is not None)
+    assert_true(r, "Player3 found by user_id", session.get_player(1003) is not None)
+    assert_true(r, "Unknown user returns None", session.get_player(9999) is None)
+
+    # All characters accessible
+    chars = session.get_all_characters()
+    assert_eq(r, "3 characters returned", len(chars), 3)
+    char_names = {c.name for c in chars}
+    assert_true(r, "All names present", char_names == {"Aragorn", "Legolas", "Gandalf"})
+
+    # Player-character mapping
+    assert_eq(r, "Player1 -> Aragorn", session.get_player(1001).character.name, "Aragorn")
+    assert_eq(r, "Player2 -> Legolas", session.get_player(1002).character.name, "Legolas")
+
+    # Remove a player
+    removed = session.remove_player(1002)
+    assert_true(r, "Player2 removed", removed is not None)
+    assert_eq(r, "2 players remain", len(session.players), 2)
+    assert_true(r, "Player2 gone", session.get_player(1002) is None)
+
+
+def test_multiplayer_combat(r: TestResult):
+    """Test combat with multiple player characters + NPCs."""
+    print("\n--- Multi-Player Combat ---")
+    import asyncio
+    from dnd_bot.game.combat.manager import CombatManager
+    from dnd_bot.game.combat.coordinator import CombatTurnCoordinator
+    from dnd_bot.game.combat.actions import CombatAction, CombatActionType
+
+    combat = CombatManager.create_encounter(
+        session_id="test-mp",
+        channel_id=77777,
+        name="Multi-Player Battle",
+        description="3 players vs 2 goblins",
+    )
+
+    # Add 3 players
+    fighter = make_character(name="Aragorn", strength=16, dexterity=12, hp=25, ac=16, class_index="fighter")
+    fighter.id = "char-fighter"
+    fighter.discord_user_id = 1001
+
+    ranger = make_character(name="Legolas", strength=10, dexterity=18, hp=18, ac=14, class_index="ranger")
+    ranger.id = "char-ranger"
+    ranger.discord_user_id = 1002
+
+    wizard = make_character(name="Gandalf", strength=8, dexterity=10, hp=15, ac=12, class_index="wizard")
+    wizard.id = "char-wizard"
+    wizard.discord_user_id = 1003
+
+    combat.add_player(fighter)
+    combat.add_player(ranger)
+    combat.add_player(wizard)
+
+    # Add 2 goblins
+    goblin1 = combat.add_monster("goblin", name="Goblin Archer")
+    goblin2 = combat.add_monster("goblin", name="Goblin Grunt")
+
+    assert_eq(r, "5 combatants total", len(combat.combat.combatants), 5)
+
+    # Count players vs NPCs
+    players = [c for c in combat.combat.combatants if c.is_player]
+    npcs = [c for c in combat.combat.combatants if not c.is_player]
+    assert_eq(r, "3 player combatants", len(players), 3)
+    assert_eq(r, "2 NPC combatants", len(npcs), 2)
+
+    # Roll initiative
+    combat.roll_all_initiative()
+    combat.start_combat()
+
+    sorted_combatants = combat.combat.get_sorted_combatants()
+    assert_eq(r, "5 in initiative order", len(sorted_combatants), 5)
+
+    # Verify all names present in initiative
+    names_in_order = [c.name for c in sorted_combatants]
+    assert_true(r, "Aragorn in initiative", "Aragorn" in names_in_order)
+    assert_true(r, "Legolas in initiative", "Legolas" in names_in_order)
+    assert_true(r, "Gandalf in initiative", "Gandalf" in names_in_order)
+    assert_true(r, "Goblin Archer in initiative", "Goblin Archer" in names_in_order)
+    assert_true(r, "Goblin Grunt in initiative", "Goblin Grunt" in names_in_order)
+
+    # Verify character_id linkage on player combatants
+    for pc in players:
+        assert_true(r, f"{pc.name} has character_id", pc.character_id is not None)
+        assert_true(r, f"{pc.name} is_player=True", pc.is_player)
+
+    for npc in npcs:
+        assert_true(r, f"{npc.name} is_player=False", not npc.is_player)
+        assert_true(r, f"{npc.name} has monster_index", npc.monster_index is not None)
+
+    # Test turn advancement cycles through all combatants
+    first = combat.combat.get_current_combatant()
+    assert_true(r, "First combatant exists", first is not None)
+
+    seen = set()
+    for _ in range(5):
+        current = combat.combat.get_current_combatant()
+        seen.add(current.name)
+        combat.next_turn()
+    assert_eq(r, "All 5 combatants got a turn", len(seen), 5)
+
+    # After 5 next_turn calls, we should be back to the first combatant
+    back_to_first = combat.combat.get_current_combatant()
+    assert_eq(r, "Round cycles back", back_to_first.name, first.name)
+    assert_eq(r, "Round advanced to 2", combat.combat.current_round, 2)
+
+
+def test_multiplayer_turn_context(r: TestResult):
+    """Test that turn context correctly reflects each player's unique data."""
+    print("\n--- Multi-Player Turn Context ---")
+    import asyncio
+    from dnd_bot.game.combat.manager import CombatManager
+    from dnd_bot.game.combat.coordinator import CombatTurnCoordinator
+
+    combat = CombatManager.create_encounter(
+        session_id="test-mp-ctx",
+        channel_id=66666,
+        name="Context Test",
+        description="Testing per-player context",
+    )
+
+    fighter = make_character(name="Conan", strength=18, dexterity=10, hp=30, ac=18, class_index="fighter")
+    fighter.id = "char-conan"
+    ranger = make_character(name="Robin", strength=12, dexterity=18, hp=20, ac=14, class_index="ranger")
+    ranger.id = "char-robin"
+
+    combat.add_player(fighter)
+    combat.add_player(ranger)
+    goblin = combat.add_monster("goblin", name="Test Goblin")
+
+    combat.roll_all_initiative()
+    combat.start_combat()
+
+    coordinator = CombatTurnCoordinator(combat)
+
+    # Find each player combatant
+    conan_comb = None
+    robin_comb = None
+    for c in combat.combat.combatants:
+        if c.name == "Conan":
+            conan_comb = c
+        elif c.name == "Robin":
+            robin_comb = c
+
+    assert_true(r, "Conan combatant found", conan_comb is not None)
+    assert_true(r, "Robin combatant found", robin_comb is not None)
+
+    # Build turn context for each — should have different stats
+    conan_ctx = asyncio.get_event_loop().run_until_complete(
+        coordinator._build_turn_context(conan_comb)
+    )
+    robin_ctx = asyncio.get_event_loop().run_until_complete(
+        coordinator._build_turn_context(robin_comb)
+    )
+
+    assert_eq(r, "Conan context name", conan_ctx.combatant_name, "Conan")
+    assert_eq(r, "Robin context name", robin_ctx.combatant_name, "Robin")
+    assert_eq(r, "Conan HP 30", conan_ctx.hp_max, 30)
+    assert_eq(r, "Robin HP 20", robin_ctx.hp_max, 20)
+    assert_eq(r, "Conan AC 18", conan_ctx.armor_class, 18)
+    assert_eq(r, "Robin AC 14", robin_ctx.armor_class, 14)
+    assert_true(r, "Conan is player", conan_ctx.is_player)
+    assert_true(r, "Robin is player", robin_ctx.is_player)
+
+    # Character IDs may be None in test env (no DB to load from _character_cache)
+    # The combatant itself has character_id — verify that instead
+    assert_eq(r, "Conan combatant char_id", conan_comb.character_id, "char-conan")
+    assert_eq(r, "Robin combatant char_id", robin_comb.character_id, "char-robin")
+
+
+def test_combat_end_conditions(r: TestResult):
+    """Test combat end with multiple players — ends when all enemies OR all players down."""
+    print("\n--- Combat End Conditions ---")
+    from dnd_bot.game.combat.manager import CombatManager
+
+    combat = CombatManager.create_encounter(
+        session_id="test-end",
+        channel_id=55555,
+        name="End Test",
+        description="Testing combat end",
+    )
+
+    p1 = make_character(name="Hero1", hp=20, ac=15)
+    p1.id = "hero1"
+    p2 = make_character(name="Hero2", hp=20, ac=15)
+    p2.id = "hero2"
+    combat.add_player(p1)
+    combat.add_player(p2)
+
+    g1 = combat.add_monster("goblin", name="Goblin A")
+    g2 = combat.add_monster("goblin", name="Goblin B")
+
+    combat.roll_all_initiative()
+    combat.start_combat()
+
+    # Not over initially
+    assert_true(r, "Combat not over at start", not combat.combat.is_combat_over())
+
+    # Kill one goblin — not over
+    g1.hp_current = 0
+    assert_true(r, "Not over with 1 goblin dead", not combat.combat.is_combat_over())
+
+    # Kill both goblins — combat over (victory)
+    g2.hp_current = 0
+    assert_true(r, "Over when all enemies dead", combat.combat.is_combat_over())
+
+    # Reset — kill one player
+    g1.hp_current = 7
+    g2.hp_current = 7
+    p1_comb = [c for c in combat.combat.combatants if c.name == "Hero1"][0]
+    p2_comb = [c for c in combat.combat.combatants if c.name == "Hero2"][0]
+
+    p1_comb.hp_current = 0
+    assert_true(r, "Not over with 1 player dead", not combat.combat.is_combat_over())
+
+    # Kill both players — combat over (defeat)
+    p2_comb.hp_current = 0
+    assert_true(r, "Over when all players dead", combat.combat.is_combat_over())
+
+
 # ==================== Main ====================
 
 def main():
@@ -720,6 +973,10 @@ def main():
     test_coordinator_npc_turn(r)
     test_coordinator_player_attack(r)
     test_group_detection(r)
+    test_multiplayer_session(r)
+    test_multiplayer_combat(r)
+    test_multiplayer_turn_context(r)
+    test_combat_end_conditions(r)
 
     success = r.summary()
     sys.exit(0 if success else 1)
