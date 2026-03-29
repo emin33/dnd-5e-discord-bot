@@ -314,7 +314,8 @@ class GroqClient:
         key = api_key or settings.groq_api_key
         if not key:
             raise ValueError("GROQ_API_KEY must be set when using Groq provider")
-        self._client = AsyncGroq(api_key=key)
+        # max_retries=1: Let our fallback handle rate limits instead of SDK's long backoff
+        self._client = AsyncGroq(api_key=key, max_retries=1)
 
     async def chat(
         self,
@@ -417,8 +418,45 @@ class GroqClient:
                 f"Groq API call timed out after {self.timeout}s."
             )
         except Exception as e:
-            logger.error("groq_chat_error", error=str(e))
+            # Check for rate limit (429) — fall back to local Ollama if available
+            error_str = str(e)
+            if "429" in error_str or "Too Many Requests" in error_str or "rate" in error_str.lower():
+                logger.warning("groq_rate_limited_falling_back_to_ollama", error=error_str[:100])
+                return await self._fallback_ollama(
+                    messages, temperature, tools, max_tokens, json_mode, json_schema, think
+                )
+            logger.error("groq_chat_error", error=error_str)
             raise
+
+    async def _fallback_ollama(
+        self,
+        messages: list[dict],
+        temperature: float,
+        tools: Optional[list[dict]],
+        max_tokens: Optional[int],
+        json_mode: bool,
+        json_schema: Optional[dict],
+        think: Optional[bool],
+    ) -> LLMResponse:
+        """Fall back to local Ollama when Groq is rate-limited."""
+        if not hasattr(self, '_ollama_fallback'):
+            try:
+                self._ollama_fallback = OllamaClient()
+                logger.info("ollama_fallback_initialized", model=self._ollama_fallback.model)
+            except Exception as e:
+                logger.error("ollama_fallback_init_failed", error=str(e))
+                raise RuntimeError("Groq rate limited and Ollama fallback unavailable") from e
+
+        logger.info("using_ollama_fallback")
+        return await self._ollama_fallback.chat(
+            messages=messages,
+            temperature=temperature,
+            tools=tools,
+            max_tokens=max_tokens,
+            json_mode=json_mode,
+            json_schema=json_schema,
+            think=think,
+        )
 
     async def is_available(self) -> bool:
         """Check if Groq API is reachable."""

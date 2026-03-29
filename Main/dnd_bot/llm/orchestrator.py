@@ -672,12 +672,14 @@ class DMOrchestrator:
             narrative, proposed_effects = await self._narrate_action(action, player_name, context, triage)
 
         # Step 4: Process narrator output - entity extraction + proposed effects
+        # Skip entity extraction during combat or for simple actions (saves API calls)
         combat_triggered = False
+        skip_extraction = context.in_combat or triage.action_type in ("skill_check", "saving_throw")
         if narrative:
-            # Generate message ID for idempotency
             message_id = str(uuid.uuid4())
             combat_triggered = await self._process_narrator_output(
-                narrative, context, proposed_effects, message_id
+                narrative, context, proposed_effects, message_id,
+                skip_entity_extraction=skip_extraction,
             )
 
         # Step 5: Consume resources/currency AFTER outcome is determined.
@@ -1927,6 +1929,7 @@ Start with PROSE: immediately."""
         context: BrainContext,
         proposed_effects: Optional[list[ProposedEffect]] = None,
         message_id: Optional[str] = None,
+        skip_entity_extraction: bool = False,
     ) -> bool:
         """
         Process narrator output: extract entities and execute proposed effects.
@@ -1939,9 +1942,8 @@ Start with PROSE: immediately."""
         """
         combat_triggered = False
 
-        # Entity extraction (still useful for entities mentioned in prose
-        # that narrator didn't explicitly propose)
-        if self._scene_registry:
+        # Entity extraction — skip during combat or simple skill checks to save API calls
+        if self._scene_registry and not skip_entity_extraction:
             existing = [e.name for e in self._scene_registry.get_all()]
             try:
                 entity_result = await self._entity_extractor.extract(
