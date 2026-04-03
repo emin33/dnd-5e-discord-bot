@@ -132,10 +132,14 @@ class GeminiClient:
         if json_mode:
             config.response_mime_type = "application/json"
 
-        # Build model list: primary + fallbacks (skip already-exhausted)
-        models_to_try = [self.model]
+        # Use last-known-good model first, then primary, then fallbacks
+        models_to_try = []
+        if hasattr(self, '_last_good_model') and self._last_good_model not in self._exhausted_models:
+            models_to_try.append(self._last_good_model)
+        if self.model not in self._exhausted_models and self.model not in models_to_try:
+            models_to_try.append(self.model)
         for fallback in self.FALLBACK_CHAINS.get(self.model, []):
-            if fallback not in self._exhausted_models:
+            if fallback not in self._exhausted_models and fallback not in models_to_try:
                 models_to_try.append(fallback)
 
         last_err = None
@@ -151,6 +155,7 @@ class GeminiClient:
                             config=config,
                         )
                     response = await loop.run_in_executor(None, _call)
+                    self._last_good_model = model
                     if model != self.model:
                         print(f"  {C.DIM}[Using fallback model: {model}]{C.RESET}")
                     return response.text or ""
