@@ -156,6 +156,16 @@ class MemoryManager:
             )
 
             raw = response.content.strip() if response.content else ""
+
+            logger.info(
+                "compaction_llm_response",
+                campaign_id=self.campaign_id,
+                raw_length=len(raw),
+                raw_preview=raw[:300],
+                has_summary_section="SUMMARY:" in raw.upper(),
+                has_facts_section="FACTS:" in raw.upper(),
+            )
+
             if not raw:
                 self.buffer._overflow_buffer.clear()
                 return
@@ -163,15 +173,19 @@ class MemoryManager:
             # Parse SUMMARY and FACTS sections
             summary, facts = self._parse_compact_response(raw)
 
+            logger.info(
+                "compaction_parsed",
+                summary_length=len(summary),
+                facts_extracted=len(facts),
+                facts=facts[:5],
+            )
+
             if summary:
                 self.buffer.compact(summary, facts)
                 logger.info(
                     "overflow_compacted",
                     campaign_id=self.campaign_id,
-                    overflow_messages=len(self.buffer._overflow_buffer),
                     summary_length=len(summary),
-                    facts_extracted=len(facts),
-                    facts=facts[:5],  # Log first 5 facts for debugging
                     total_pinned_facts=len(self.buffer.pinned_facts),
                 )
             else:
@@ -180,7 +194,12 @@ class MemoryManager:
                 logger.warning("compact_parse_fallback", raw_preview=raw[:200])
 
         except Exception as e:
-            logger.warning("overflow_compaction_failed", error=str(e))
+            import traceback
+            logger.warning(
+                "overflow_compaction_failed",
+                error=str(e),
+                traceback=traceback.format_exc()[:500],
+            )
             self.buffer._overflow_buffer.clear()
 
     def _parse_compact_response(self, raw: str) -> tuple[str, list[str]]:
@@ -266,6 +285,13 @@ class MemoryManager:
                 think=False,
             )
             response = response.content or ""
+
+            logger.info(
+                "incremental_summary_llm_response",
+                campaign_id=self.campaign_id,
+                raw_length=len(response),
+                raw_preview=response[:200],
+            )
 
             # Parse response
             try:
