@@ -196,51 +196,24 @@ class GeminiClient:
 # Player Agent
 # =============================================================================
 
-PLAYER_SYSTEM = """You are a D&D player controlling a character named {name}, a {race} {class_name}.
+PLAYER_SYSTEM = """You are playing a D&D character named {name}, a {race} {class_name}.
 
 Personality: {personality}
 Goals: {goals}
 
-Your job is to generate ONE player action per turn. Output ONLY the action text — no quotes, no commentary, no OOC talk. Write in first person ("I do X").
-
-IMPORTANT RULES:
-- Vary your action types: social, exploration, investigation, combat, skill use
-- Keep actions concise (1-2 sentences max)
-- Stay in character
-- React naturally to what happened last turn
+React naturally to what the DM describes. Do what a real player would do — talk to NPCs, explore, fight, investigate, whatever makes sense in the moment. Write ONE action in first person ("I do X"). No commentary, no OOC talk.
 """
 
-PHASE_PLANT = """CURRENT OBJECTIVE: Establish memorable details this turn.
-- Ask NPCs their names, note specific landmarks, establish facts
-- Create details that can be referenced later to test the DM's memory
-- Examples: "I ask the innkeeper what his name is", "I examine the crest on the shield above the fireplace"
+PHASE_PLANT = """This is early in the session — introduce yourself, learn NPC names, and get your bearings.
 """
 
-PHASE_NORMAL = """CURRENT OBJECTIVE: Drive the story forward with decisive actions.
-You MUST take concrete actions that change the situation each turn. Do NOT:
-- Observe, wait, scan, or watch passively
-- Walk toward a place without entering it
-- Repeat the same type of action twice in a row
-
-Instead, DO things like:
-- Enter a building and talk to whoever is inside
-- Ask an NPC a specific question about the plot
-- Attempt to pick a lock, climb a wall, or search for traps
-- Buy or trade items at a shop
-- Follow a trail into the forest
-- Confront someone suspicious
-
-Every action should move you to a new situation or reveal new information.
+PHASE_NORMAL = """Play naturally. React to what the DM just described.
 """
 
-PHASE_RECALL = """CURRENT OBJECTIVE: Reference earlier details to test the DM's memory.
-You previously established these details:
+PHASE_RECALL = """You've been adventuring for a while. Reference things from earlier in the session:
 {planted_details}
 
-Reference one of these BY NAME in your action. Examples:
-- "I go back to talk to [NPC name from earlier]"
-- "I ask about [event/location from earlier]"
-- "I look for the [item mentioned earlier]"
+Bring up an earlier NPC, location, or event by name — go back to someone you met, ask a follow-up question, or revisit a place.
 """
 
 
