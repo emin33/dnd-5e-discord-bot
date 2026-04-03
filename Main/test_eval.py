@@ -259,9 +259,14 @@ class PlayerAgent:
         self.planted_details: list[str] = []
 
     def _get_phase(self, turn: int, total: int) -> str:
-        if turn <= 4:
+        # Plant: first ~15% of turns (min 3, max 6)
+        plant_end = max(3, min(6, total // 6))
+        # Recall: last ~15% of turns (min 3, max 6)
+        recall_start = total - max(3, min(6, total // 6))
+
+        if turn <= plant_end:
             return "plant"
-        elif turn > total - 3:
+        elif turn > recall_start:
             return "recall"
         return "normal"
 
@@ -606,6 +611,12 @@ class EvalSession:
             print(f"  Seed scenario: {self.seed_scenario}")
 
         self.started_at = time.strftime("%Y-%m-%d %H:%M:%S")
+
+        # Clear stale completion marker
+        marker = Path("data/eval_logs/.eval_complete")
+        if marker.exists():
+            marker.unlink()
+
         session = TestSession()
 
         try:
@@ -703,9 +714,22 @@ class EvalSession:
 
         # Print final report
         self._print_report()
-        self._save_log(final=True)
+        log_path = self._save_log(final=True)
 
-    def _save_log(self, final: bool = False):
+        # Write completion marker for external polling
+        marker = Path("data/eval_logs/.eval_complete")
+        status = "PASS" if transcript_eval and not transcript_eval.parse_error else "FAIL"
+        avg = f"{transcript_eval.average_score:.1f}" if transcript_eval and not transcript_eval.parse_error else "N/A"
+        marker.write_text(
+            f"status={status}\n"
+            f"turns={len(self.turns)}\n"
+            f"score={avg}\n"
+            f"log={log_path}\n"
+            f"finished={time.strftime('%H:%M:%S')}\n",
+            encoding="utf-8",
+        )
+
+    def _save_log(self, final: bool = False) -> Optional[Path]:
         log_dir = Path("data/eval_logs")
         log_dir.mkdir(parents=True, exist_ok=True)
 
@@ -738,6 +762,8 @@ class EvalSession:
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(report, f, indent=2, default=str)
             print(f"\n  Log saved: {path}")
+            return path
+        return None
 
     def _print_report(self):
         ev = getattr(self, "_transcript_eval", None)
@@ -809,7 +835,7 @@ async def main():
     import argparse
 
     parser = argparse.ArgumentParser(description="Automated narrator evaluation")
-    parser.add_argument("--turns", type=int, default=12, help="Number of eval turns (default: 12)")
+    parser.add_argument("--turns", type=int, default=30, help="Number of eval turns (default: 30)")
     parser.add_argument("--persona", type=str, default="default",
                         choices=list(PERSONAS.keys()), help="Player persona")
     parser.add_argument("--provider", type=str, default=None,
