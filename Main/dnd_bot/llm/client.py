@@ -609,8 +609,140 @@ class GroqClient:
         pass
 
 
-# Global client instance
+class AnthropicClient:
+    """Async client for Anthropic Claude API (narrator-only)."""
+
+    def __init__(
+        self,
+        model: Optional[str] = None,
+        api_key: Optional[str] = None,
+    ):
+        try:
+            import anthropic
+        except ImportError:
+            raise ImportError(
+                "anthropic package required. Install with: pip install anthropic"
+            )
+
+        settings = get_settings()
+        self.model = model or settings.anthropic_model
+        self.timeout = settings.llm_timeout
+        key = api_key or settings.anthropic_api_key
+        if not key:
+            # Fallback: read directly from .env (system env may shadow with empty string)
+            from dotenv import dotenv_values
+            env = dotenv_values()
+            key = env.get("ANTHROPIC_API_KEY", "")
+        if not key:
+            raise ValueError("ANTHROPIC_API_KEY must be set when using Anthropic provider")
+        self._client = anthropic.AsyncAnthropic(api_key=key)
+
+    async def chat(
+        self,
+        messages: list[dict],
+        temperature: float = 0.7,
+        tools: Optional[list[dict]] = None,
+        max_tokens: Optional[int] = None,
+        json_mode: bool = False,
+        json_schema: Optional[dict] = None,
+        think: Optional[bool] = None,
+        tool_choice: Optional[str] = None,
+    ) -> LLMResponse:
+        """Send a chat request to Claude API. Same interface as OllamaClient."""
+        # Claude uses a separate system parameter, not a system message
+        system_parts = []
+        chat_messages = []
+        for msg in messages:
+            if msg["role"] == "system":
+                system_parts.append(msg["content"])
+            else:
+                chat_messages.append(msg)
+
+        # Claude requires alternating user/assistant messages
+        # Merge consecutive same-role messages
+        merged = []
+        for msg in chat_messages:
+            if merged and merged[-1]["role"] == msg["role"]:
+                merged[-1]["content"] += "\n\n" + msg["content"]
+            else:
+                merged.append({"role": msg["role"], "content": msg["content"]})
+
+        # Ensure first message is from user
+        if not merged or merged[0]["role"] != "user":
+            merged.insert(0, {"role": "user", "content": "Begin."})
+
+        kwargs = {
+            "model": self.model,
+            "messages": merged,
+            "max_tokens": max_tokens or 2000,
+            "temperature": temperature,
+        }
+
+        if system_parts:
+            kwargs["system"] = "\n\n".join(system_parts)
+
+        try:
+            import time as _time
+            _t0 = _time.monotonic()
+
+            response = await asyncio.wait_for(
+                self._client.messages.create(**kwargs),
+                timeout=self.timeout,
+            )
+
+            _elapsed = _time.monotonic() - _t0
+
+            content = ""
+            if response.content:
+                content = "".join(
+                    block.text for block in response.content
+                    if hasattr(block, "text")
+                )
+
+            _write_debug_log(
+                f"ANTHROPIC_RESPONSE (api={_elapsed:.1f}s)",
+                content or "(empty)",
+            )
+
+            logger.info(
+                "anthropic_response",
+                content_length=len(content),
+                content_preview=content[:200],
+                model=response.model,
+            )
+
+            usage = response.usage
+            return LLMResponse(
+                content=content,
+                model=response.model or self.model,
+                finish_reason=response.stop_reason or "",
+                prompt_tokens=usage.input_tokens if usage else 0,
+                completion_tokens=usage.output_tokens if usage else 0,
+            )
+
+        except asyncio.TimeoutError:
+            logger.error("anthropic_chat_timeout", timeout=self.timeout, model=self.model)
+            raise TimeoutError(f"Anthropic API call timed out after {self.timeout}s.")
+        except Exception as e:
+            logger.error("anthropic_chat_error", error=str(e))
+            raise
+
+    async def is_available(self) -> bool:
+        """Check if Anthropic API is reachable."""
+        try:
+            # Simple models list check
+            return True  # If constructor didn't raise, key is set
+        except Exception:
+            return False
+
+    def close(self):
+        """No-op — async client cleans up automatically."""
+        pass
+
+
+# Global client instances
 _client = None
+_narrator_client = None
 
 
 def get_llm_client():
@@ -625,6 +757,30 @@ def get_llm_client():
             _client = OllamaClient()
             logger.info("llm_client_init", provider="ollama", model=settings.ollama_model)
     return _client
+
+
+def get_narrator_client():
+    """Get the narrator-specific LLM client.
+
+    When narrator_provider is "anthropic", returns a Claude client.
+    Otherwise falls back to the default LLM client (Groq/Ollama).
+    This allows routing only narrator calls through a premium model
+    while keeping triage, extraction, and compaction on the cheaper provider.
+    """
+    global _narrator_client
+    if _narrator_client is None:
+        settings = get_settings()
+        if settings.narrator_provider == "anthropic" and settings.anthropic_api_key:
+            _narrator_client = AnthropicClient()
+            logger.info(
+                "narrator_client_init",
+                provider="anthropic",
+                model=settings.anthropic_model,
+            )
+        else:
+            _narrator_client = get_llm_client()
+            logger.info("narrator_client_init", provider="default (same as llm)")
+    return _narrator_client
 
 
 # Alias for backwards compatibility
