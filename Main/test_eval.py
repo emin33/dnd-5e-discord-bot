@@ -66,12 +66,23 @@ def header(text: str):
 # =============================================================================
 
 class GeminiClient:
-    """Thin async wrapper over google.genai SDK."""
+    """Thin async wrapper over google.genai SDK with model fallback."""
+
+    # Fallback chains per role — when primary model is quota-exhausted,
+    # try the next one. Free tier quota is per-model (20 req/day each).
+    FALLBACK_CHAINS = {
+        "gemini-2.5-flash": ["gemini-2.5-flash-lite", "gemini-3.1-flash-lite-preview", "gemini-2.0-flash"],
+        "gemini-2.5-flash-lite": ["gemini-2.5-flash", "gemini-3.1-flash-lite-preview", "gemini-2.0-flash"],
+        "gemini-3-flash-preview": ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-3.1-flash-lite-preview"],
+        "gemini-3.1-flash-lite-preview": ["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-2.0-flash"],
+        "gemini-2.0-flash": ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-3.1-flash-lite-preview"],
+    }
 
     def __init__(self, api_key: str, model: str = "gemini-2.5-flash"):
         from google import genai
         self._client = genai.Client(api_key=api_key)
         self.model = model
+        self._exhausted_models: set[str] = set()  # Daily quota hit
 
     async def chat(
         self,
@@ -121,29 +132,52 @@ class GeminiClient:
         if json_mode:
             config.response_mime_type = "application/json"
 
-        # Retry with backoff
+        # Build model list: primary + fallbacks (skip already-exhausted)
+        models_to_try = [self.model]
+        for fallback in self.FALLBACK_CHAINS.get(self.model, []):
+            if fallback not in self._exhausted_models:
+                models_to_try.append(fallback)
+
         last_err = None
-        for attempt in range(3):
-            try:
-                loop = asyncio.get_event_loop()
-                response = await loop.run_in_executor(
-                    None,
-                    lambda: self._client.models.generate_content(
-                        model=self.model,
-                        contents=contents,
-                        config=config,
-                    ),
-                )
-                return response.text or ""
-            except Exception as e:
-                last_err = e
-                err_str = str(e)
-                if "429" in err_str or "quota" in err_str.lower() or "503" in err_str or "UNAVAILABLE" in err_str:
-                    wait = 2 ** (attempt + 1)
-                    print(f"  {C.DIM}[Gemini {err_str[:30]}..., retrying in {wait}s]{C.RESET}")
-                    await asyncio.sleep(wait)
-                else:
-                    raise
+        for model in models_to_try:
+            for attempt in range(3):
+                try:
+                    loop = asyncio.get_event_loop()
+                    # Bind model in closure to avoid late-binding issues
+                    def _call(m=model):
+                        return self._client.models.generate_content(
+                            model=m,
+                            contents=contents,
+                            config=config,
+                        )
+                    response = await loop.run_in_executor(None, _call)
+                    if model != self.model:
+                        print(f"  {C.DIM}[Using fallback model: {model}]{C.RESET}")
+                    return response.text or ""
+                except Exception as e:
+                    last_err = e
+                    err_str = str(e)
+                    is_quota = "429" in err_str or "quota" in err_str.lower()
+                    is_daily = "PerDay" in err_str
+                    is_transient = "503" in err_str or "UNAVAILABLE" in err_str
+
+                    if is_quota and is_daily:
+                        # Daily quota exhausted — mark model and try next
+                        self._exhausted_models.add(model)
+                        print(f"  {C.DIM}[{model} daily quota hit, trying fallback]{C.RESET}")
+                        break  # Break retry loop, try next model
+                    elif is_quota or is_transient:
+                        # Per-minute rate limit or transient — wait and retry
+                        # Parse retry delay from error if available
+                        wait = 2 ** (attempt + 1)
+                        delay_match = re.search(r'retryDelay.*?(\d+)', err_str)
+                        if delay_match:
+                            wait = min(int(delay_match.group(1)) + 1, 60)
+                        print(f"  {C.DIM}[{model} rate limited, waiting {wait}s]{C.RESET}")
+                        await asyncio.sleep(wait)
+                    else:
+                        raise
+
         raise last_err
 
 
@@ -439,6 +473,48 @@ Evaluate the DM's response above. Return ONLY the JSON scores."""
         except Exception as e:
             return EvalResult(parse_error=f"Evaluator call failed: {e}")
 
+    async def evaluate_transcript(self, turns: list) -> EvalResult:
+        """Evaluate an entire game transcript in one call."""
+        # Build the full transcript
+        transcript_lines = []
+        for t in turns:
+            transcript_lines.append(f"--- Turn {t.turn} ({t.phase}) ---")
+            transcript_lines.append(f"Player: {t.action}")
+            if t.mechanics:
+                transcript_lines.append(f"Mechanics: {json.dumps(t.mechanics)}")
+            transcript_lines.append(f"DM: {t.narrative}")
+            transcript_lines.append("")
+
+        transcript = "\n".join(transcript_lines)
+
+        prompt = f"""## Full Game Transcript ({len(turns)} turns)
+
+{transcript}
+
+## Instructions
+
+Evaluate the ENTIRE transcript above as a whole. Look for:
+- Scene contradictions across any turns (location shifts without transition, objects appearing/disappearing)
+- NPC contradictions (name changes, personality shifts, dead NPCs reappearing, NPCs in wrong locations)
+- Factual contradictions (the narrator "remembers" events differently than they happened, references things that never occurred)
+- Narrative quality trends (does prose stay varied? do NPCs have distinct voices? does the story build momentum?)
+
+For each flagged issue, specify which turns are involved (e.g., "Turn 3 vs Turn 8: NPC was in tavern but appeared at gate").
+
+Score the transcript as a whole — NOT per-turn averages."""
+
+        try:
+            raw = await self.client.chat(
+                messages=[{"role": "user", "content": prompt}],
+                system=EVAL_SYSTEM,
+                temperature=0.1,
+                max_tokens=4096,
+                json_mode=True,
+            )
+            return self._parse_eval(raw)
+        except Exception as e:
+            return EvalResult(parse_error=f"Transcript evaluation failed: {e}")
+
     def _parse_eval(self, raw: str) -> EvalResult:
         """Parse JSON evaluation, with fallbacks for common formatting issues."""
         text = raw.strip()
@@ -545,16 +621,15 @@ class EvalSession:
                         self.player.record_turn(action, resp.narrative, "seed")
                     await asyncio.sleep(1)
 
-            # Main evaluation loop
-            header("EVALUATION TURNS")
+            # Main game loop — play all turns first, evaluate transcript after
+            header("GAME SESSION")
             prev_issue_count = len(session.all_issues)
 
             for turn in range(1, self.total_turns + 1):
                 phase = self.player._get_phase(turn, self.total_turns)
-                phase_label = {"plant": "🌱", "normal": "▶", "recall": "🔍"}[phase]
+                phase_label = {"plant": "\U0001f331", "normal": "\u25b6", "recall": "\U0001f50d"}[phase]
 
                 # 1. Player generates action
-                t0 = time.monotonic()
                 try:
                     action = await self.player.generate_action(turn, self.total_turns)
                 except Exception as e:
@@ -578,36 +653,10 @@ class EvalSession:
                 # 3. Record for player history
                 self.player.record_turn(action, narrative, phase)
 
-                # 4. Evaluator grades the response
-                t3 = time.monotonic()
-                eval_result = await self.evaluator.evaluate(
-                    turn_history=self.player.history[:-1],  # All except current
-                    current_action=action,
-                    narrator_response=narrative,
-                    mechanical_result=mechanics,
-                )
-                t4 = time.monotonic()
-
-                # 5. Capture diagnostics
+                # 4. Capture diagnostics
                 mem_state = session._get_memory_diagnostics()
                 new_issues = session.all_issues[prev_issue_count:]
                 prev_issue_count = len(session.all_issues)
-
-                # 6. Print evaluation
-                if eval_result.parse_error:
-                    print(f"  {C.YELLOW}[EVAL ERROR] {eval_result.parse_error[:80]}{C.RESET}")
-                else:
-                    scores = (
-                        f"SC={eval_result.scene_consistency.score} "
-                        f"CF={eval_result.contradiction_free.score} "
-                        f"NC={eval_result.npc_continuity.score} "
-                        f"NQ={eval_result.narrative_quality.score} "
-                        f"avg={eval_result.average_score:.1f}"
-                    )
-                    print(f"  {C.GREEN}[EVAL] {scores}{C.RESET}")
-
-                    for issue in eval_result.all_flagged_issues:
-                        print(f"  {C.YELLOW}  ⚠ {issue}{C.RESET}")
 
                 # Memory state
                 if mem_state:
@@ -616,11 +665,10 @@ class EvalSession:
                           f"summary={'yes' if mem_state.get('has_summary') else 'no'} "
                           f"scratchpad={mem_state.get('scratchpad_entries', '?')}{C.RESET}")
 
-                # Planted details
                 if self.player.planted_details:
                     print(f"  {C.DIM}[PLANTED] {', '.join(self.player.planted_details[-3:])}{C.RESET}")
 
-                # 7. Record
+                # 5. Record turn (no evaluation yet)
                 self.turns.append(TurnRecord(
                     turn=turn,
                     phase=phase,
@@ -628,22 +676,30 @@ class EvalSession:
                     narrative=narrative[:2000],
                     mechanics=mechanics,
                     combat_triggered=response.combat_triggered,
-                    evaluation=asdict(eval_result) if not eval_result.parse_error else {"error": eval_result.parse_error},
+                    evaluation=None,
                     elapsed_game=t2 - t1,
-                    elapsed_eval=t4 - t3,
+                    elapsed_eval=0,
                     harness_issues=[{"severity": i.severity, "category": i.category, "desc": i.description} for i in new_issues],
                     memory_state=mem_state or {},
                 ))
 
-                # Save incrementally
                 self._save_log()
-
-                # Brief pause between turns
                 await asyncio.sleep(1)
 
         finally:
             self.finished_at = time.strftime("%Y-%m-%d %H:%M:%S")
             await session.cleanup()
+
+        # Evaluate the full transcript in one shot
+        header("EVALUATING TRANSCRIPT")
+        print(f"  Sending {len(self.turns)} turns to evaluator...")
+        t_eval_start = time.monotonic()
+        transcript_eval = await self.evaluator.evaluate_transcript(self.turns)
+        t_eval_end = time.monotonic()
+        print(f"  Evaluation completed in {t_eval_end - t_eval_start:.1f}s")
+
+        # Attach evaluation to the report
+        self._transcript_eval = transcript_eval
 
         # Print final report
         self._print_report()
@@ -652,6 +708,8 @@ class EvalSession:
     def _save_log(self, final: bool = False):
         log_dir = Path("data/eval_logs")
         log_dir.mkdir(parents=True, exist_ok=True)
+
+        transcript_eval = getattr(self, "_transcript_eval", None)
 
         report = {
             "config": {
@@ -662,7 +720,9 @@ class EvalSession:
                 "started_at": self.started_at,
                 "finished_at": self.finished_at,
             },
-            "summary": self._compute_summary(),
+            "evaluation": asdict(transcript_eval) if transcript_eval and not transcript_eval.parse_error else (
+                {"error": transcript_eval.parse_error} if transcript_eval else None
+            ),
             "planted_details": self.player.planted_details,
             "turns": [asdict(t) for t in self.turns],
         }
@@ -679,54 +739,20 @@ class EvalSession:
                 json.dump(report, f, indent=2, default=str)
             print(f"\n  Log saved: {path}")
 
-    def _compute_summary(self) -> dict:
-        dims = ["scene_consistency", "contradiction_free",
-                "npc_continuity", "narrative_quality"]
-        dim_scores = {d: [] for d in dims}
-
-        total_flags = 0
-        harness_errors = 0
-
-        for t in self.turns:
-            ev = t.evaluation
-            if not ev or "error" in ev:
-                continue
-            for d in dims:
-                s = ev.get(d, {}).get("score", 0)
-                if s > 0:
-                    dim_scores[d].append(s)
-                flags = ev.get(d, {}).get("flagged_issues", [])
-                total_flags += len(flags)
-            harness_errors += len(t.harness_issues)
-
-        averages = {}
-        for d in dims:
-            scores = dim_scores[d]
-            averages[d] = round(sum(scores) / len(scores), 2) if scores else 0
-
-        all_scores = [s for sl in dim_scores.values() for s in sl]
-        overall = round(sum(all_scores) / len(all_scores), 2) if all_scores else 0
-
-        return {
-            "overall_average": overall,
-            "dimension_averages": averages,
-            "total_flagged_issues": total_flags,
-            "harness_errors": harness_errors,
-            "turns_evaluated": len([t for t in self.turns if t.evaluation and "error" not in t.evaluation]),
-        }
-
     def _print_report(self):
-        summary = self._compute_summary()
-        avgs = summary["dimension_averages"]
+        ev = getattr(self, "_transcript_eval", None)
 
         header("EVALUATION REPORT")
         elapsed = ""
         if self.started_at and self.finished_at:
-            elapsed = f" ({self.started_at} → {self.finished_at})"
-        print(f"  {self.total_turns} turns, persona={self.persona_name}{elapsed}")
-        print(f"  Narrator: Groq qwen3:32b")
+            elapsed = f" ({self.started_at} \u2192 {self.finished_at})"
+        print(f"  {len(self.turns)} turns, persona={self.persona_name}{elapsed}")
         print(f"  Player: {self._gemini_player_model}")
         print(f"  Evaluator: {self._gemini_eval_model}")
+
+        if not ev or ev.parse_error:
+            print(f"\n  {C.RED}Evaluation failed: {ev.parse_error if ev else 'no result'}{C.RESET}")
+            return
 
         print()
         labels = {
@@ -736,37 +762,37 @@ class EvalSession:
             "narrative_quality": "Narrative Quality  ",
         }
         for dim, label in labels.items():
-            score = avgs.get(dim, 0)
+            dim_score = getattr(ev, dim, None)
+            score = dim_score.score if dim_score else 0
             bar_filled = int(score * 2)
             bar_empty = 10 - bar_filled
-            bar = "█" * bar_filled + "░" * bar_empty
+            bar = "\u2588" * bar_filled + "\u2591" * bar_empty
             color = C.GREEN if score >= 4 else C.YELLOW if score >= 3 else C.RED
-            print(f"  {label}  {color}{bar}  {score:.1f}/5{C.RESET}")
+            print(f"  {label}  {color}{bar}  {score}/5{C.RESET}")
+            if dim_score and dim_score.justification:
+                print(f"  {C.DIM}  {dim_score.justification[:100]}{C.RESET}")
 
-        overall = summary["overall_average"]
+        overall = ev.average_score
         bar_filled = int(overall * 2)
         bar_empty = 10 - bar_filled
-        bar = "█" * bar_filled + "░" * bar_empty
+        bar = "\u2588" * bar_filled + "\u2591" * bar_empty
         color = C.GREEN if overall >= 4 else C.YELLOW if overall >= 3 else C.RED
-        print(f"  {'─' * 40}")
-        print(f"  {C.BOLD}OVERALL           {color}{bar}  {overall:.1f}/5{C.RESET}")
+        separator = "\u2500" * 40
+        print(f"  {separator}")
+        print(f"  {C.BOLD}OVERALL             {color}{bar}  {overall:.1f}/5{C.RESET}")
 
         # Flagged issues
-        all_flags = []
-        for t in self.turns:
-            ev = t.evaluation
-            if not ev or "error" in ev:
-                continue
-            for dim in labels:
-                for issue in ev.get(dim, {}).get("flagged_issues", []):
-                    all_flags.append((t.turn, dim, issue))
-
+        all_flags = ev.all_flagged_issues
         if all_flags:
             print(f"\n  {C.YELLOW}Flagged Issues ({len(all_flags)}):{C.RESET}")
-            for turn_num, dim, issue in all_flags[:15]:  # Cap at 15
-                print(f"    Turn {turn_num} [{dim}]: {issue}")
-            if len(all_flags) > 15:
-                print(f"    ... and {len(all_flags) - 15} more (see log)")
+            for issue in all_flags[:20]:
+                print(f"    \u26a0 {issue}")
+            if len(all_flags) > 20:
+                print(f"    ... and {len(all_flags) - 20} more (see log)")
+
+        if ev.overall_notes:
+            print(f"\n  {C.CYAN}Evaluator Notes:{C.RESET}")
+            print(f"    {ev.overall_notes[:300]}")
 
         # Planted details
         if self.player.planted_details:
