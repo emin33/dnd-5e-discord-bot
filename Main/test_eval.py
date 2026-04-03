@@ -906,4 +906,16 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print(f"\n{C.YELLOW}Interrupted — cleaning up...{C.RESET}")
+        # Force-close any open DB connections so WAL files release
+        try:
+            from dnd_bot.data.database import _db
+            if _db and _db.connection:
+                import asyncio as _aio
+                _aio.get_event_loop().run_until_complete(_db.close())
+        except Exception:
+            pass
+        print(f"{C.GREEN}Done. No need to close the terminal.{C.RESET}")
