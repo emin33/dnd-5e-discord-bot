@@ -106,52 +106,103 @@ class MemoryManager:
         self._message_count += 1
 
     async def _compact_overflow(self) -> None:
-        """Compact overflow messages into a running narrative summary.
+        """Compact overflow messages with typed fact extraction.
 
-        Inspired by the continuation strategy from agentic orchestration:
-        summarize old messages, merge with existing summary, preserve recent verbatim.
+        Inspired by the AutoDream consolidation pattern from agentic orchestration:
+        - Summarize old messages into narrative prose
+        - Extract typed facts (NPCs, locations, events) into pinned blocks
+          that survive future compaction intact
+        - Detect contradictions with previously established facts
         """
         overflow_text = self.buffer.get_overflow_text()
         if not overflow_text:
             return
 
+        # Include existing pinned facts so the LLM can detect contradictions
+        existing_facts = ""
+        if self.buffer.pinned_facts:
+            existing_facts = (
+                "\n\nPreviously established facts (check for contradictions):\n"
+                + "\n".join(f"- {f}" for f in self.buffer.pinned_facts)
+            )
+
         try:
             client = get_ollama_client()
 
             compact_prompt = (
-                "Summarize this D&D game conversation into a brief narrative paragraph "
-                "(3-5 sentences). Focus on what happened, key decisions, and story progression. "
+                "You are a D&D session summarizer. Given the conversation below, produce TWO sections:\n\n"
+                "SUMMARY: A brief narrative paragraph (3-5 sentences) of what happened. "
                 "Write in past tense, third person.\n\n"
-                f"Conversation:\n{overflow_text}"
+                "FACTS: Extract key facts as a bulleted list. One fact per line. Categories:\n"
+                "- NPC: <name> - <brief description, disposition>\n"
+                "- LOCATION: <name> - <brief description>\n"
+                "- EVENT: <what happened>\n"
+                "- ITEM: <item name> - <who has it, where it is>\n\n"
+                "Only extract facts that are ESTABLISHED (stated by the DM), not speculated.\n"
+                "If an NPC was never given a name, write 'NPC: unnamed <role> - <description>'.\n"
+                f"{existing_facts}\n\n"
+                f"Conversation:\n{overflow_text}\n\n"
+                "Respond with SUMMARY: then FACTS:"
             )
 
             response = await client.chat(
                 messages=[
-                    {"role": "system", "content": "You are a concise D&D session summarizer."},
+                    {"role": "system", "content": "You extract structured facts from D&D conversations."},
                     {"role": "user", "content": compact_prompt},
                 ],
-                temperature=0.3,
-                max_tokens=200,
+                temperature=0.2,
+                max_tokens=400,
                 think=False,
             )
 
-            summary = response.content.strip() if response.content else ""
+            raw = response.content.strip() if response.content else ""
+            if not raw:
+                self.buffer._overflow_buffer.clear()
+                return
+
+            # Parse SUMMARY and FACTS sections
+            summary, facts = self._parse_compact_response(raw)
+
             if summary:
-                self.buffer.compact(summary)
+                self.buffer.compact(summary, facts)
                 logger.info(
                     "overflow_compacted",
                     campaign_id=self.campaign_id,
                     overflow_messages=len(self.buffer._overflow_buffer),
                     summary_length=len(summary),
+                    facts_extracted=len(facts),
+                    total_pinned_facts=len(self.buffer.pinned_facts),
                 )
             else:
-                # Failed to summarize — just clear overflow to prevent infinite growth
-                self.buffer._overflow_buffer.clear()
+                # Couldn't parse — use raw text as fallback summary
+                self.buffer.compact(raw[:500])
+                logger.warning("compact_parse_fallback", raw_preview=raw[:100])
 
         except Exception as e:
             logger.warning("overflow_compaction_failed", error=str(e))
-            # Clear overflow to prevent re-trying the same batch
             self.buffer._overflow_buffer.clear()
+
+    def _parse_compact_response(self, raw: str) -> tuple[str, list[str]]:
+        """Parse SUMMARY: and FACTS: sections from compaction response."""
+        summary = ""
+        facts = []
+
+        # Find SUMMARY section
+        import re
+        summary_match = re.search(r'SUMMARY:\s*\n?(.*?)(?=FACTS:|$)', raw, re.DOTALL | re.IGNORECASE)
+        if summary_match:
+            summary = summary_match.group(1).strip()
+
+        # Find FACTS section
+        facts_match = re.search(r'FACTS:\s*\n?(.*)', raw, re.DOTALL | re.IGNORECASE)
+        if facts_match:
+            facts_text = facts_match.group(1).strip()
+            for line in facts_text.split("\n"):
+                line = line.strip().lstrip("-").lstrip("*").strip()
+                if line and any(line.upper().startswith(prefix) for prefix in ["NPC:", "LOCATION:", "EVENT:", "ITEM:"]):
+                    facts.append(line)
+
+        return summary, facts
 
     def add_system_event(self, content: str) -> None:
         """Add a system event (combat result, roll, etc.)."""
@@ -307,6 +358,14 @@ class MemoryManager:
         # Core memory
         parts.append(self.core.to_context_string())
         parts.append("")
+
+        # Pinned facts from compaction (typed, never re-summarized)
+        if self.buffer.pinned_facts:
+            parts.append("<established_facts>")
+            for fact in self.buffer.pinned_facts:
+                parts.append(f"- {fact}")
+            parts.append("</established_facts>")
+            parts.append("")
 
         # Running compacted narrative from message overflow
         if self.buffer.running_summary:

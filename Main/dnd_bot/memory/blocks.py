@@ -92,6 +92,7 @@ class MessageBuffer:
         self._messages: list[Message] = []
         self._overflow_buffer: list[Message] = []  # Messages waiting for compaction
         self._running_summary: str = ""  # Compacted "story so far"
+        self._pinned_facts: list[str] = []  # Typed facts that survive compaction
 
     def add(self, message: Message) -> None:
         """Add a message to the buffer. Overflow goes to compaction buffer."""
@@ -118,18 +119,38 @@ class MessageBuffer:
                 lines.append(msg.content)
         return "\n\n".join(lines)
 
-    def compact(self, summary: str) -> None:
-        """Merge a new summary with existing running summary, clear overflow."""
+    def compact(self, summary: str, extracted_facts: Optional[list[str]] = None) -> None:
+        """Merge a new summary with existing running summary, clear overflow.
+
+        Args:
+            summary: Narrative prose summary of the compacted messages.
+            extracted_facts: Typed facts (NPC names, locations, events) that must
+                survive future compaction intact. These are pinned separately from
+                the narrative and never re-summarized.
+        """
         if self._running_summary:
             self._running_summary = f"{self._running_summary}\n\n{summary}"
         else:
             self._running_summary = summary
+
+        # Pin extracted facts — deduplicated, never re-summarized
+        if extracted_facts:
+            for fact in extracted_facts:
+                fact = fact.strip()
+                if fact and fact not in self._pinned_facts:
+                    self._pinned_facts.append(fact)
+
         self._overflow_buffer.clear()
 
     @property
     def running_summary(self) -> str:
         """The running compacted narrative of older exchanges."""
         return self._running_summary
+
+    @property
+    def pinned_facts(self) -> list[str]:
+        """Typed facts extracted during compaction that must survive indefinitely."""
+        return self._pinned_facts
 
     def add_user_message(
         self,

@@ -111,6 +111,43 @@ class TestMessageBufferOverflow:
         assert messages[0].content == "msg 2"
         assert messages[2].content == "msg 4"
 
+    def test_compact_with_pinned_facts(self):
+        """compact() stores typed facts separately from narrative summary."""
+        buf = MessageBuffer(max_messages=5)
+        buf.compact(
+            "The party entered the tavern and met the innkeeper.",
+            ["NPC: Garrick - friendly bartender", "LOCATION: The Silver Tankard - tavern"],
+        )
+
+        assert "Garrick" in buf.pinned_facts[0]
+        assert "Silver Tankard" in buf.pinned_facts[1]
+        assert "tavern" in buf.running_summary
+
+    def test_pinned_facts_deduplicated(self):
+        """Duplicate facts aren't added twice."""
+        buf = MessageBuffer(max_messages=5)
+        buf.compact("First summary.", ["NPC: Garrick - bartender"])
+        buf.compact("Second summary.", ["NPC: Garrick - bartender", "NPC: Mira - merchant"])
+
+        assert len(buf.pinned_facts) == 2  # Garrick + Mira, not Garrick twice
+
+    def test_pinned_facts_survive_multiple_compactions(self):
+        """Facts from early compaction survive later ones."""
+        buf = MessageBuffer(max_messages=5)
+        buf.compact("Part 1.", ["NPC: Aldric - guard captain"])
+        buf.compact("Part 2.", ["LOCATION: Eldermoor - small village"])
+        buf.compact("Part 3.", ["EVENT: Wolves attacked the caravan"])
+
+        assert len(buf.pinned_facts) == 3
+        assert any("Aldric" in f for f in buf.pinned_facts)
+        assert any("Eldermoor" in f for f in buf.pinned_facts)
+        assert any("Wolves" in f for f in buf.pinned_facts)
+
+    def test_pinned_facts_start_empty(self):
+        """Fresh buffer has no pinned facts."""
+        buf = MessageBuffer(max_messages=10)
+        assert buf.pinned_facts == []
+
     def test_system_messages_overflow_too(self):
         """System messages participate in overflow like any other."""
         buf = MessageBuffer(max_messages=3)
@@ -258,6 +295,31 @@ class TestContextBuilding:
         mgr = MemoryManager("test-campaign")
         context = mgr.build_context()
         assert "<story_so_far>" not in context
+
+    def test_context_includes_pinned_facts(self):
+        """build_context includes pinned facts in established_facts block."""
+        mgr = MemoryManager("test-campaign")
+        mgr.buffer._pinned_facts = [
+            "NPC: Garrick - friendly bartender",
+            "LOCATION: Eldermoor - small village",
+        ]
+
+        context = mgr.build_context()
+        assert "<established_facts>" in context
+        assert "Garrick" in context
+        assert "Eldermoor" in context
+        assert "</established_facts>" in context
+
+    def test_context_pinned_facts_before_story(self):
+        """Pinned facts appear before story_so_far in context."""
+        mgr = MemoryManager("test-campaign")
+        mgr.buffer._pinned_facts = ["NPC: Garrick"]
+        mgr.buffer._running_summary = "The party explored."
+
+        context = mgr.build_context()
+        facts_pos = context.index("<established_facts>")
+        story_pos = context.index("<story_so_far>")
+        assert facts_pos < story_pos
 
     def test_context_includes_core_memory(self):
         """build_context always includes core memory."""
