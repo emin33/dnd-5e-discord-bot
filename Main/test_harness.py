@@ -452,6 +452,8 @@ class TestSession:
                 "has_summary": bool(mgr.buffer.running_summary),
                 "summary_len": len(mgr.buffer.running_summary),
                 "summary_preview": mgr.buffer.running_summary[:120] if mgr.buffer.running_summary else "",
+                "pinned_facts": mgr.buffer.pinned_facts[:],
+                "pinned_facts_count": len(mgr.buffer.pinned_facts),
                 "message_count": mgr._message_count,
                 "last_summary_at": mgr._last_summary_at,
                 "is_in_combat": mgr._is_in_combat,

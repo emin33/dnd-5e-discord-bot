@@ -171,12 +171,13 @@ class MemoryManager:
                     overflow_messages=len(self.buffer._overflow_buffer),
                     summary_length=len(summary),
                     facts_extracted=len(facts),
+                    facts=facts[:5],  # Log first 5 facts for debugging
                     total_pinned_facts=len(self.buffer.pinned_facts),
                 )
             else:
                 # Couldn't parse — use raw text as fallback summary
                 self.buffer.compact(raw[:500])
-                logger.warning("compact_parse_fallback", raw_preview=raw[:100])
+                logger.warning("compact_parse_fallback", raw_preview=raw[:200])
 
         except Exception as e:
             logger.warning("overflow_compaction_failed", error=str(e))

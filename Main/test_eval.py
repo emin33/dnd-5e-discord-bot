@@ -698,9 +698,11 @@ class EvalSession:
 
                 # Memory state
                 if mem_state:
+                    facts_count = mem_state.get('pinned_facts_count', 0)
                     print(f"  {C.DIM}[MEM] buf={mem_state.get('buffer_size', '?')} "
                           f"overflow={mem_state.get('overflow_size', '?')} "
                           f"summary={'yes' if mem_state.get('has_summary') else 'no'} "
+                          f"facts={facts_count} "
                           f"scratchpad={mem_state.get('scratchpad_entries', '?')}{C.RESET}")
 
                 if self.player.planted_details:
