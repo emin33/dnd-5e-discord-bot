@@ -53,9 +53,27 @@ class MemoryManager:
     def __init__(self, campaign_id: str):
         self.campaign_id = campaign_id
 
+        # Auto-select buffer size based on narrator provider
+        from ..config import get_settings
+        settings = get_settings()
+        if settings.narrator_buffer_size > 0:
+            buffer_size = settings.narrator_buffer_size
+        elif settings.narrator_provider == "anthropic":
+            buffer_size = 50   # Claude: 1M context window
+        else:
+            buffer_size = 20   # Qwen: smaller context
+
+        if settings.narrator_compaction_threshold > 0:
+            compaction_threshold = settings.narrator_compaction_threshold
+        elif settings.narrator_provider == "anthropic":
+            compaction_threshold = 15
+        else:
+            compaction_threshold = 6
+
         # Initialize memory tiers
         self.core = CoreMemory(campaign_id)
-        self.buffer = MessageBuffer(max_messages=20)
+        self.buffer = MessageBuffer(max_messages=buffer_size)
+        self.buffer._compaction_threshold = compaction_threshold
         self.vector_store = get_vector_store()
 
         # Tracking

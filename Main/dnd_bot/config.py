@@ -63,6 +63,13 @@ class Settings(BaseSettings):
     # "anthropic" routes ONLY narrator calls through Claude API
     narrator_provider: str = "default"
 
+    # Narrator context limits (scale with model context window)
+    # "default" auto-selects based on narrator_provider:
+    #   Qwen/Ollama: buffer=20, compaction threshold=6
+    #   Anthropic Claude: buffer=50, compaction threshold=15
+    narrator_buffer_size: int = 0      # 0 = auto-select
+    narrator_compaction_threshold: int = 0  # 0 = auto-select
+
     # Gemini (used by test_eval.py only — not used in game runtime)
     gemini_api_key: str = ""
 

@@ -105,7 +105,8 @@ class MessageBuffer:
     @property
     def has_pending_compaction(self) -> bool:
         """True if overflow buffer has messages waiting for compaction."""
-        return len(self._overflow_buffer) >= 6  # Compact in batches
+        threshold = getattr(self, '_compaction_threshold', 6)
+        return len(self._overflow_buffer) >= threshold
 
     def get_overflow_text(self) -> str:
         """Get overflow messages as text for summarization."""
