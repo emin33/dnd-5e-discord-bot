@@ -91,6 +91,7 @@ class GeminiClient:
         max_tokens: int = 1024,
         json_mode: bool = False,
         system: Optional[str] = None,
+        think: bool = False,
     ) -> str:
         """Send messages and return text response.
 
@@ -129,6 +130,11 @@ class GeminiClient:
             temperature=temperature,
             max_output_tokens=max_tokens,
         )
+        # Disable thinking unless explicitly requested — Gemini 2.5 Flash
+        # burns output tokens on internal reasoning, truncating short responses
+        # (e.g., "I ask the" instead of a full sentence)
+        if not think:
+            config.thinking_config = types.ThinkingConfig(thinking_budget=0)
         if json_mode:
             config.response_mime_type = "application/json"
 
@@ -577,6 +583,7 @@ Score the transcript as a whole — NOT per-turn averages."""
                 temperature=0.1,
                 max_tokens=4096,
                 json_mode=True,
+                think=True,  # Evaluator benefits from reasoning over the transcript
             )
             return self._parse_eval(raw)
         except Exception as e:
