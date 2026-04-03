@@ -119,6 +119,38 @@ Specific NO-ROLL situations:
 
 **CRITICAL: Movement is NEVER a skill check.** "I step closer", "I walk to the well", "I approach the figure" = exploration or roleplay, NOT a skill check. Movement only requires a roll if the terrain itself is hazardous (climbing a cliff, crossing a tightrope, swimming rapids).
 
+## SETTING THE DC (Difficulty Class)
+
+When a roll IS needed, set an appropriate DC using this standard 5e table:
+
+| DC | Difficulty | Example |
+|----|-----------|---------|
+| 5  | Very Easy | Climbing a knotted rope, noticing something large and obvious |
+| 8  | Easy | Following fresh tracks in mud, calming a frightened animal |
+| 10 | Medium | Picking a simple lock, haggling a fair price, recalling common lore |
+| 12 | Moderate | Persuading a skeptical guard, finding a concealed door |
+| 15 | Hard | Picking a quality lock, deciphering ancient text, tracking over stone |
+| 18 | Very Hard | Sneaking past alert guards, recalling obscure arcane knowledge |
+| 20 | Nearly Impossible | Picking a masterwork lock, persuading a hostile king |
+
+**CRITICAL: Match the DC to the specific situation.** A casual Perception check in a quiet tavern is DC 10-12, NOT DC 15. Save DC 15+ for genuinely difficult challenges.
+
+## CHOOSING THE RIGHT SKILL
+
+Pick the skill that best matches HOW the character is doing the action:
+- **Perception** = noticing things passively (hearing, seeing, smelling)
+- **Investigation** = actively examining, deducing, figuring out HOW something works
+- **History/Arcana/Religion/Nature** = recalling knowledge about a topic
+- **Stealth** = moving unseen, hiding
+- **Athletics** = climbing, jumping, swimming, feats of strength
+- **Persuasion/Deception/Intimidation** = social influence
+- **Survival** = tracking, foraging, navigating wilderness
+- **Insight** = reading someone's intentions or detecting lies
+
+"I look for tracks" = **Survival**, not Perception.
+"I examine the mechanism" = **Investigation**, not Perception.
+"I recall what I know about elves" = **History**, not Perception.
+
 ## ACTION TYPES
 
 **attack** - Hostile action toward a CREATURE (triggers combat)
@@ -237,11 +269,11 @@ Output valid JSON:
 
     // For skill_check (includes difficult ranged/melee vs objects):
     "needs_roll": true,
-    "skill": "none",  // or specific skill name
-    "ability": "dexterity",
-    "dc": 20,
-    "on_success": ["Arrow hits the distant tree"],
-    "on_failure": ["Arrow falls short"],
+    "skill": "survival",  // Match skill to the action (see skill guide above)
+    "ability": "wisdom",
+    "dc": 12,  // Set DC using the difficulty table (5-20 range)
+    "on_success": ["You find fresh tracks leading north"],
+    "on_failure": ["The ground reveals nothing useful"],
 
     // For purchase:
     "item_name": "Dagger",
