@@ -342,6 +342,7 @@ class SceneEntityRegistry:
 
         lines = [
             "## NPC & Entity Roster (AUTHORITATIVE — use these exact names)",
+            "**IMPORTANT: Do NOT reuse any of these names for new characters.**",
         ]
 
         if npcs:
