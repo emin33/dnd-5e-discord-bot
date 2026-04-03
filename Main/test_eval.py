@@ -288,23 +288,38 @@ class PlayerAgent:
             "goals": self.persona.goals,
         })
 
-        # Build conversation context
-        messages = []
-        for entry in self.history[-10:]:  # Last 10 turns for context
-            messages.append({"role": "user", "content": f"[Your action]: {entry['action']}"})
-            messages.append({"role": "assistant", "content": f"[DM response]: {entry['narrative_snippet']}"})
+        # Build conversation context as a single user message summary
+        # (avoids format-leak where the model echoes "[Your action]:" prefixes)
+        history_lines = []
+        for entry in self.history[-10:]:
+            history_lines.append(f"You: {entry['action']}")
+            # Truncate narrative to just the first sentence for context
+            snippet = entry["narrative_snippet"].split(".")[0] + "." if entry["narrative_snippet"] else "(no response)"
+            history_lines.append(f"DM: {snippet}")
+        history_text = "\n".join(history_lines) if history_lines else "(Session just started)"
 
         # Current turn instruction with dedup
         phase_instruction = self._build_phase_instruction(phase)
-        recent_actions = [e["action"] for e in self.history[-3:]]
+
+        # Stronger dedup: summarize what NOT to do
+        recent_actions = [e["action"] for e in self.history[-5:]]
         dedup = ""
         if recent_actions:
-            dedup = "\n\nDO NOT repeat these recent actions:\n" + "\n".join(f"- {a}" for a in recent_actions)
+            dedup = (
+                "\n\nIMPORTANT — You have been doing similar things recently. "
+                "Do something DIFFERENT. Change location, talk to someone new, "
+                "or try a completely different activity. Do NOT:\n"
+                + "\n".join(f"- {a}" for a in recent_actions)
+            )
 
-        messages.append({
+        messages = [{
             "role": "user",
-            "content": f"Turn {turn}/{total}. {phase_instruction}{dedup}\nGenerate your next action:",
-        })
+            "content": (
+                f"Recent history:\n{history_text}\n\n"
+                f"Turn {turn}/{total}. {phase_instruction}{dedup}\n\n"
+                "Generate your next action (one sentence, first person):"
+            ),
+        }]
 
         action = await self.client.chat(
             messages=messages,
@@ -320,29 +335,41 @@ class PlayerAgent:
 
         # Auto-extract planted details from Phase 1 narratives
         if phase == "plant" and narrative:
+            skip_words = {"The", "You", "Your", "This", "That", "But", "And", "Not", "His", "Her"}
+
             # Look for NPC names (capitalized words after common introductions)
-            for pattern in [
-                r'"(?:Name\'s|I\'m|They call me|I am) (\w+)"',
-                r'"(\w+),"? (?:he|she|they) (?:say|said|answer|replied)',
+            name_patterns = [
+                r'(?:Name\'s|I\'m|They call me|I am|call me|my name is|name is) (\w+)',
                 r'introduces (?:himself|herself|themselves) as (\w+)',
-            ]:
+                r'"(\w+)(?:,| )" (?:he|she|they) (?:say|said|answer|replied|boom|grunt)',
+                r'"(\w+)\. (\w+) (\w+)\."',  # "Thaddeus. Thaddeus Grange."
+                r'"(\w+), at your service"',
+            ]
+            for pattern in name_patterns:
                 matches = re.findall(pattern, narrative, re.IGNORECASE)
                 for m in matches:
-                    if m and len(m) > 2 and m not in ("The", "You", "Your", "This"):
-                        detail = f"NPC named '{m}'"
-                        if detail not in self.planted_details:
-                            self.planted_details.append(detail)
+                    # findall returns tuples for multi-group patterns
+                    names = [m] if isinstance(m, str) else [g for g in m if g]
+                    for name in names:
+                        name = name.strip()
+                        if name and len(name) > 2 and name not in skip_words and name[0].isupper():
+                            detail = f"NPC named '{name}'"
+                            if detail not in self.planted_details:
+                                self.planted_details.append(detail)
 
             # Look for location/landmark names
-            for pattern in [
-                r'(?:called|named|known as) ["\']?the ([A-Z][\w\s]+?)["\']?[,.\s]',
-                r'the ([A-Z][\w]+ (?:Tavern|Inn|Gate|Bridge|Tower|Temple|Market))',
-            ]:
+            location_patterns = [
+                r"(?:called|named|known as|it's) [\"']?(?:the )?([A-Z][\w]+(?: [A-Z][\w]+)*)[\"']?[,.\s]",
+                r'the ([A-Z][\w]+ (?:Tavern|Inn|Gate|Bridge|Tower|Temple|Market|Glade|Forest|Village|Square))',
+            ]
+            for pattern in location_patterns:
                 matches = re.findall(pattern, narrative)
                 for m in matches:
-                    detail = f"Location: '{m.strip()}'"
-                    if detail not in self.planted_details:
-                        self.planted_details.append(detail)
+                    m = m.strip() if isinstance(m, str) else m
+                    if m and len(m) > 2:
+                        detail = f"Location: '{m}'"
+                        if detail not in self.planted_details:
+                            self.planted_details.append(detail)
 
 
 # =============================================================================

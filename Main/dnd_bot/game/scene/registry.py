@@ -326,6 +326,42 @@ class SceneEntityRegistry:
             return " [allied]"
         return ""
 
+    def get_narrator_roster(self) -> str:
+        """Build an authoritative NPC/entity roster for the narrator.
+
+        This is injected into narrator context so it knows EXACTLY who is
+        present and what their canonical names are. Prevents the narrator
+        from inventing or confusing NPC names.
+        """
+        npcs = self.get_by_type(EntityType.NPC)
+        creatures = self.get_by_type(EntityType.CREATURE)
+        objects = self.get_by_type(EntityType.OBJECT)
+
+        if not npcs and not creatures and not objects:
+            return ""
+
+        lines = [
+            "## NPC & Entity Roster (AUTHORITATIVE — use these exact names)",
+        ]
+
+        if npcs:
+            for e in npcs:
+                disp = e.disposition.value if e.disposition else "neutral"
+                desc = e.description[:120] if e.description else "No description"
+                lines.append(f"- **{e.name}** ({disp}): {desc}")
+
+        if creatures:
+            for e in creatures:
+                desc = e.description[:80] if e.description else ""
+                lines.append(f"- **{e.name}** (creature): {desc}")
+
+        if objects:
+            for e in objects:
+                desc = e.description[:80] if e.description else ""
+                lines.append(f"- {e.name}: {desc}")
+
+        return "\n".join(lines)
+
     def get_scene_summary(self) -> str:
         """Get a brief summary for the scene memory block."""
         entities = self.get_all()

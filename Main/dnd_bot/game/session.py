@@ -572,6 +572,10 @@ class GameSessionManager:
             entity_context = scene_registry.get_triage_context()
             if entity_context:
                 scene_context += f"\n\n### Entities Present\n{entity_context}"
+            # Authoritative NPC roster for narrator consistency
+            roster = scene_registry.get_narrator_roster()
+            if roster:
+                scene_context += f"\n\n{roster}"
 
         # Build full context from memory
         memory_context = memory.build_context(current_input)
