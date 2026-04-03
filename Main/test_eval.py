@@ -137,9 +137,10 @@ class GeminiClient:
                 return response.text or ""
             except Exception as e:
                 last_err = e
-                if "429" in str(e) or "quota" in str(e).lower():
+                err_str = str(e)
+                if "429" in err_str or "quota" in err_str.lower() or "503" in err_str or "UNAVAILABLE" in err_str:
                     wait = 2 ** (attempt + 1)
-                    print(f"  {C.DIM}[Gemini rate limit, waiting {wait}s...]{C.RESET}")
+                    print(f"  {C.DIM}[Gemini {err_str[:30]}..., retrying in {wait}s]{C.RESET}")
                     await asyncio.sleep(wait)
                 else:
                     raise
@@ -254,11 +255,16 @@ class PlayerAgent:
             messages.append({"role": "user", "content": f"[Your action]: {entry['action']}"})
             messages.append({"role": "assistant", "content": f"[DM response]: {entry['narrative_snippet']}"})
 
-        # Current turn instruction
+        # Current turn instruction with dedup
         phase_instruction = self._build_phase_instruction(phase)
+        recent_actions = [e["action"] for e in self.history[-3:]]
+        dedup = ""
+        if recent_actions:
+            dedup = "\n\nDO NOT repeat these recent actions:\n" + "\n".join(f"- {a}" for a in recent_actions)
+
         messages.append({
             "role": "user",
-            "content": f"Turn {turn}/{total}. {phase_instruction}\nGenerate your next action:",
+            "content": f"Turn {turn}/{total}. {phase_instruction}{dedup}\nGenerate your next action:",
         })
 
         action = await self.client.chat(
@@ -304,7 +310,7 @@ class PlayerAgent:
 # Narrator Evaluator
 # =============================================================================
 
-EVAL_SYSTEM = """You are a D&D narrator quality evaluator. You review a Dungeon Master's narration for consistency, accuracy, and quality.
+EVAL_SYSTEM = """You are a D&D narrator quality evaluator. You have the FULL conversation transcript and review each new DM response for factual consistency and quality.
 
 You will receive:
 1. The full conversation history (previous turns)
@@ -319,17 +325,31 @@ Score each dimension 1-5:
 - 4 = Good, minor or no issues
 - 5 = Excellent, exceptional quality
 
-IMPORTANT SCORING GUIDELINES:
-- Score memory_accuracy as 3 when no earlier details are being referenced (early turns)
-- For hallucination_free: check if narrator described actions the player didn't take, invented dice results, or granted items/abilities the character doesn't have
-- Flag SPECIFIC issues with brief quoted text
-- Be fair but critical — 3 is the baseline for "fine"
+## EVALUATION DIMENSIONS
+
+**scene_consistency**: Is the physical setting consistent? If the party is in a tavern, they shouldn't suddenly be at a crossroads without transition. Are objects, furniture, and environmental details stable across turns? Score 3 if there's no scene to compare against yet.
+
+**contradiction_free**: Does the narrator contradict ESTABLISHED FACTS from earlier in the conversation? Examples of real contradictions:
+- An NPC who died earlier reappears alive
+- The narrator says it's raining when it was clearly sunny moments ago with no transition
+- A locked door that was already opened is described as locked again
+- The narrator says the player did something they didn't do in THIS turn's action
+NOTE: The narrator SHOULD embellish player actions with physical details (describing them crouching, scanning, drawing a weapon). That is GOOD narration, NOT a contradiction. Only flag things that conflict with established facts.
+
+**npc_continuity**: Do NPCs maintain consistent names, personalities, and status across turns? Is a friendly NPC still friendly (unless something changed)? Are NPCs in the right location? If the bartender was behind the bar, he shouldn't be outside unless he walked there.
+
+**narrative_quality**: Is the prose vivid and engaging? Does it use sensory details? Does it give NPCs distinct voices? Does it create forward momentum that invites the player to act? Does it avoid repetitive phrasing across turns?
+
+IMPORTANT:
+- Score 3 is baseline "fine, no issues." Reserve 1-2 for actual problems, 4-5 for good/great.
+- On early turns (1-3), score scene_consistency and contradiction_free as 4 unless there's a clear problem — there's not much history to contradict yet.
+- Flag SPECIFIC issues with a brief description of the contradiction, NOT just quoted text.
+- The narrator adding physical flavor to actions (crouching, scanning, gripping a weapon) is NOT a contradiction.
 
 Respond with ONLY valid JSON matching this exact structure:
 {
   "scene_consistency": {"score": N, "justification": "...", "flagged_issues": []},
-  "memory_accuracy": {"score": N, "justification": "...", "flagged_issues": []},
-  "hallucination_free": {"score": N, "justification": "...", "flagged_issues": []},
+  "contradiction_free": {"score": N, "justification": "...", "flagged_issues": []},
   "npc_continuity": {"score": N, "justification": "...", "flagged_issues": []},
   "narrative_quality": {"score": N, "justification": "...", "flagged_issues": []},
   "overall_notes": "..."
@@ -346,8 +366,7 @@ class DimensionScore:
 @dataclass
 class EvalResult:
     scene_consistency: DimensionScore = field(default_factory=DimensionScore)
-    memory_accuracy: DimensionScore = field(default_factory=DimensionScore)
-    hallucination_free: DimensionScore = field(default_factory=DimensionScore)
+    contradiction_free: DimensionScore = field(default_factory=DimensionScore)
     npc_continuity: DimensionScore = field(default_factory=DimensionScore)
     narrative_quality: DimensionScore = field(default_factory=DimensionScore)
     overall_notes: str = ""
@@ -357,8 +376,7 @@ class EvalResult:
     def average_score(self) -> float:
         scores = [
             self.scene_consistency.score,
-            self.memory_accuracy.score,
-            self.hallucination_free.score,
+            self.contradiction_free.score,
             self.npc_continuity.score,
             self.narrative_quality.score,
         ]
@@ -368,8 +386,8 @@ class EvalResult:
     @property
     def all_flagged_issues(self) -> list[str]:
         issues = []
-        for dim in [self.scene_consistency, self.memory_accuracy,
-                     self.hallucination_free, self.npc_continuity, self.narrative_quality]:
+        for dim in [self.scene_consistency, self.contradiction_free,
+                     self.npc_continuity, self.narrative_quality]:
             issues.extend(dim.flagged_issues)
         return issues
 
@@ -414,7 +432,7 @@ Evaluate the DM's response above. Return ONLY the JSON scores."""
                 messages=[{"role": "user", "content": prompt}],
                 system=EVAL_SYSTEM,
                 temperature=0.1,
-                max_tokens=800,
+                max_tokens=2048,
                 json_mode=True,
             )
             return self._parse_eval(raw)
@@ -437,7 +455,7 @@ Evaluate the DM's response above. Return ONLY the JSON scores."""
 
         result = EvalResult(overall_notes=data.get("overall_notes", ""))
 
-        for dim_name in ["scene_consistency", "memory_accuracy", "hallucination_free",
+        for dim_name in ["scene_consistency", "contradiction_free",
                          "npc_continuity", "narrative_quality"]:
             dim_data = data.get(dim_name, {})
             if isinstance(dim_data, dict):
@@ -581,8 +599,7 @@ class EvalSession:
                 else:
                     scores = (
                         f"SC={eval_result.scene_consistency.score} "
-                        f"MA={eval_result.memory_accuracy.score} "
-                        f"HF={eval_result.hallucination_free.score} "
+                        f"CF={eval_result.contradiction_free.score} "
                         f"NC={eval_result.npc_continuity.score} "
                         f"NQ={eval_result.narrative_quality.score} "
                         f"avg={eval_result.average_score:.1f}"
@@ -663,7 +680,7 @@ class EvalSession:
             print(f"\n  Log saved: {path}")
 
     def _compute_summary(self) -> dict:
-        dims = ["scene_consistency", "memory_accuracy", "hallucination_free",
+        dims = ["scene_consistency", "contradiction_free",
                 "npc_continuity", "narrative_quality"]
         dim_scores = {d: [] for d in dims}
 
@@ -713,11 +730,10 @@ class EvalSession:
 
         print()
         labels = {
-            "scene_consistency": "Scene Consistency",
-            "memory_accuracy": "Memory Accuracy ",
-            "hallucination_free": "Hallucination-Free",
-            "npc_continuity": "NPC Continuity   ",
-            "narrative_quality": "Narrative Quality",
+            "scene_consistency": "Scene Consistency  ",
+            "contradiction_free": "Contradiction-Free ",
+            "npc_continuity": "NPC Continuity     ",
+            "narrative_quality": "Narrative Quality  ",
         }
         for dim, label in labels.items():
             score = avgs.get(dim, 0)
@@ -770,6 +786,9 @@ async def main():
     parser.add_argument("--turns", type=int, default=12, help="Number of eval turns (default: 12)")
     parser.add_argument("--persona", type=str, default="default",
                         choices=list(PERSONAS.keys()), help="Player persona")
+    parser.add_argument("--provider", type=str, default=None,
+                        choices=["ollama", "groq"],
+                        help="Override narrator LLM provider (default: use .env setting)")
     parser.add_argument("--no-fallback", action="store_true",
                         help="Disable Ollama fallback (Groq-only narration)")
     parser.add_argument("--seed", type=str, default=None,
@@ -780,7 +799,11 @@ async def main():
                         help="Gemini model for evaluator")
     args = parser.parse_args()
 
-    # Disable Ollama fallback if requested (must be set before config loads)
+    # Provider override (must be set before config loads)
+    if args.provider:
+        os.environ["LLM_PROVIDER"] = args.provider
+        print(f"{C.YELLOW}[CONFIG] Narrator provider: {args.provider}{C.RESET}")
+
     if args.no_fallback:
         os.environ["GROQ_FALLBACK_TO_OLLAMA"] = "false"
         print(f"{C.YELLOW}[CONFIG] Ollama fallback disabled — Groq-only narration{C.RESET}")
