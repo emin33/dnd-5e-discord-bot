@@ -109,6 +109,7 @@ class OllamaClient:
         json_mode: bool = False,
         json_schema: Optional[dict] = None,
         think: Optional[bool] = None,
+        tool_choice: Optional[str] = None,
     ) -> LLMResponse:
         """
         Send a chat request to Ollama.
@@ -121,11 +122,31 @@ class OllamaClient:
             json_mode: If True, force JSON output format (simple mode)
             json_schema: Optional JSON schema dict for structured output
             think: If False, disable Qwen3 thinking mode (<think> tags)
+            tool_choice: Tool choice mode - "auto", "required", or a specific
+                tool name. "required" forces the model to call at least one tool.
+                Ollama doesn't support this natively, so we hint via system message.
 
         Returns:
             LLMResponse with content and any tool calls
         """
         loop = asyncio.get_event_loop()
+
+        # If tool_choice is set and Ollama doesn't support it natively,
+        # add a system hint to strongly encourage tool use
+        if tool_choice and tool_choice != "auto" and tools:
+            hint = {
+                "role": "system",
+                "content": (
+                    "IMPORTANT: You MUST call at least one tool before responding. "
+                    "Do NOT generate a text response without calling a tool first."
+                ),
+            }
+            if tool_choice not in ("required", "any"):
+                hint["content"] = (
+                    f"IMPORTANT: You MUST call the '{tool_choice}' tool. "
+                    "Do NOT generate a text response without calling this tool."
+                )
+            messages = [*messages, hint]
 
         def _sync_chat():
             options = {"temperature": temperature}
@@ -229,6 +250,99 @@ class OllamaClient:
             logger.error("ollama_chat_error", error=str(e))
             raise
 
+    async def chat_stream(
+        self,
+        messages: list[dict],
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None,
+        think: Optional[bool] = None,
+        on_token: Optional[Any] = None,
+    ) -> LLMResponse:
+        """
+        Stream a chat response from Ollama, calling on_token(text) for each chunk.
+
+        Args:
+            messages: List of message dicts
+            temperature: Sampling temperature
+            max_tokens: Maximum tokens to generate
+            think: If False, disable Qwen3 thinking mode
+            on_token: Async callback(str) called with each text chunk
+
+        Returns:
+            Complete LLMResponse after streaming finishes
+        """
+        loop = asyncio.get_event_loop()
+
+        def _sync_stream():
+            options = {"temperature": temperature}
+            if max_tokens:
+                options["num_predict"] = max_tokens
+
+            kwargs = {
+                "model": self.model,
+                "messages": messages,
+                "options": options,
+                "stream": True,
+            }
+            if think is not None:
+                kwargs["think"] = think
+
+            return self._client.chat(**kwargs)
+
+        try:
+            stream = await asyncio.wait_for(
+                loop.run_in_executor(self._executor, _sync_stream),
+                timeout=self.timeout,
+            )
+
+            full_content = []
+            prompt_tokens = 0
+            completion_tokens = 0
+
+            # Iterate over stream chunks in executor to avoid blocking
+            def _collect_chunks():
+                chunks = []
+                for chunk in stream:
+                    chunks.append(chunk)
+                return chunks
+
+            chunks = await loop.run_in_executor(self._executor, _collect_chunks)
+
+            for chunk in chunks:
+                if hasattr(chunk, "message"):
+                    delta = getattr(chunk.message, "content", "") or ""
+                else:
+                    delta = chunk.get("message", {}).get("content", "") or ""
+
+                if delta:
+                    full_content.append(delta)
+                    if on_token:
+                        await on_token(delta)
+
+                # Capture usage from final chunk
+                if hasattr(chunk, "prompt_eval_count"):
+                    prompt_tokens = getattr(chunk, "prompt_eval_count", 0) or 0
+                    completion_tokens = getattr(chunk, "eval_count", 0) or 0
+                elif isinstance(chunk, dict):
+                    prompt_tokens = chunk.get("prompt_eval_count", 0) or 0
+                    completion_tokens = chunk.get("eval_count", 0) or 0
+
+            content = _clean_llm_content("".join(full_content))
+
+            return LLMResponse(
+                content=content,
+                model=self.model,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+            )
+
+        except asyncio.TimeoutError:
+            logger.error("ollama_stream_timeout", timeout=self.timeout, model=self.model)
+            raise TimeoutError(f"LLM stream timed out after {self.timeout}s.")
+        except Exception as e:
+            logger.error("ollama_stream_error", error=str(e))
+            raise
+
     async def generate(
         self,
         prompt: str,
@@ -328,6 +442,7 @@ class GroqClient:
         json_mode: bool = False,
         json_schema: Optional[dict] = None,
         think: Optional[bool] = None,
+        tool_choice: Optional[str] = None,
     ) -> LLMResponse:
         """Send a chat request to Groq API. Same interface as OllamaClient."""
         kwargs: dict[str, Any] = {
@@ -341,6 +456,16 @@ class GroqClient:
 
         if tools:
             kwargs["tools"] = tools
+            # Groq/OpenAI-compatible tool_choice support
+            if tool_choice:
+                if tool_choice in ("auto", "required", "none"):
+                    kwargs["tool_choice"] = tool_choice
+                else:
+                    # Force a specific tool by name
+                    kwargs["tool_choice"] = {
+                        "type": "function",
+                        "function": {"name": tool_choice},
+                    }
 
         # JSON mode — Groq uses OpenAI-style response_format
         if json_schema or json_mode:
@@ -430,7 +555,7 @@ class GroqClient:
                     retries_exhausted=self._max_retries,
                 )
                 return await self._fallback_ollama(
-                    messages, temperature, tools, max_tokens, json_mode, json_schema, think
+                    messages, temperature, tools, max_tokens, json_mode, json_schema, think, tool_choice
                 )
 
             logger.error("groq_chat_error", error=error_str)
@@ -445,6 +570,7 @@ class GroqClient:
         json_mode: bool,
         json_schema: Optional[dict],
         think: Optional[bool],
+        tool_choice: Optional[str] = None,
     ) -> LLMResponse:
         """Fall back to local Ollama when Groq is rate-limited."""
         if not hasattr(self, '_ollama_fallback'):
@@ -464,6 +590,7 @@ class GroqClient:
             json_mode=json_mode,
             json_schema=json_schema,
             think=think,
+            tool_choice=tool_choice,
         )
 
     async def is_available(self) -> bool:

@@ -455,6 +455,14 @@ class DMOrchestrator:
         self._effect_executor: Optional[EffectExecutor] = None
         self._applied_effects: set[str] = set()  # Idempotency tracking
 
+        # DM Scratchpad: session-scoped state for narrator continuity.
+        # Inspired by coordinator scratchpad pattern from agentic orchestration.
+        # Stores narrative hints, unresolved tensions, NPC moods, etc. that
+        # give the narrator richer context without stuffing the prompt.
+        self._scratchpad: list[dict] = []  # [{category, note, turn}]
+        self._scratchpad_turn = 0
+        self._scratchpad_max_entries = 20  # Rolling window
+
     def set_session(self, session: Optional["GameSession"]) -> None:
         """Set the current session context for tool execution."""
         self._current_session = session
@@ -474,12 +482,81 @@ class DMOrchestrator:
         # Executor needs inventory repo - get it async when needed
         self._effect_executor = None  # Lazy init in _process_proposed_effects
 
+    # ==================== DM Scratchpad ====================
+
+    def scratchpad_note(self, category: str, note: str) -> None:
+        """Add a narrative hint to the DM scratchpad.
+
+        Categories: tension, npc_mood, foreshadow, unresolved, atmosphere, plot
+        """
+        self._scratchpad_turn += 1
+        self._scratchpad.append({
+            "category": category,
+            "note": note,
+            "turn": self._scratchpad_turn,
+        })
+        # Trim old entries beyond rolling window
+        if len(self._scratchpad) > self._scratchpad_max_entries:
+            self._scratchpad = self._scratchpad[-self._scratchpad_max_entries:]
+
+    def scratchpad_context(self) -> str:
+        """Build scratchpad context string for narrator injection."""
+        if not self._scratchpad:
+            return ""
+        lines = ["<dm_scratchpad>"]
+        for entry in self._scratchpad:
+            lines.append(f"[{entry['category']}] {entry['note']}")
+        lines.append("</dm_scratchpad>")
+        return "\n".join(lines)
+
+    def scratchpad_clear(self) -> None:
+        """Clear the scratchpad (e.g., on session end)."""
+        self._scratchpad.clear()
+        self._scratchpad_turn = 0
+
+    def _update_scratchpad(
+        self,
+        triage: "TriageResult",
+        resolution: Optional["MechanicalResolution"],
+        effects: list["ProposedEffect"],
+        combat_triggered: bool,
+        player_name: str,
+    ) -> None:
+        """Auto-populate scratchpad from turn results for narrator continuity."""
+        # Track failed checks — good narrative hooks
+        if resolution and not resolution.success and triage.skill:
+            self.scratchpad_note(
+                "unresolved",
+                f"{player_name} failed {triage.skill} check (DC {triage.dc}). "
+                "Something was missed or went wrong.",
+            )
+
+        # Track combat triggers
+        if combat_triggered:
+            self.scratchpad_note("tension", "Combat just broke out. Atmosphere is hostile.")
+
+        # Track NPC interactions from effects
+        for effect in effects:
+            if effect.effect_type == EffectType.ADD_NPC:
+                name = effect.npc_name or "someone"
+                disp = effect.npc_disposition or "neutral"
+                self.scratchpad_note("npc_mood", f"{name} appeared ({disp} disposition).")
+
+        # Track significant damage
+        for effect in effects:
+            if effect.effect_type == EffectType.APPLY_DAMAGE:
+                amount = effect.amount or 0
+                if amount >= 10:
+                    target = effect.target or "someone"
+                    self.scratchpad_note("tension", f"{target} took {amount} damage — situation is dangerous.")
+
     async def process_action(
         self,
         action: str,
         player_name: str,
         context: BrainContext,
         on_mechanics_ready: Optional[Callable] = None,
+        on_narrative_token: Optional[Callable] = None,
     ) -> DMResponse:
         """
         Process a player action through Rules-first triage.
@@ -489,9 +566,23 @@ class DMOrchestrator:
         2. Route to appropriate handler based on action_type
         3. Execute mechanics BEFORE narration
         4. Narrator dramatizes the known outcome
+
+        Args:
+            on_narrative_token: Async callback(str) for streaming narrator tokens
+                to Discord. Enables progressive message edits for better UX.
         """
         context.player_action = action
         context.player_name = player_name
+
+        # Store streaming callback for narrator methods to use
+        self._on_narrative_token = on_narrative_token
+
+        # Inject scratchpad into narrator context for continuity
+        scratchpad_ctx = self.scratchpad_context()
+        if scratchpad_ctx:
+            context.session_summary = (
+                (context.session_summary or "") + "\n\n" + scratchpad_ctx
+            ).strip()
 
         logger.info(
             "processing_action",
@@ -690,6 +781,9 @@ class DMOrchestrator:
             await self._consume_resources(triage.resources_consumed, player_name)
         if triage.currency_spent:
             await self._consume_currency(triage.currency_spent, player_name)
+
+        # Step 6: Auto-populate DM scratchpad from this turn's results
+        self._update_scratchpad(triage, resolution, proposed_effects, combat_triggered, player_name)
 
         return DMResponse(
             narrative=narrative,
@@ -1626,12 +1720,22 @@ Start with PROSE: immediately."""
             ),
         })
 
-        response = await self.narrator.client.chat(
-            messages=messages,
-            temperature=self.narrator.temperature,
-            max_tokens=2000,
-            think=False,
-        )
+        # Use streaming if callback provided and client supports it
+        if self._on_narrative_token and hasattr(self.narrator.client, "chat_stream"):
+            response = await self.narrator.client.chat_stream(
+                messages=messages,
+                temperature=self.narrator.temperature,
+                max_tokens=2000,
+                think=False,
+                on_token=self._on_narrative_token,
+            )
+        else:
+            response = await self.narrator.client.chat(
+                messages=messages,
+                temperature=self.narrator.temperature,
+                max_tokens=2000,
+                think=False,
+            )
 
         raw_content = response.content.strip() if response.content else ""
 
@@ -1648,7 +1752,7 @@ Start with PROSE: immediately."""
         # Validate format: must start with PROSE:
         # =====================================================================
         if not raw_content or not validate_narrator_format(raw_content):
-            # Reprompt once with corrective instruction
+            # Reprompt once with corrective instruction (no streaming for retries)
             logger.warning(
                 "narrator_format_invalid_reprompting",
                 action=action[:50],

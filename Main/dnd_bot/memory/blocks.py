@@ -78,18 +78,58 @@ class Message:
 
 class MessageBuffer:
     """
-    Sliding window buffer of recent messages.
+    Sliding window buffer with context compaction.
 
-    Keeps the last N messages for immediate context.
+    Keeps the last N messages for immediate context. When messages
+    overflow, they're captured in a compaction buffer for summarization
+    into a running "story so far" block (inspired by agentic orchestration
+    continuation strategy — summarize old, preserve recent verbatim).
     """
 
-    def __init__(self, max_messages: int = 20):
+    def __init__(self, max_messages: int = 20, preserve_recent: int = 4):
         self.max_messages = max_messages
-        self._messages: deque[Message] = deque(maxlen=max_messages)
+        self.preserve_recent = preserve_recent  # Messages to keep verbatim
+        self._messages: list[Message] = []
+        self._overflow_buffer: list[Message] = []  # Messages waiting for compaction
+        self._running_summary: str = ""  # Compacted "story so far"
 
     def add(self, message: Message) -> None:
-        """Add a message to the buffer."""
+        """Add a message to the buffer. Overflow goes to compaction buffer."""
         self._messages.append(message)
+        # When we exceed max, move oldest to overflow buffer
+        while len(self._messages) > self.max_messages:
+            overflow_msg = self._messages.pop(0)
+            self._overflow_buffer.append(overflow_msg)
+
+    @property
+    def has_pending_compaction(self) -> bool:
+        """True if overflow buffer has messages waiting for compaction."""
+        return len(self._overflow_buffer) >= 6  # Compact in batches
+
+    def get_overflow_text(self) -> str:
+        """Get overflow messages as text for summarization."""
+        lines = []
+        for msg in self._overflow_buffer:
+            if msg.author_name:
+                lines.append(f"{msg.author_name}: {msg.content}")
+            elif msg.role == "assistant":
+                lines.append(f"DM: {msg.content}")
+            else:
+                lines.append(msg.content)
+        return "\n\n".join(lines)
+
+    def compact(self, summary: str) -> None:
+        """Merge a new summary with existing running summary, clear overflow."""
+        if self._running_summary:
+            self._running_summary = f"{self._running_summary}\n\n{summary}"
+        else:
+            self._running_summary = summary
+        self._overflow_buffer.clear()
+
+    @property
+    def running_summary(self) -> str:
+        """The running compacted narrative of older exchanges."""
+        return self._running_summary
 
     def add_user_message(
         self,

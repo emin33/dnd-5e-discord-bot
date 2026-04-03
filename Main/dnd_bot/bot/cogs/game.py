@@ -634,19 +634,23 @@ class GameCog(commands.Cog):
             _t1 = _time.monotonic()
             logger.info("timing_npc_turn", combatant=current.name, elapsed=f"{_t1 - _t0:.1f}s")
 
+            # Send mechanical results immediately
+            narratable_results = []
             for result in results:
                 result_embed = ActionResultEmbed.build(result)
                 await channel.send(embed=result_embed)
 
-                # Skip narration for END_TURN actions (surprised NPCs, etc.)
-                if result.action.action_type == CombatActionType.END_TURN:
-                    continue
+                # Collect narratable results (skip END_TURN)
+                if result.action.action_type != CombatActionType.END_TURN:
+                    narratable_results.append(result)
 
+            # Batch-narrate all actions from this NPC's turn in one LLM call
+            if narratable_results:
                 _t2 = _time.monotonic()
                 try:
-                    narrative = await coordinator.narrate_result(result)
+                    narrative = await coordinator.narrate_turn_results(narratable_results)
                     _t3 = _time.monotonic()
-                    logger.info("timing_npc_narration", combatant=current.name, elapsed=f"{_t3 - _t2:.1f}s")
+                    logger.info("timing_npc_narration_batch", combatant=current.name, actions=len(narratable_results), elapsed=f"{_t3 - _t2:.1f}s")
                     if narrative:
                         narr_embed = discord.Embed(
                             description=narrative,
@@ -773,15 +777,51 @@ class GameCog(commands.Cog):
                         await message.channel.send(embed=mech_embed)
                         mechanics_sent = True
 
+                # Streaming narrator callback: edit a Discord message progressively
+                import time as _time
+                _stream_msg = None
+                _stream_buf = []
+                _last_edit = 0.0
+                _EDIT_INTERVAL = 0.8  # Seconds between Discord edits (rate limit safe)
+
+                async def on_narrative_token(token: str):
+                    nonlocal _stream_msg, _stream_buf, _last_edit
+                    _stream_buf.append(token)
+                    now = _time.monotonic()
+                    # Throttle edits to avoid Discord rate limits
+                    if now - _last_edit < _EDIT_INTERVAL:
+                        return
+                    _last_edit = now
+                    text = "".join(_stream_buf).strip()
+                    if not text:
+                        return
+                    # Truncate to Discord embed limit
+                    display = text[:4000] + "..." if len(text) > 4000 else text
+                    try:
+                        if _stream_msg is None:
+                            _stream_msg = await message.channel.send(f"*{display}*")
+                        else:
+                            await _stream_msg.edit(content=f"*{display}*")
+                    except Exception:
+                        pass  # Best effort streaming
+
                 response = await self.session_manager.process_message(
                     channel_id=message.channel.id,
                     user_id=message.author.id,
                     user_name=message.author.display_name,
                     content=message.content,
                     on_mechanics_ready=send_mechanics,
+                    on_narrative_token=on_narrative_token,
                 )
 
                 if response:
+                    # If we streamed, delete the streaming message and send final embed
+                    if _stream_msg:
+                        try:
+                            await _stream_msg.delete()
+                        except Exception:
+                            pass
+
                     embeds = format_dm_response(response, skip_mechanics=mechanics_sent)
                     for embed in embeds:
                         await message.channel.send(embed=embed)

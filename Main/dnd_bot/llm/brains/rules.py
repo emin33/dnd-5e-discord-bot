@@ -543,6 +543,7 @@ class RulesBrain(Brain):
             tools=self.tools,
             max_tokens=500,
             think=False,  # Disable Qwen3 thinking mode
+            tool_choice="required",  # Force tool use (dice rolls, state mutations)
         )
 
         return self._parse_response(response)
@@ -585,6 +586,7 @@ class RulesBrain(Brain):
             temperature=self.temperature,
             tools=self.tools,
             think=False,  # Disable Qwen3 thinking mode
+            tool_choice="roll_dice",  # Force dice roll for attacks
         )
 
         return self._parse_response(response)
@@ -614,6 +616,7 @@ class RulesBrain(Brain):
             temperature=self.temperature,
             tools=self.tools,
             think=False,  # Disable Qwen3 thinking mode
+            tool_choice="roll_dice",  # Force dice roll for saves
         )
 
         return self._parse_response(response)
@@ -648,6 +651,7 @@ class RulesBrain(Brain):
             temperature=self.temperature,
             tools=self.tools,
             think=False,  # Disable Qwen3 thinking mode
+            tool_choice="roll_dice",  # Force dice roll for checks
         )
 
         return self._parse_response(response)

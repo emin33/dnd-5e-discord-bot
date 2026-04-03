@@ -1429,19 +1429,47 @@ class CombatTurnCoordinator:
 
     async def narrate_turn_results(self, results: list[ActionResult]) -> str:
         """
-        Narrate multiple action results from a turn.
+        Narrate multiple action results from a turn in a single LLM call.
 
-        Combines results into a single narrative.
+        Batches all results into one prompt to reduce API calls and produce
+        a more cohesive narrative (inspired by parallel worker synthesis).
         """
         if not results:
             return ""
 
-        narratives = []
-        for result in results:
-            narrative = await self.narrate_result(result)
-            narratives.append(narrative)
+        # For single results, use the standard path
+        if len(results) == 1:
+            return await self.narrate_result(results[0])
 
-        return "\n\n".join(narratives)
+        # Batch: combine all outcomes into a single narrator call
+        from ...llm.brains.narrator import MechanicalOutcome, get_narrator
+
+        if self._narrator is None:
+            self._narrator = get_narrator()
+
+        # Build combined outcome descriptions
+        outcome_parts = []
+        for i, result in enumerate(results, 1):
+            desc = self._build_outcome_description(result)
+            outcome_parts.append(f"Action {i}: {desc}")
+
+        combined_description = "\n".join(outcome_parts)
+
+        # Build context from the last result (most current state)
+        context = self._build_narrator_context(results[-1])
+
+        combined_outcome = MechanicalOutcome(
+            action_type="multiaction",
+            success=any(r.success for r in results),
+            description=combined_description,
+            details={
+                "action_count": len(results),
+                "kills": [t for r in results for t in (r.killed_targets or [])],
+            },
+        )
+
+        narrator_result = await self._narrator.narrate_outcome(context, combined_outcome)
+        return narrator_result.content
 
 
 # ==================== Factory ====================

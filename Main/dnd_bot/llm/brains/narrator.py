@@ -282,6 +282,47 @@ class NarratorBrain(Brain):
             raw_response=response.content,
         )
 
+    async def process_streaming(
+        self,
+        context: BrainContext,
+        on_token: Optional[callable] = None,
+    ) -> BrainResult:
+        """Generate narrative with streaming tokens for progressive Discord edits.
+
+        Requires OllamaClient (Groq streaming not yet supported here).
+        Falls back to non-streaming if client doesn't support chat_stream.
+        """
+        if not hasattr(self.client, "chat_stream"):
+            return await self.process(context)
+
+        messages = self._build_messages(context)
+        messages.append({
+            "role": "system",
+            "content": (
+                "###YOUR TASK###\n"
+                "Respond to the player's action or statement above. "
+                "Describe what happens, what they experience, or how the world responds.\n\n"
+                "Write 2-4 paragraphs of vivid prose narration. Begin now:"
+            ),
+        })
+
+        response = await self.client.chat_stream(
+            messages=messages,
+            temperature=self.temperature,
+            max_tokens=1000,
+            think=False,
+            on_token=on_token,
+        )
+
+        content = response.content.strip() if response.content else ""
+        if not content:
+            content = "*The scene continues...*"
+
+        return BrainResult(
+            content=content,
+            raw_response=response.content,
+        )
+
     async def narrate_outcome(
         self,
         context: BrainContext,

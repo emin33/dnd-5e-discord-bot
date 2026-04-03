@@ -1,5 +1,10 @@
-"""Memory manager - coordinates all memory subsystems."""
+"""Memory manager - coordinates all memory subsystems.
 
+Uses a three-gate consolidation pattern (inspired by agentic orchestration
+systems) to avoid wasting LLM calls on rapid-fire exchanges like combat.
+"""
+
+import time
 from typing import Optional
 from datetime import datetime
 import json
@@ -55,9 +60,16 @@ class MemoryManager:
 
         # Tracking
         self._message_count = 0
-        self._summary_threshold = 10  # Summarize every N messages
         self._last_summary_at = 0
         self._session_summaries: list[SessionSummary] = []
+
+        # Three-gate consolidation (inspired by agentic orchestration patterns)
+        self._gate_min_messages = 10       # Gate 1: minimum messages since last summary
+        self._gate_min_elapsed_sec = 60    # Gate 2: minimum seconds since last summary
+        self._gate_not_in_combat = True    # Gate 3: skip during active combat
+        self._last_summary_time = time.monotonic()
+        self._is_in_combat = False
+        self._is_consolidating = False     # Lock gate: prevent concurrent consolidation
 
     async def add_player_message(
         self,
@@ -73,7 +85,11 @@ class MemoryManager:
         )
         self._message_count += 1
 
-        # Check if we should generate a summary
+        # Compact overflow messages into running summary when buffer overflows
+        if self.buffer.has_pending_compaction:
+            await self._compact_overflow()
+
+        # Check if we should generate a session-level summary
         if self._should_summarize():
             await self._generate_incremental_summary()
 
@@ -89,17 +105,94 @@ class MemoryManager:
         )
         self._message_count += 1
 
+    async def _compact_overflow(self) -> None:
+        """Compact overflow messages into a running narrative summary.
+
+        Inspired by the continuation strategy from agentic orchestration:
+        summarize old messages, merge with existing summary, preserve recent verbatim.
+        """
+        overflow_text = self.buffer.get_overflow_text()
+        if not overflow_text:
+            return
+
+        try:
+            client = get_ollama_client()
+
+            compact_prompt = (
+                "Summarize this D&D game conversation into a brief narrative paragraph "
+                "(3-5 sentences). Focus on what happened, key decisions, and story progression. "
+                "Write in past tense, third person.\n\n"
+                f"Conversation:\n{overflow_text}"
+            )
+
+            response = await client.chat(
+                messages=[
+                    {"role": "system", "content": "You are a concise D&D session summarizer."},
+                    {"role": "user", "content": compact_prompt},
+                ],
+                temperature=0.3,
+                max_tokens=200,
+                think=False,
+            )
+
+            summary = response.content.strip() if response.content else ""
+            if summary:
+                self.buffer.compact(summary)
+                logger.info(
+                    "overflow_compacted",
+                    campaign_id=self.campaign_id,
+                    overflow_messages=len(self.buffer._overflow_buffer),
+                    summary_length=len(summary),
+                )
+            else:
+                # Failed to summarize — just clear overflow to prevent infinite growth
+                self.buffer._overflow_buffer.clear()
+
+        except Exception as e:
+            logger.warning("overflow_compaction_failed", error=str(e))
+            # Clear overflow to prevent re-trying the same batch
+            self.buffer._overflow_buffer.clear()
+
     def add_system_event(self, content: str) -> None:
         """Add a system event (combat result, roll, etc.)."""
         self.buffer.add_system_message(content)
 
+    def set_combat_state(self, in_combat: bool) -> None:
+        """Update combat state for gated consolidation."""
+        self._is_in_combat = in_combat
+
     def _should_summarize(self) -> bool:
-        """Check if we should generate an incremental summary."""
+        """Three-gate check for memory consolidation.
+
+        All gates must pass before summarization runs:
+        1. Message gate: enough new messages since last summary
+        2. Time gate: enough wall-clock time elapsed (prevents rapid-fire spam)
+        3. Combat gate: not in active combat (combat is too fast-paced)
+        4. Lock gate: no concurrent consolidation in progress
+        """
+        # Gate 1: enough messages
         messages_since = self._message_count - self._last_summary_at
-        return messages_since >= self._summary_threshold
+        if messages_since < self._gate_min_messages:
+            return False
+
+        # Gate 2: enough time elapsed
+        elapsed = time.monotonic() - self._last_summary_time
+        if elapsed < self._gate_min_elapsed_sec:
+            return False
+
+        # Gate 3: not in combat (optional, can be disabled)
+        if self._gate_not_in_combat and self._is_in_combat:
+            return False
+
+        # Gate 4: not already consolidating
+        if self._is_consolidating:
+            return False
+
+        return True
 
     async def _generate_incremental_summary(self) -> None:
-        """Generate a summary of recent messages."""
+        """Generate a summary of recent messages (with lock gate)."""
+        self._is_consolidating = True
         try:
             client = get_ollama_client()
 
@@ -111,11 +204,16 @@ class MemoryManager:
             # Generate summary using LLM
             prompt = SUMMARIZE_PROMPT.format(conversation=conversation)
 
-            response = await client.generate(
-                prompt=prompt,
-                system="You are a helpful assistant that summarizes D&D sessions.",
+            response = await client.chat(
+                messages=[
+                    {"role": "system", "content": "You are a helpful assistant that summarizes D&D sessions."},
+                    {"role": "user", "content": prompt},
+                ],
                 temperature=0.3,
+                max_tokens=300,
+                think=False,
             )
+            response = response.content or ""
 
             # Parse response
             try:
@@ -135,7 +233,7 @@ class MemoryManager:
                     key_events=data.get("key_events", []),
                     npcs_encountered=data.get("npcs", []),
                     locations_visited=data.get("locations", []),
-                    message_count=self._summary_threshold,
+                    message_count=self._gate_min_messages,
                 )
 
                 self._session_summaries.append(summary)
@@ -155,6 +253,7 @@ class MemoryManager:
                         self.core.add_npc(npc)
 
                 self._last_summary_at = self._message_count
+                self._last_summary_time = time.monotonic()
 
                 logger.info(
                     "incremental_summary_generated",
@@ -162,11 +261,27 @@ class MemoryManager:
                     message_count=self._message_count,
                 )
 
-            except json.JSONDecodeError:
+            except (json.JSONDecodeError, KeyError, ValueError) as parse_err:
                 logger.warning(
-                    "summary_parse_failed",
-                    response=response[:200],
+                    "summary_json_parse_failed_using_raw",
+                    error=str(parse_err)[:80],
+                    response_preview=response[:100],
                 )
+                # Fallback: use the raw response as a plain text summary
+                raw_summary = response.strip()
+                if raw_summary and len(raw_summary) > 20:
+                    summary = SessionSummary(
+                        session_id=f"incremental_{self._message_count}",
+                        campaign_id=self.campaign_id,
+                        summary=raw_summary[:500],  # Cap length
+                        key_events=[],
+                        npcs_encountered=[],
+                        locations_visited=[],
+                        message_count=self._gate_min_messages,
+                    )
+                    self._session_summaries.append(summary)
+                    self._last_summary_at = self._message_count
+                    self._last_summary_time = time.monotonic()
 
         except Exception as e:
             logger.error(
@@ -174,6 +289,8 @@ class MemoryManager:
                 campaign_id=self.campaign_id,
                 error=str(e),
             )
+        finally:
+            self._is_consolidating = False
 
     def build_context(self, current_input: str = "") -> str:
         """
@@ -181,14 +298,22 @@ class MemoryManager:
 
         Includes:
         1. Core memory blocks
-        2. Recalled memories from RAG (if relevant)
-        3. Recent message history
+        2. Running compacted narrative (story so far)
+        3. Recalled memories from RAG (if relevant)
+        4. Recent session summaries
         """
         parts = []
 
         # Core memory
         parts.append(self.core.to_context_string())
         parts.append("")
+
+        # Running compacted narrative from message overflow
+        if self.buffer.running_summary:
+            parts.append("<story_so_far>")
+            parts.append(self.buffer.running_summary)
+            parts.append("</story_so_far>")
+            parts.append("")
 
         # RAG recall for relevant past context
         if current_input:

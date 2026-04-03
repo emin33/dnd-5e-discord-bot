@@ -410,6 +410,7 @@ class GameSessionManager:
         user_name: str,
         content: str,
         on_mechanics_ready: Optional[Callable] = None,
+        on_narrative_token: Optional[Callable] = None,
     ) -> Optional[DMResponse]:
         """
         Process a player message through the LLM DM.
@@ -433,6 +434,9 @@ class GameSessionManager:
         if not memory:
             memory = get_memory_manager_sync(session.campaign_id)
             self._memory_managers[session.campaign_id] = memory
+
+        # Update combat state for gated memory consolidation
+        memory.set_combat_state(session.state == SessionState.COMBAT)
 
         # Add message to memory buffer
         await memory.add_player_message(
@@ -461,6 +465,7 @@ class GameSessionManager:
                     player_name=player.character.name if player.character else user_name,
                     context=context,
                     on_mechanics_ready=on_mechanics_ready,
+                    on_narrative_token=on_narrative_token,
                 )
 
                 # Add response to memory

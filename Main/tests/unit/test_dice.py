@@ -168,8 +168,10 @@ class TestDiceRollResult:
         from dnd_bot.game.mechanics.dice import DiceRoll
 
         result = DiceRoll(
+            notation="3d6+3",
             kept_dice=[4, 5, 6],
             modifier=3,
+            total=18,
         )
         assert result.total == 18  # 4+5+6+3
 
@@ -178,7 +180,9 @@ class TestDiceRollResult:
         from dnd_bot.game.mechanics.dice import DiceRoll
 
         result = DiceRoll(
+            notation="1d20-5",
             kept_dice=[10],
             modifier=-5,
+            total=5,
         )
         assert result.total == 5

@@ -55,6 +55,9 @@ class Settings(BaseSettings):
     debug_show_intents: bool = False  # If True, append INTENTS to Discord messages
     debug_log_llm_output: bool = False  # If True, write full LLM outputs to data/llm_debug.log
 
+    # Gemini (used by test_eval.py only — not used in game runtime)
+    gemini_api_key: str = ""
+
     @property
     def database_url(self) -> str:
         """SQLite database URL."""

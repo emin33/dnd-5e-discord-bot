@@ -397,12 +397,23 @@ class TestSession:
             print_issues(issues)
             self.all_issues.extend(issues)
 
+            # Memory diagnostics
+            memory_state = self._get_memory_diagnostics()
+            if memory_state:
+                print(f"  {Colors.DIM}[MEM] buffer={memory_state['buffer_size']}, "
+                      f"overflow={memory_state['overflow_size']}, "
+                      f"summary={'yes' if memory_state['has_summary'] else 'no'} "
+                      f"({memory_state['summary_len']}ch), "
+                      f"scratchpad={memory_state['scratchpad_entries']}"
+                      f"{Colors.RESET}")
+
             self.action_log.append({
                 "turn": self.turn_number,
                 "action": action,
                 "narrative_len": len(response.narrative) if response.narrative else 0,
                 "mechanics": response.mechanical_result,
                 "combat": response.combat_triggered,
+                "memory": memory_state,
                 "issues": [{"severity": i.severity, "category": i.category, "desc": i.description} for i in issues],
                 "elapsed": elapsed,
             })
@@ -418,6 +429,36 @@ class TestSession:
         self._save_log()
 
         return response
+
+    def _get_memory_diagnostics(self) -> dict:
+        """Get memory subsystem state for diagnostics."""
+        try:
+            from dnd_bot.memory.manager import _managers
+            mgr = _managers.get(self.campaign_id)
+            if not mgr:
+                return {}
+
+            # Scratchpad from orchestrator
+            scratchpad_entries = 0
+            try:
+                orch = self.manager.orchestrator
+                scratchpad_entries = len(orch._scratchpad) if hasattr(orch, '_scratchpad') else 0
+            except Exception:
+                pass
+
+            return {
+                "buffer_size": len(mgr.buffer._messages),
+                "overflow_size": len(mgr.buffer._overflow_buffer),
+                "has_summary": bool(mgr.buffer.running_summary),
+                "summary_len": len(mgr.buffer.running_summary),
+                "summary_preview": mgr.buffer.running_summary[:120] if mgr.buffer.running_summary else "",
+                "message_count": mgr._message_count,
+                "last_summary_at": mgr._last_summary_at,
+                "is_in_combat": mgr._is_in_combat,
+                "scratchpad_entries": scratchpad_entries,
+            }
+        except Exception:
+            return {}
 
     def _save_log(self):
         """Save action log to disk incrementally."""
@@ -457,6 +498,18 @@ class TestSession:
                 print_section("CLEANUP", "Test data deleted", Colors.DIM)
             except Exception as e:
                 print_section("CLEANUP", f"Warning: {e}", Colors.YELLOW)
+
+        # Print memory final state
+        mem_state = self._get_memory_diagnostics()
+        if mem_state:
+            print_header("MEMORY DIAGNOSTICS")
+            print(f"  Messages processed: {mem_state.get('message_count', '?')}")
+            print(f"  Buffer size: {mem_state.get('buffer_size', '?')}")
+            print(f"  Overflow waiting: {mem_state.get('overflow_size', '?')}")
+            print(f"  Running summary: {'YES' if mem_state.get('has_summary') else 'NO'} ({mem_state.get('summary_len', 0)} chars)")
+            if mem_state.get('summary_preview'):
+                print(f"  Summary preview: \"{mem_state['summary_preview']}...\"")
+            print(f"  Scratchpad entries: {mem_state.get('scratchpad_entries', 0)}")
 
         # Print summary
         print_header("TEST SUMMARY")
@@ -522,6 +575,33 @@ SCENARIOS = {
         "I cast a fireball",
         "I check for traps",
         "I try to persuade the guard to let me through",
+    ],
+    # ---- Memory Continuity Test ----
+    # Phase 1 plants named details (NPC name, item, location).
+    # Phase 2 is filler that pushes Phase 1 out of the message buffer.
+    # Phase 3 references Phase 1 details BY NAME - the narrator can
+    # only know them if the compaction summary or scratchpad preserved them.
+    "memory_continuity": [
+        # Phase 1: Plant memorable details
+        "I enter the tavern and introduce myself to the bartender",
+        "I ask the bartender what his name is",
+        "I ask if he has heard about any trouble in the nearby forest",
+        "I order the house special and look for anything unusual",
+        # Phase 2: Filler actions to push Phase 1 out of the 20-message window
+        # (each turn = 2 messages: player + DM, so 10 turns ≈ 20 messages)
+        "I finish my drink and step outside",
+        "I look up at the sky and check the weather",
+        "I walk down the main street of the village",
+        "I stop at a market stall and browse the wares",
+        "I ask the merchant about the price of rope",
+        "I continue walking toward the town gate",
+        "I examine the gate and the guards posted there",
+        "I nod to the guards and walk through the gate",
+        "I follow the path into the woods outside town",
+        "I stop and listen to the sounds of the forest",
+        # Phase 3: Reference Phase 1 details - narrator needs memory to respond well
+        "I turn back toward the tavern to find the bartender I met earlier",
+        "I ask the bartender to remind me what he said about the forest trouble",
     ],
 }
 

@@ -101,6 +101,9 @@ class DiceRoller:
 
         num_dice = int(match.group(1)) if match.group(1) else 1
         die_size = int(match.group(2))
+
+        if num_dice <= 0 or die_size <= 0:
+            raise ValueError(f"Invalid dice notation: {notation} (dice count and size must be positive)")
         keep_drop = match.group(3)  # kh, kl, dh, dl
         keep_drop_count = int(match.group(4)) if match.group(4) else None
         mod_sign = match.group(5)  # + or -

@@ -36,14 +36,15 @@ class TestCombatant:
 
     def test_take_damage(self, player_combatant):
         """Test taking damage."""
-        actual, instant_death = player_combatant.take_damage(10)
+        actual, instant_death, modifier = player_combatant.take_damage(10)
         assert actual == 10
         assert player_combatant.hp_current == 40
         assert not instant_death
+        assert modifier == "none"
 
     def test_take_damage_to_zero(self, player_combatant):
         """Test taking damage to 0 HP."""
-        actual, instant_death = player_combatant.take_damage(50)
+        actual, instant_death, modifier = player_combatant.take_damage(50)
         assert player_combatant.hp_current == 0
         assert not player_combatant.is_conscious
         assert not instant_death  # No instant death, just at 0
@@ -51,7 +52,7 @@ class TestCombatant:
     def test_instant_death(self, player_combatant):
         """Test instant death from massive damage."""
         # Damage = current HP + max HP
-        actual, instant_death = player_combatant.take_damage(100)  # 50 + 50
+        actual, instant_death, modifier = player_combatant.take_damage(100)  # 50 + 50
         assert player_combatant.hp_current == 0
         assert instant_death
         assert player_combatant.death_saves.is_dead
@@ -76,12 +77,12 @@ class TestCombatant:
         assert player_combatant.hp_temp == 10
 
         # Temp HP absorbs damage first
-        actual, _ = player_combatant.take_damage(7)
+        actual, _, _ = player_combatant.take_damage(7)
         assert player_combatant.hp_temp == 3
         assert player_combatant.hp_current == 50
 
         # Finish off temp HP and some real HP
-        actual, _ = player_combatant.take_damage(8)
+        actual, _, _ = player_combatant.take_damage(8)
         assert player_combatant.hp_temp == 0
         assert player_combatant.hp_current == 45
 
@@ -272,10 +273,11 @@ class TestCombatManager:
     def test_apply_damage(self, manager):
         """Test applying damage."""
         combatant = manager.add_custom_combatant(name="Target", hp=50, ac=15)
-        actual, is_unconscious, instant_death = manager.apply_damage(combatant.id, 20)
+        actual, is_unconscious, instant_death, modifier = manager.apply_damage(combatant.id, 20)
         assert actual == 20
         assert combatant.hp_current == 30
         assert not is_unconscious
+        assert modifier == "none"
 
     def test_apply_healing(self, manager):
         """Test applying healing."""
