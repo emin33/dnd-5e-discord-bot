@@ -306,14 +306,17 @@ class PlayerAgent:
         # Current turn instruction with dedup
         phase_instruction = self._build_phase_instruction(phase)
 
-        # Stronger dedup: summarize what NOT to do
-        recent_actions = [e["action"] for e in self.history[-5:]]
+        # Dedup: only include complete actions (filter out fragments)
+        recent_actions = [
+            e["action"] for e in self.history[-5:]
+            if len(e["action"]) > 15 and e["action"].endswith(".")
+        ]
         dedup = ""
         if recent_actions:
             dedup = (
-                "\n\nIMPORTANT — You have been doing similar things recently. "
-                "Do something DIFFERENT. Change location, talk to someone new, "
-                "or try a completely different activity. Do NOT:\n"
+                "\n\nIMPORTANT — Do something DIFFERENT from your recent actions. "
+                "Change location, talk to someone new, or try a different activity.\n"
+                "Recent (avoid repeating):\n"
                 + "\n".join(f"- {a}" for a in recent_actions)
             )
 
@@ -322,7 +325,13 @@ class PlayerAgent:
             "content": (
                 f"Recent history:\n{history_text}\n\n"
                 f"Turn {turn}/{total}. {phase_instruction}{dedup}\n\n"
-                "Generate your next action (one sentence, first person):"
+                "Generate your next action. Requirements:\n"
+                "- Write ONE complete sentence in first person\n"
+                "- Must be a COMPLETE thought ending with a period\n"
+                "- Be specific about what you do and who/what you interact with\n"
+                "- Example: 'I walk over to the merchant and ask about healing potions.'\n"
+                "- Example: 'I examine the carvings on the stone wall near the entrance.'\n"
+                "Your action:"
             ),
         }]
 
@@ -332,7 +341,28 @@ class PlayerAgent:
             temperature=0.8,
             max_tokens=150,
         )
-        return action.strip().strip('"').strip("'")
+        action = action.strip().strip('"').strip("'")
+
+        # Reject truncated actions (no period, too short) and retry once
+        if action and (len(action) < 15 or not action.endswith(".")):
+            retry = await self.client.chat(
+                messages=[{
+                    "role": "user",
+                    "content": (
+                        f"Your previous action was incomplete: '{action}'\n"
+                        "Rewrite it as ONE complete sentence ending with a period.\n"
+                        "Your action:"
+                    ),
+                }],
+                system=system,
+                temperature=0.8,
+                max_tokens=150,
+            )
+            retry = retry.strip().strip('"').strip("'")
+            if retry and len(retry) > len(action):
+                action = retry
+
+        return action
 
     def record_turn(self, action: str, narrative: str, phase: str):
         snippet = narrative[:300] if narrative else "(no response)"
