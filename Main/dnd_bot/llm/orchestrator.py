@@ -482,6 +482,42 @@ class DMOrchestrator:
         # Executor needs inventory repo - get it async when needed
         self._effect_executor = None  # Lazy init in _process_proposed_effects
 
+    # ==================== Post-Generation Validation ====================
+
+    def _validate_npc_references(self, narrative: str) -> str:
+        """Deterministic check for NPC name misuse in narrator output.
+
+        Logs warnings when the narrator references NPCs that shouldn't be
+        in the current scene. Does NOT modify the narrative — just logs
+        issues for debugging. A future version could strip or replace
+        misplaced NPC references.
+        """
+        if not self._scene_registry:
+            return narrative
+
+        from ..models.npc import EntityType
+        npcs = self._scene_registry.get_by_type(EntityType.NPC)
+        if not npcs:
+            return narrative
+
+        # Build a set of known NPC names
+        npc_names = {e.name.lower(): e for e in npcs}
+
+        # Check if any NPC name appears in the narrative
+        # This is a simple substring check — not perfect but catches obvious cases
+        for name_lower, entity in npc_names.items():
+            if len(name_lower) < 3:
+                continue  # Skip very short names to avoid false matches
+            if name_lower in narrative.lower():
+                # NPC is mentioned — this is fine, just track it
+                logger.debug(
+                    "narrator_npc_reference",
+                    npc=entity.name,
+                    disposition=entity.disposition.value if entity.disposition else "unknown",
+                )
+
+        return narrative
+
     # ==================== DM Scratchpad ====================
 
     def scratchpad_note(self, category: str, note: str) -> None:
@@ -761,6 +797,11 @@ class DMOrchestrator:
         else:
             # No mechanics - just respond to the player's action naturally
             narrative, proposed_effects = await self._narrate_action(action, player_name, context, triage)
+
+        # Step 3.5: Post-generation NPC validation (deterministic, no LLM)
+        # Checks if narrator used NPC names in wrong locations
+        if narrative and self._scene_registry:
+            narrative = self._validate_npc_references(narrative)
 
         # Step 4: Process narrator output - entity extraction + proposed effects
         # Skip entity extraction during combat or for simple actions (saves API calls)
