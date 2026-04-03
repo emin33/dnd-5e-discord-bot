@@ -216,11 +216,21 @@ PHASE_PLANT = """CURRENT OBJECTIVE: Establish memorable details this turn.
 - Examples: "I ask the innkeeper what his name is", "I examine the crest on the shield above the fireplace"
 """
 
-PHASE_NORMAL = """CURRENT OBJECTIVE: Play naturally. Mix up your action types.
-Try something different from your last few actions. Consider:
-- Talking to NPCs, investigating objects, moving to new areas
-- Attempting skill checks, examining your surroundings
-- Reacting to what the DM described
+PHASE_NORMAL = """CURRENT OBJECTIVE: Drive the story forward with decisive actions.
+You MUST take concrete actions that change the situation each turn. Do NOT:
+- Observe, wait, scan, or watch passively
+- Walk toward a place without entering it
+- Repeat the same type of action twice in a row
+
+Instead, DO things like:
+- Enter a building and talk to whoever is inside
+- Ask an NPC a specific question about the plot
+- Attempt to pick a lock, climb a wall, or search for traps
+- Buy or trade items at a shop
+- Follow a trail into the forest
+- Confront someone suspicious
+
+Every action should move you to a new situation or reveal new information.
 """
 
 PHASE_RECALL = """CURRENT OBJECTIVE: Reference earlier details to test the DM's memory.
