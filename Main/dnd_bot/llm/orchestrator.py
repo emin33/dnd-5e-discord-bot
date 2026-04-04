@@ -22,6 +22,7 @@ from .intents import validate_narrator_format, strip_planning_text_fallback
 from .extractors.entity_extractor import get_entity_extractor, EntityExtractor
 from .extractors.state_extractor import get_state_extractor, StateExtractor
 from .validators.nli_validator import get_nli_validator, NLIValidator
+from .turn_logger import get_turn_logger, TurnLogger, TurnRecord
 from .effects import (
     ProposedEffect,
     EffectType,
@@ -531,6 +532,7 @@ class DMOrchestrator:
         self._entity_extractor: EntityExtractor = get_entity_extractor()
         self._state_extractor: StateExtractor = get_state_extractor()
         self._nli_validator: NLIValidator = get_nli_validator()
+        self._turn_logger: TurnLogger = get_turn_logger()
 
         # Effect processing (replaces mechanics extraction)
         self._effect_validator: Optional[EffectValidator] = None
@@ -711,6 +713,16 @@ class DMOrchestrator:
         context.player_action = action
         context.player_name = player_name
 
+        # ── Turn Logger: start recording ──
+        session_id = context.session_id or context.campaign_id or "unknown"
+        world_state = getattr(self._current_session, 'world_state', None) if self._current_session else None
+        turn_num = world_state.turn if world_state else self._scratchpad_turn
+        _turn_record = self._turn_logger.new_turn(session_id, turn_num)
+        _turn_record.set("action", action)
+        _turn_record.set("player", player_name)
+        _turn_record.set("phase", world_state.phase if world_state else "unknown")
+        ws_before = world_state.to_yaml() if world_state else ""
+
         # Store streaming callback for narrator methods to use
         self._on_narrative_token = on_narrative_token
 
@@ -734,7 +746,15 @@ class DMOrchestrator:
         # correctly classifies attacks with target_name and is_creature_target.
 
         # Step 1: Triage - classify the action
+        _turn_record.start_stage("triage")
         triage = await self._triage_action(action, player_name, context)
+        _turn_record.end_stage("triage")
+        _turn_record.record_triage(
+            action_type=triage.action_type,
+            needs_roll=triage.needs_roll,
+            skill=triage.skill or "",
+            dc=triage.dc or 0,
+        )
 
         logger.info(
             "triage_decision",
@@ -889,6 +909,7 @@ class DMOrchestrator:
         # Step 3: Narrator dramatizes the outcome (with mechanical result as context)
         proposed_effects: list[ProposedEffect] = []
 
+        _turn_record.start_stage("narrate")
         if resolution:
             # Roll happened - narrate the mechanical outcome
             narrative, proposed_effects = await self._narrate_outcome(action, player_name, context, triage, resolution)
@@ -898,6 +919,8 @@ class DMOrchestrator:
         else:
             # No mechanics - just respond to the player's action naturally
             narrative, proposed_effects = await self._narrate_action(action, player_name, context, triage)
+        _turn_record.end_stage("narrate")
+        _turn_record.record_narrator_response(narrative or "", format_type="xml" if _is_anthropic_client(self.narrator.client) else "text")
 
         # Step 3.5: Post-generation NPC validation (deterministic, no LLM)
         # Checks if narrator used NPC names in wrong locations
@@ -908,13 +931,19 @@ class DMOrchestrator:
         # Uses cheap brain model to identify what changed in the world
         world_state = getattr(self._current_session, 'world_state', None) if self._current_session else None
         if narrative and world_state:
+            _turn_record.start_stage("state_extract")
             await self._extract_and_apply_state_delta(narrative, world_state, context)
+            _turn_record.end_stage("state_extract")
 
         # Step 3.7: NLI contradiction check (DeBERTa cross-encoder, ~150-300ms CPU)
         # Validates narrator output against world state facts
+        nli_contradictions = []
+        nli_tiebreaker_count = 0
         if narrative and context.world_state_yaml:
+            _turn_record.start_stage("nli")
             contradictions = self._nli_validator.validate(narrative, context.world_state_yaml)
             if contradictions:
+                nli_contradictions = [{"claim": c.claim[:100], "fact": c.fact[:100], "score": round(c.score, 2)} for c in contradictions]
                 for c in contradictions:
                     logger.warning(
                         "nli_contradiction_detected",
@@ -927,12 +956,21 @@ class DMOrchestrator:
             # Only fires when NLI scores are in the 0.5-2.0 ambiguous zone
             if hasattr(self._nli_validator, '_pending_ambiguous') and self._nli_validator._pending_ambiguous:
                 tiebreaker_results = await self._nli_validator.resolve_ambiguous()
+                nli_tiebreaker_count = len(tiebreaker_results)
                 for c in tiebreaker_results:
                     logger.warning(
                         "nli_tiebreaker_contradiction",
                         claim=c.claim[:100],
                         fact=c.fact[:100],
                     )
+            _turn_record.end_stage("nli")
+
+        _turn_record.record_nli(
+            pairs_checked=0,  # Updated by validator internally
+            contradictions=nli_contradictions,
+            ambiguous_count=0,
+            tiebreaker_results=nli_tiebreaker_count,
+        )
 
         # Step 4: Process narrator output - entity extraction + proposed effects
         # Skip entity extraction during combat or for simple actions (saves API calls)
@@ -961,6 +999,13 @@ class DMOrchestrator:
 
         # Step 6: Auto-populate DM scratchpad from this turn's results
         self._update_scratchpad(triage, resolution, proposed_effects, combat_triggered, player_name)
+
+        # ── Turn Logger: finalize and flush ──
+        ws_after = world_state.to_yaml() if world_state else ""
+        _turn_record.record_world_state(ws_before, ws_after)
+        _turn_record.set("combat_triggered", combat_triggered)
+        _turn_record.set("effects_count", len(proposed_effects))
+        self._turn_logger.flush(_turn_record)
 
         return DMResponse(
             narrative=narrative,
