@@ -16,6 +16,7 @@ from ..data.repositories.npc_repo import get_npc_repo
 from ..models.npc import EntityType, Disposition, SceneEntity
 from .combat.manager import CombatManager, get_combat_for_channel
 from .scene.registry import get_scene_registry, clear_scene_registry
+from .world_state import WorldState
 
 logger = structlog.get_logger()
 
@@ -69,6 +70,9 @@ class GameSession:
 
     # Combat reference (if in combat)
     combat_manager: Optional[CombatManager] = None
+
+    # Authoritative world state (narrator reads, Python writes)
+    world_state: Optional[WorldState] = None
 
     def add_player(self, user_id: int, user_name: str, character: Character) -> PlayerInfo:
         """Add a player to the session."""
@@ -181,6 +185,9 @@ class GameSessionManager:
             state=SessionState.ACTIVE,
             dm_user_id=dm_user_id,
         )
+
+        # Initialize authoritative world state
+        session.world_state = WorldState()
 
         self._sessions[channel_id] = session
 
@@ -444,6 +451,27 @@ class GameSessionManager:
             author_name=player.character.name if player.character else user_name,
         )
 
+        # Sync player snapshots into world state before building context
+        if session.world_state:
+            session.world_state.increment_turn()
+            for p in session.players.values():
+                if p.character:
+                    conditions = [
+                        c.condition.value for c in p.character.conditions
+                    ] if p.character.conditions else []
+                    session.world_state.sync_player(
+                        name=p.character.name,
+                        hp=p.character.hp.current,
+                        max_hp=p.character.hp.maximum,
+                        conditions=conditions,
+                        concentration=p.character.concentration_spell_id or "",
+                    )
+            # Sync phase from session state
+            if session.state == SessionState.COMBAT:
+                session.world_state.phase = "combat"
+            elif session.world_state.phase == "combat" and session.state != SessionState.COMBAT:
+                session.world_state.phase = "exploration"
+
         # Build context with acting player's character data
         context = self._build_context(
             session, memory, content,
@@ -479,6 +507,12 @@ class GameSessionManager:
                     scene_summary = scene_registry.get_scene_summary()
                     if scene_summary:
                         memory.update_scene(scene_summary)
+
+                # Sync pinned facts from memory into world state
+                if session.world_state and memory.buffer.pinned_facts:
+                    for fact in memory.buffer.pinned_facts:
+                        if fact not in session.world_state.established_facts:
+                            session.world_state.established_facts.append(fact)
 
                 # Handle auto-combat trigger
                 if response.combat_triggered:
@@ -583,6 +617,15 @@ class GameSessionManager:
         # Get recent messages
         message_history = memory.get_message_history(limit=10)
 
+        # Serialize world state for narrator bookend injection
+        world_state_yaml = ""
+        last_turn_trace = ""
+        if session.world_state:
+            world_state_yaml = session.world_state.to_yaml()
+            # Build previous-turn trace from recent events
+            if session.world_state.recent_events:
+                last_turn_trace = session.world_state.recent_events[-1]
+
         return BrainContext(
             campaign_id=session.campaign_id,
             session_id=session.id,
@@ -594,6 +637,8 @@ class GameSessionManager:
             memory_context=memory_context,
             message_history=message_history,
             character_stats=character_context,
+            world_state_yaml=world_state_yaml,
+            last_turn_trace=last_turn_trace,
         )
 
     def _build_character_context(self, character: Character) -> str:

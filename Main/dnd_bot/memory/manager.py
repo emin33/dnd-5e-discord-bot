@@ -78,6 +78,11 @@ class MemoryManager:
         self._is_in_combat = False
         self._is_consolidating = False     # Lock gate: prevent concurrent consolidation
 
+        # Periodic fact extraction (decoupled from buffer overflow)
+        self._turns_since_extraction = 0
+        self._extraction_interval = 3      # Extract facts every N turns
+        self._is_extracting_facts = False  # Lock to prevent concurrent extraction
+
     async def add_player_message(
         self,
         content: str,
@@ -95,6 +100,15 @@ class MemoryManager:
         # Compact overflow messages into running summary when buffer overflows
         if self.buffer.has_pending_compaction:
             await self._compact_overflow()
+
+        # Periodic fact extraction (decoupled from buffer overflow)
+        self._turns_since_extraction += 1
+        if (
+            self._turns_since_extraction >= self._extraction_interval
+            and not self._is_extracting_facts
+            and not self._is_in_combat
+        ):
+            await self._extract_periodic_facts()
 
         # Check if we should generate a session-level summary
         if self._should_summarize():
@@ -208,6 +222,103 @@ class MemoryManager:
                 traceback=traceback.format_exc()[:500],
             )
             self.buffer._overflow_buffer.clear()
+
+    async def _extract_periodic_facts(self) -> None:
+        """Extract typed facts from recent messages on a turn-based schedule.
+
+        Runs every N turns regardless of buffer overflow state, ensuring
+        facts don't get lost during long exploration sequences.
+        """
+        self._is_extracting_facts = True
+        try:
+            # Get the last few messages for extraction
+            recent = self.buffer.get_messages(limit=self._extraction_interval * 2 + 2)
+            if len(recent) < 2:
+                return
+
+            # Build text from recent messages
+            lines = []
+            for msg in recent:
+                if msg.author_name:
+                    lines.append(f"{msg.author_name}: {msg.content}")
+                elif msg.role == "assistant":
+                    lines.append(f"DM: {msg.content}")
+                else:
+                    lines.append(msg.content)
+            recent_text = "\n\n".join(lines)
+
+            if not recent_text or len(recent_text) < 50:
+                return
+
+            # Include existing facts for deduplication
+            existing_facts = ""
+            if self.buffer.pinned_facts:
+                existing_facts = (
+                    "\n\nExisting facts (do NOT repeat these):\n"
+                    + "\n".join(f"- {f}" for f in self.buffer.pinned_facts[-20:])
+                )
+
+            client = get_ollama_client()
+
+            extract_prompt = (
+                "Extract key facts from this D&D conversation. "
+                "One fact per line, categorized:\n"
+                "- NPC: <name> - <brief description, disposition>\n"
+                "- LOCATION: <name> - <brief description>\n"
+                "- EVENT: <what happened>\n"
+                "- ITEM: <item name> - <who has it, where it is>\n\n"
+                "Only extract facts ESTABLISHED by the DM, not speculated.\n"
+                "If no new facts, respond with: NONE\n"
+                f"{existing_facts}\n\n"
+                f"Recent conversation:\n{recent_text}\n\n"
+                "FACTS:"
+            )
+
+            response = await client.chat(
+                messages=[
+                    {"role": "system", "content": "You extract structured facts from D&D conversations."},
+                    {"role": "user", "content": extract_prompt},
+                ],
+                temperature=0.2,
+                max_tokens=300,
+                think=False,
+            )
+
+            raw = response.content.strip() if response.content else ""
+
+            if not raw or raw.upper() == "NONE":
+                self._turns_since_extraction = 0
+                return
+
+            # Parse fact lines
+            new_facts = []
+            for line in raw.split("\n"):
+                line = line.strip().lstrip("-").lstrip("*").strip()
+                if line and any(line.upper().startswith(prefix) for prefix in ["NPC:", "LOCATION:", "EVENT:", "ITEM:"]):
+                    if line not in self.buffer.pinned_facts:
+                        new_facts.append(line)
+
+            if new_facts:
+                for fact in new_facts:
+                    self.buffer._pinned_facts.append(fact)
+
+                logger.info(
+                    "periodic_facts_extracted",
+                    campaign_id=self.campaign_id,
+                    new_facts_count=len(new_facts),
+                    total_pinned_facts=len(self.buffer.pinned_facts),
+                )
+
+            self._turns_since_extraction = 0
+
+        except Exception as e:
+            logger.warning(
+                "periodic_fact_extraction_failed",
+                campaign_id=self.campaign_id,
+                error=str(e),
+            )
+        finally:
+            self._is_extracting_facts = False
 
     def _parse_compact_response(self, raw: str) -> tuple[str, list[str]]:
         """Parse SUMMARY: and FACTS: sections from compaction response."""

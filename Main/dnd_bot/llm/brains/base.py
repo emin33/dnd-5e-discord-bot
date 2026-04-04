@@ -44,6 +44,12 @@ class BrainContext:
     character_stats: Optional[dict] = None
     available_actions: list[str] = field(default_factory=list)
 
+    # Authoritative world state (YAML-serialized for narrator bookend injection)
+    world_state_yaml: str = ""
+
+    # Previous turn mechanical trace (injected in bottom reminder for grounding)
+    last_turn_trace: str = ""
+
 
 @dataclass
 class BrainResult:
@@ -143,6 +149,113 @@ class Brain(ABC):
                 "role": "user",
                 "content": f"[{context.player_name}]: {context.player_action}",
             })
+
+        return messages
+
+    def _build_bookend_messages(self, context: BrainContext) -> list[dict]:
+        """Build messages using bookend layout for narrator calls.
+
+        Based on "Lost in the Middle" research: LLMs attend strongly to the
+        beginning and end of context, with a 30%+ accuracy drop for info in
+        the middle. This layout exploits both primacy and recency bias:
+
+        [SYSTEM]  — persona + stable rules (cacheable)
+        [USER 1]  — HIGH ATTENTION: world state YAML + party + scene entities
+        [ASST 1]  — acknowledgment anchor
+        [USER 2]  — MIDDLE: session summary + compressed history (lower attention OK)
+        [ASST 2]  — acknowledgment anchor
+        ...recent_messages (last 5-8 verbatim)...
+        [USER N]  — HIGH ATTENTION: player action + grounding reminders
+        """
+        messages = []
+
+        # ── SYSTEM: Stable persona + behavioral rules (cacheable) ──
+        if self.system_prompt:
+            system_content = self.system_prompt
+
+            # Combat context goes in system (it's structural, not dynamic facts)
+            if context.combat_state:
+                system_content += f"\n\n## Combat\n{context.combat_state}"
+            elif context.in_combat:
+                system_content += f"\n\n## Combat State\nRound: {context.combat_round}"
+                if context.initiative_order:
+                    system_content += f"\nInitiative Order:\n{context.initiative_order}"
+                if context.current_combatant:
+                    system_content += f"\nCurrent Turn: {context.current_combatant}"
+
+            messages.append({"role": "system", "content": system_content})
+
+        # ── USER 1 (HIGH ATTENTION): Authoritative world state ──
+        top_parts = []
+
+        if context.world_state_yaml:
+            top_parts.append(f"<world_state>\n{context.world_state_yaml}</world_state>")
+
+        # Party status (critical for narrator to know HP, conditions)
+        party = context.party_members or context.party_status
+        if party:
+            top_parts.append(f"<party>\n{party}\n</party>")
+
+        # Scene entities and current scene
+        if context.current_scene:
+            top_parts.append(f"<current_scene>\n{context.current_scene}\n</current_scene>")
+
+        # Active quests
+        if context.active_quests:
+            top_parts.append(f"<active_quests>\n{context.active_quests}\n</active_quests>")
+
+        # Acting character details
+        if context.character_stats:
+            char_stats = context.character_stats if isinstance(context.character_stats, str) else str(context.character_stats)
+            top_parts.append(f"<acting_character>\n{char_stats}\n</acting_character>")
+
+        if top_parts:
+            messages.append({"role": "user", "content": "\n\n".join(top_parts)})
+            messages.append({
+                "role": "assistant",
+                "content": "I have the current world state. I will use it as authoritative ground truth for my narration.",
+            })
+
+        # ── MIDDLE (LOWER ATTENTION): Compressed history ──
+        middle_parts = []
+
+        # Memory context (core blocks + RAG recall + pinned facts)
+        if context.memory_context:
+            middle_parts.append(f"<memory>\n{context.memory_context}\n</memory>")
+
+        # Session summary
+        if context.session_summary:
+            middle_parts.append(f"<session_history>\n{context.session_summary}\n</session_history>")
+
+        if middle_parts:
+            messages.append({"role": "user", "content": "\n\n".join(middle_parts)})
+            messages.append({
+                "role": "assistant",
+                "content": "I have the session history and memory context.",
+            })
+
+        # ── Recent messages (verbatim, last 5-8) ──
+        history = context.message_history or context.recent_messages
+        # Limit to last 8 messages to keep context lean
+        recent = history[-8:] if len(history) > 8 else history
+        messages.extend(recent)
+
+        # ── FINAL USER (HIGH ATTENTION): Player action + reminders ──
+        if context.player_action:
+            bottom_parts = [f"<player_action>[{context.player_name}]: {context.player_action}</player_action>"]
+
+            # Grounding reminders at the very end (high attention zone)
+            reminders = []
+            if context.last_turn_trace:
+                reminders.append(f"Last turn: {context.last_turn_trace}")
+            reminders.append("Use ONLY the world state provided above as ground truth.")
+            reminders.append("Every NPC you mention must appear in the world state at their listed location.")
+            if context.in_combat:
+                reminders.append(f"Combat is active. Current round: {context.combat_round}.")
+
+            bottom_parts.append(f"<reminder>\n" + "\n".join(reminders) + "\n</reminder>")
+
+            messages.append({"role": "user", "content": "\n\n".join(bottom_parts)})
 
         return messages
 

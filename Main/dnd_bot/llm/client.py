@@ -110,6 +110,8 @@ class OllamaClient:
         json_schema: Optional[dict] = None,
         think: Optional[bool] = None,
         tool_choice: Optional[str] = None,
+        frequency_penalty: Optional[float] = None,
+        presence_penalty: Optional[float] = None,
     ) -> LLMResponse:
         """
         Send a chat request to Ollama.
@@ -125,6 +127,10 @@ class OllamaClient:
             tool_choice: Tool choice mode - "auto", "required", or a specific
                 tool name. "required" forces the model to call at least one tool.
                 Ollama doesn't support this natively, so we hint via system message.
+            frequency_penalty: Penalize tokens by how often they've appeared (0.0-2.0).
+                Maps to Ollama's repeat_penalty (offset by 1.0).
+            presence_penalty: Penalize any token that has appeared at all (0.0-2.0).
+                Maps to Ollama's presence_penalty option.
 
         Returns:
             LLMResponse with content and any tool calls
@@ -152,6 +158,12 @@ class OllamaClient:
             options = {"temperature": temperature}
             if max_tokens:
                 options["num_predict"] = max_tokens
+            if frequency_penalty is not None:
+                # Ollama uses repeat_penalty (default 1.0, higher = more penalty)
+                # OpenAI frequency_penalty is 0.0-2.0, map to Ollama's 1.0-1.5 range
+                options["repeat_penalty"] = 1.0 + frequency_penalty
+            if presence_penalty is not None:
+                options["presence_penalty"] = presence_penalty
 
             kwargs = {
                 "model": self.model,
@@ -257,6 +269,8 @@ class OllamaClient:
         max_tokens: Optional[int] = None,
         think: Optional[bool] = None,
         on_token: Optional[Any] = None,
+        frequency_penalty: Optional[float] = None,
+        presence_penalty: Optional[float] = None,
     ) -> LLMResponse:
         """
         Stream a chat response from Ollama, calling on_token(text) for each chunk.
@@ -267,6 +281,8 @@ class OllamaClient:
             max_tokens: Maximum tokens to generate
             think: If False, disable Qwen3 thinking mode
             on_token: Async callback(str) called with each text chunk
+            frequency_penalty: Penalize repeated tokens (0.0-2.0)
+            presence_penalty: Penalize any already-used token (0.0-2.0)
 
         Returns:
             Complete LLMResponse after streaming finishes
@@ -277,6 +293,10 @@ class OllamaClient:
             options = {"temperature": temperature}
             if max_tokens:
                 options["num_predict"] = max_tokens
+            if frequency_penalty is not None:
+                options["repeat_penalty"] = 1.0 + frequency_penalty
+            if presence_penalty is not None:
+                options["presence_penalty"] = presence_penalty
 
             kwargs = {
                 "model": self.model,
@@ -443,6 +463,8 @@ class GroqClient:
         json_schema: Optional[dict] = None,
         think: Optional[bool] = None,
         tool_choice: Optional[str] = None,
+        frequency_penalty: Optional[float] = None,
+        presence_penalty: Optional[float] = None,
     ) -> LLMResponse:
         """Send a chat request to Groq API. Same interface as OllamaClient."""
         kwargs: dict[str, Any] = {
@@ -450,6 +472,10 @@ class GroqClient:
             "messages": messages,
             "temperature": temperature,
         }
+        if frequency_penalty is not None:
+            kwargs["frequency_penalty"] = frequency_penalty
+        if presence_penalty is not None:
+            kwargs["presence_penalty"] = presence_penalty
 
         if max_tokens:
             kwargs["max_tokens"] = max_tokens
@@ -647,8 +673,14 @@ class AnthropicClient:
         json_schema: Optional[dict] = None,
         think: Optional[bool] = None,
         tool_choice: Optional[str] = None,
+        frequency_penalty: Optional[float] = None,
+        presence_penalty: Optional[float] = None,
     ) -> LLMResponse:
-        """Send a chat request to Claude API. Same interface as OllamaClient."""
+        """Send a chat request to Claude API. Same interface as OllamaClient.
+
+        Note: Claude does not support frequency/presence penalties. These
+        params are accepted for interface compatibility but ignored.
+        """
         # Claude uses a separate system parameter, not a system message
         system_parts = []
         chat_messages = []
@@ -776,6 +808,8 @@ class OpenRouterClient:
         json_schema: Optional[dict] = None,
         think: Optional[bool] = None,
         tool_choice: Optional[str] = None,
+        frequency_penalty: Optional[float] = None,
+        presence_penalty: Optional[float] = None,
     ) -> LLMResponse:
         """Send a chat request to OpenRouter. Same interface as other clients."""
         kwargs: dict[str, Any] = {
@@ -783,6 +817,10 @@ class OpenRouterClient:
             "messages": messages,
             "temperature": temperature,
         }
+        if frequency_penalty is not None:
+            kwargs["frequency_penalty"] = frequency_penalty
+        if presence_penalty is not None:
+            kwargs["presence_penalty"] = presence_penalty
 
         if max_tokens:
             kwargs["max_tokens"] = max_tokens

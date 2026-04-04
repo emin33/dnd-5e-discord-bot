@@ -20,6 +20,7 @@ from .brains.adjudicator import EffectsAdjudicator, get_adjudicator
 from .brains.rules import RulesBrain, get_rules_brain
 from .intents import validate_narrator_format, strip_planning_text_fallback
 from .extractors.entity_extractor import get_entity_extractor, EntityExtractor
+from .extractors.state_extractor import get_state_extractor, StateExtractor
 from .effects import (
     ProposedEffect,
     EffectType,
@@ -39,8 +40,27 @@ from ..config import get_settings
 
 if TYPE_CHECKING:
     from ..game.session import GameSession
+    from ..game.world_state import WorldState, StateDelta
 
 logger = structlog.get_logger()
+
+# Anti-repetition penalties for narrator calls (research: 0.3-0.8 / 0.2-0.6)
+NARRATOR_FREQUENCY_PENALTY = 0.4  # Penalize tokens proportional to frequency
+NARRATOR_PRESENCE_PENALTY = 0.3   # Penalize any already-used token
+
+# Style rotation — cycles through tone hints so consecutive scenes feel different
+NARRATOR_STYLES = [
+    "Write with tense, clipped sentences. Short and punchy.",
+    "Write with lush, atmospheric detail. Rich sensory imagery.",
+    "Write with dry wit and understated tension. Let subtext do the work.",
+    "Write with cinematic pacing. Wide establishing shots, then tight close-ups.",
+    "Write with a folkloric tone. The world feels ancient and storied.",
+]
+
+
+def get_style_hint(turn: int) -> str:
+    """Get a rotating style hint for narrator variety."""
+    return NARRATOR_STYLES[turn % len(NARRATOR_STYLES)]
 
 
 # =============================================================================
@@ -487,6 +507,7 @@ class DMOrchestrator:
         self._current_session: Optional["GameSession"] = None
         self._scene_registry: Optional[SceneEntityRegistry] = None
         self._entity_extractor: EntityExtractor = get_entity_extractor()
+        self._state_extractor: StateExtractor = get_state_extractor()
 
         # Effect processing (replaces mechanics extraction)
         self._effect_validator: Optional[EffectValidator] = None
@@ -841,10 +862,21 @@ class DMOrchestrator:
         if narrative and self._scene_registry:
             narrative = self._validate_npc_references(narrative)
 
+        # Step 3.6: World state extraction — extract StateDelta and apply
+        # Uses cheap brain model to identify what changed in the world
+        world_state = getattr(self._current_session, 'world_state', None) if self._current_session else None
+        if narrative and world_state:
+            await self._extract_and_apply_state_delta(narrative, world_state, context)
+
         # Step 4: Process narrator output - entity extraction + proposed effects
         # Skip entity extraction during combat or for simple actions (saves API calls)
+        # Also skip if world state handled extraction (avoids duplicate NPC registration)
         combat_triggered = False
-        skip_extraction = context.in_combat or triage.action_type in ("skill_check", "saving_throw")
+        skip_extraction = (
+            context.in_combat
+            or triage.action_type in ("skill_check", "saving_throw")
+            or world_state is not None  # WorldState extraction supersedes entity extraction
+        )
         if narrative:
             message_id = str(uuid.uuid4())
             combat_triggered = await self._process_narrator_output(
@@ -1557,6 +1589,7 @@ class DMOrchestrator:
 
         # =====================================================================
         # Narrator: Output PROSE + INTENTS
+        # Use bookend layout when world state is available
         # =====================================================================
         prompt = f"""The player {player_name} attempted: "{action}"
 
@@ -1576,7 +1609,11 @@ INTENTS:
 
 Start with PROSE: immediately."""
 
-        messages = self.narrator._build_messages(enhanced_context)
+        if context.world_state_yaml:
+            enhanced_context.world_state_yaml = context.world_state_yaml
+            messages = self.narrator._build_bookend_messages(enhanced_context)
+        else:
+            messages = self.narrator._build_messages(enhanced_context)
         messages.append({"role": "user", "content": prompt})
 
         try:
@@ -1585,6 +1622,8 @@ Start with PROSE: immediately."""
                 temperature=self.narrator.temperature,
                 max_tokens=8000,  # High limit for thinking models - thinking consumes tokens
                 think=False,
+                frequency_penalty=NARRATOR_FREQUENCY_PENALTY,
+                presence_penalty=NARRATOR_PRESENCE_PENALTY,
             )
             raw_response = response.content.strip() if response.content else ""
 
@@ -1785,13 +1824,22 @@ Start with PROSE: immediately."""
 
         # =====================================================================
         # Narrator: Output PROSE + INTENTS
+        # Use bookend layout when world state is available (better grounding)
         # =====================================================================
-        messages = self.narrator._build_messages(enhanced_context)
+        if context.world_state_yaml:
+            enhanced_context.world_state_yaml = context.world_state_yaml
+            messages = self.narrator._build_bookend_messages(enhanced_context)
+        else:
+            messages = self.narrator._build_messages(enhanced_context)
+        # Style rotation for prose variety
+        style_hint = get_style_hint(self._scratchpad_turn)
+
         messages.append({
             "role": "system",
             "content": (
                 "###INSTRUCTION###\n"
                 "Narrate the player's action according to the NARRATIVE DIRECTION above.\n\n"
+                f"**Style for this scene:** {style_hint}\n\n"
                 "Remember your storytelling principles:\n"
                 "- Acknowledge the action briefly\n"
                 "- Show the world's REACTION (environment, NPCs, atmosphere)\n"
@@ -1812,6 +1860,8 @@ Start with PROSE: immediately."""
                 max_tokens=2000,
                 think=False,
                 on_token=self._on_narrative_token,
+                frequency_penalty=NARRATOR_FREQUENCY_PENALTY,
+                presence_penalty=NARRATOR_PRESENCE_PENALTY,
             )
         else:
             response = await self.narrator.client.chat(
@@ -1819,6 +1869,8 @@ Start with PROSE: immediately."""
                 temperature=self.narrator.temperature,
                 max_tokens=2000,
                 think=False,
+                frequency_penalty=NARRATOR_FREQUENCY_PENALTY,
+                presence_penalty=NARRATOR_PRESENCE_PENALTY,
             )
 
         raw_content = response.content.strip() if response.content else ""
@@ -1952,8 +2004,13 @@ Start with PROSE: immediately."""
 
         # =====================================================================
         # Narrator: Output PROSE + INTENTS
+        # Use bookend layout when world state is available
         # =====================================================================
-        messages = self.narrator._build_messages(enhanced_context)
+        if context.world_state_yaml:
+            enhanced_context.world_state_yaml = context.world_state_yaml
+            messages = self.narrator._build_bookend_messages(enhanced_context)
+        else:
+            messages = self.narrator._build_messages(enhanced_context)
         messages.append({
             "role": "system",
             "content": (
@@ -1982,6 +2039,8 @@ Start with PROSE: immediately."""
             temperature=self.narrator.temperature,
             max_tokens=2000,
             think=False,  # Thinking adds 10-50s latency on Groq for minimal quality gain
+            frequency_penalty=NARRATOR_FREQUENCY_PENALTY,
+            presence_penalty=NARRATOR_PRESENCE_PENALTY,
         )
 
         raw_response = response.content.strip() if response.content else ""
@@ -2106,6 +2165,111 @@ Start with PROSE: immediately."""
                 parts.append("The action proceeds naturally. Describe what the character experiences.")
 
         return " | ".join(parts)
+
+    # =========================================================================
+    # WORLD STATE EXTRACTION
+    # =========================================================================
+
+    async def _extract_and_apply_state_delta(
+        self,
+        narrative: str,
+        world_state: "WorldState",
+        context: BrainContext,
+    ) -> None:
+        """Extract a StateDelta from narrator prose and apply to WorldState.
+
+        Also syncs NPC changes back to SceneEntityRegistry so the existing
+        entity system stays in sync.
+        """
+        from ..game.world_state import WorldState, NPCState
+
+        try:
+            delta = await self._state_extractor.extract(
+                narrative_text=narrative,
+                world_state_yaml=context.world_state_yaml,
+                current_scene=context.current_scene,
+            )
+
+            # Apply delta (validates internally, returns rejections)
+            rejections = world_state.apply_delta(delta)
+
+            if rejections:
+                logger.debug(
+                    "state_delta_applied_with_rejections",
+                    turn=world_state.turn,
+                    rejections=rejections,
+                )
+
+            # Sync new/updated NPCs to SceneEntityRegistry
+            if self._scene_registry:
+                self._sync_npcs_to_registry(delta, world_state)
+
+            logger.info(
+                "world_state_updated",
+                turn=world_state.turn,
+                location=world_state.current_location,
+                time=world_state.time_of_day,
+                npc_count=len(world_state.npcs),
+                facts_count=len(world_state.established_facts),
+            )
+
+        except Exception as e:
+            logger.warning("state_delta_extraction_failed", error=str(e))
+
+    def _sync_npcs_to_registry(
+        self,
+        delta: "StateDelta",
+        world_state: "WorldState",
+    ) -> None:
+        """Sync NPC changes from WorldState back to SceneEntityRegistry.
+
+        Keeps the existing entity system (hostility, SRD matching, combat triggers)
+        working alongside WorldState.
+        """
+        from ..models.npc import SceneEntity, EntityType, Disposition
+        from ..game.world_state import StateDelta
+
+        if not self._scene_registry:
+            return
+
+        # Register new NPCs
+        for npc_state in delta.new_npcs:
+            # Only add to registry if they're at the party's location
+            if not npc_state.location or npc_state.location == world_state.current_location:
+                disposition_map = {
+                    "hostile": Disposition.HOSTILE,
+                    "unfriendly": Disposition.UNFRIENDLY,
+                    "neutral": Disposition.NEUTRAL,
+                    "friendly": Disposition.FRIENDLY,
+                    "allied": Disposition.ALLIED,
+                }
+                entity = SceneEntity(
+                    name=npc_state.name,
+                    entity_type=EntityType.NPC,
+                    description=npc_state.description,
+                    disposition=disposition_map.get(npc_state.disposition, Disposition.NEUTRAL),
+                )
+                self._scene_registry.register_entity(entity)
+
+        # Update dispositions for existing NPCs
+        for update in delta.npc_updates:
+            if update.disposition:
+                existing = self._scene_registry.get_by_name(update.name)
+                if existing:
+                    disposition_map = {
+                        "hostile": Disposition.HOSTILE,
+                        "unfriendly": Disposition.UNFRIENDLY,
+                        "neutral": Disposition.NEUTRAL,
+                        "friendly": Disposition.FRIENDLY,
+                        "allied": Disposition.ALLIED,
+                    }
+                    new_disp = disposition_map.get(update.disposition)
+                    if new_disp:
+                        existing.disposition = new_disp
+
+        # Remove NPCs who left
+        for name in delta.removed_npcs:
+            self._scene_registry.remove_by_name(name)
 
     # =========================================================================
     # ENTITY EXTRACTION AND COMBAT TRIGGERING

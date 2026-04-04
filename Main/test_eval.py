@@ -684,6 +684,18 @@ class EvalSession:
                     if resp and resp.narrative:
                         self.player.record_turn(action, resp.narrative, "seed")
 
+            # Opening narration — DM sets the scene before the player acts
+            header("OPENING NARRATION")
+            opening_action = "I look around and take in my surroundings."
+            print(f"  {C.DIM}[opening] {opening_action}{C.RESET}")
+            opening_resp = await session.send_action(opening_action)
+            if opening_resp and opening_resp.narrative:
+                self.player.record_turn(opening_action, opening_resp.narrative, "plant")
+                preview = opening_resp.narrative[:200].replace("\n", " ")
+                print(f"  {C.GREEN}DM: {preview}...{C.RESET}")
+            else:
+                print(f"  {C.YELLOW}No opening narration received{C.RESET}")
+
             # Main game loop — play all turns first, evaluate transcript after
             header("GAME SESSION")
             prev_issue_count = len(session.all_issues)
