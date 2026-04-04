@@ -136,66 +136,109 @@ class NLIValidator:
 
         return claims
 
-    def build_world_facts(self, world_state_yaml: str) -> list[str]:
-        """Extract checkable facts from world state YAML.
+    def build_categorized_facts(self, world_state_yaml: str) -> dict[str, list[str]]:
+        """Extract checkable facts from world state YAML, grouped by category.
 
-        Converts structured state into natural language assertions
-        that can be paired with narrator claims for NLI checking.
+        Returns facts organized by type so claims can be paired only against
+        relevant categories instead of brute-force all-pairs.
+
+        Categories:
+        - environment: time, location, weather
+        - npcs: NPC presence, disposition, descriptions
+        - items: scene items, transfers, currency
+        - events: recent events and actions
         """
         import yaml
 
-        facts = []
+        cats: dict[str, list[str]] = {
+            "environment": [],
+            "npcs": [],
+            "items": [],
+            "events": [],
+        }
 
         try:
             data = yaml.safe_load(world_state_yaml)
             if not data or not isinstance(data, dict):
-                return facts
+                return cats
         except Exception:
-            return facts
+            return cats
 
-        # Time of day
+        # Environment
         if "time_of_day" in data:
-            facts.append(f"It is {data['time_of_day']}.")
-
-        # Location
+            cats["environment"].append(f"It is {data['time_of_day']}.")
         if "location" in data:
-            facts.append(f"The party is at {data['location']}.")
+            cats["environment"].append(f"The party is at {data['location']}.")
 
-        # NPCs present
+        # NPCs
         if "npcs_here" in data:
             for npc in data["npcs_here"]:
                 name = npc.get("name", "someone")
                 disp = npc.get("disposition", "neutral")
-                facts.append(f"{name} is present and is {disp}.")
+                cats["npcs"].append(f"{name} is present and is {disp}.")
                 if npc.get("desc"):
-                    facts.append(f"{name} is {npc['desc'][:80]}.")
-
-        # Important NPCs elsewhere
+                    cats["npcs"].append(f"{name} is {npc['desc'][:80]}.")
         if "key_npcs_elsewhere" in data:
             for line in data["key_npcs_elsewhere"]:
-                # Parse "Name: at location, disposition"
-                facts.append(f"{line.split(':')[0].strip()} is NOT at the current location.")
+                cats["npcs"].append(f"{line.split(':')[0].strip()} is NOT at the current location.")
 
-        # Established facts
-        if "facts" in data:
-            facts.extend(data["facts"])
-
-        # Recent events
-        if "recent_events" in data:
-            for event in data["recent_events"][-3:]:
-                facts.append(event)
-
-        # Scene items (objects present)
+        # Items
         if "scene_items" in data:
             for item_line in data["scene_items"]:
-                facts.append(f"In the scene: {item_line}.")
-
-        # Recent transfers (item/currency state changes)
+                cats["items"].append(f"In the scene: {item_line}.")
         if "recent_transfers" in data:
             for transfer in data["recent_transfers"]:
-                facts.append(transfer)
+                cats["items"].append(transfer)
 
-        return facts
+        # Events (recent only — these are the most likely to contradict)
+        if "recent_events" in data:
+            for event in data["recent_events"][-3:]:
+                cats["events"].append(event)
+        if "facts" in data:
+            # Only check last 5 established facts (older ones are less likely to contradict)
+            for fact in data["facts"][-5:]:
+                cats["events"].append(fact)
+
+        return cats
+
+    def _classify_claim(self, claim: str) -> list[str]:
+        """Determine which fact categories a claim should be checked against.
+
+        Returns list of category names. A claim may match multiple categories.
+        """
+        claim_lower = claim.lower()
+        categories = []
+
+        # NPC indicators
+        npc_words = [" he ", " she ", " they ", " him ", " her ", " them ",
+                     " man ", " woman ", " figure ", " traveler ", " stranger ",
+                     " guard ", " merchant ", " keeper ", " npc ", " person ",
+                     " says ", " said ", " speaks ", " spoke ", " whisper",
+                     " greet", " nod", " gesture", " expression"]
+        if any(w in claim_lower for w in npc_words):
+            categories.append("npcs")
+
+        # Item/transfer indicators
+        item_words = [" gives ", " gave ", " takes ", " took ", " picks ",
+                      " drops ", " slides ", " hands ", " holds ", " carries ",
+                      " coin", " gold ", " silver ", " sword ", " dagger ",
+                      " potion ", " item ", " weapon ", " shield ", " bow ",
+                      " arrow"]
+        if any(w in claim_lower for w in item_words):
+            categories.append("items")
+
+        # Environment indicators
+        env_words = ["the sun ", "the moon ", "dawn", "dusk", "night",
+                     "morning", "afternoon", "evening", "midnight",
+                     " dark ", " light ", " bright ", " dim ",
+                     " rain ", " snow ", " wind ", " storm "]
+        if any(w in claim_lower for w in env_words):
+            categories.append("environment")
+
+        # Events — always check recent events (they're the most specific)
+        categories.append("events")
+
+        return categories if categories else ["events"]
 
     def validate(
         self,
@@ -205,23 +248,39 @@ class NLIValidator:
     ) -> list[NLIContradiction]:
         """Validate narrator output against world state.
 
+        Uses structured pairing: claims are classified by category (NPC,
+        item, environment, event) and only checked against facts from
+        matching categories. This prevents quadratic scaling and eliminates
+        garbage pairings like "his footing slips" vs "signpost description."
+
         Returns list of detected contradictions (empty = all clear).
-        Typical latency: 150-300ms on CPU for 5-15 pairs.
+        Typical latency: 100-400ms on CPU for 5-15 targeted pairs.
         """
         if not self._ensure_model():
             return []  # Model unavailable, skip validation
 
         claims = self.extract_claims(narrative, max_claims=max_claims)
-        facts = self.build_world_facts(world_state_yaml)
+        categorized_facts = self.build_categorized_facts(world_state_yaml)
 
-        if not claims or not facts:
+        # Count total facts across categories
+        total_facts = sum(len(v) for v in categorized_facts.values())
+        if not claims or total_facts == 0:
             return []
 
-        # Build all (fact, claim) pairs
-        pairs = [(fact, claim) for fact in facts for claim in claims]
+        # Build targeted pairs: each claim only paired with relevant categories
+        pairs = []
+        for claim in claims:
+            relevant_categories = self._classify_claim(claim)
+            for cat in relevant_categories:
+                for fact in categorized_facts.get(cat, []):
+                    pairs.append((fact, claim))
 
         if not pairs:
             return []
+
+        # Cap pairs to prevent runaway latency (max 20 pairs)
+        if len(pairs) > 20:
+            pairs = pairs[:20]
 
         t0 = time.monotonic()
 
@@ -245,14 +304,13 @@ class NLIValidator:
                     score=contradiction_score,
                 ))
             elif contradiction_score > AMBIGUOUS_LOW:
-                # Ambiguous — candidate for LLM tiebreaker
                 ambiguous_pairs.append((fact, claim, contradiction_score))
 
         logger.info(
             "nli_validation_complete",
             pairs_checked=len(pairs),
             claims=len(claims),
-            facts=len(facts),
+            facts=total_facts,
             contradictions_found=len(contradictions),
             ambiguous_count=len(ambiguous_pairs),
             elapsed_ms=round(elapsed_ms),
