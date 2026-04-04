@@ -615,7 +615,9 @@ class GameSessionManager:
         memory_context = memory.build_context(current_input)
 
         # Get recent messages
-        message_history = memory.get_message_history(limit=10)
+        # Feed more history to narrator — models support 32K-200K context,
+        # we were only using ~3-5K. More verbatim history = better grounding.
+        message_history = memory.get_message_history(limit=30)
 
         # Serialize world state for narrator bookend injection
         world_state_yaml = ""

@@ -25,8 +25,8 @@ local_moe:
     model: qwen3.5:35b-a3b
     fallback_to_ollama: false
   memory:
-    buffer_size: 20
-    compaction_threshold: 6
+    buffer_size: 40
+    compaction_threshold: 10
 
 # Local split: MoE narrates, dense 9B does brain (needs ~38GB VRAM)
 local_split:
@@ -38,8 +38,8 @@ local_split:
     model: qwen3.5:9b
     fallback_to_ollama: false
   memory:
-    buffer_size: 20
-    compaction_threshold: 6
+    buffer_size: 40
+    compaction_threshold: 10
 
 # Local dense: 27B does everything
 local_dense:
@@ -51,8 +51,8 @@ local_dense:
     model: qwen3.5:27b
     fallback_to_ollama: false
   memory:
-    buffer_size: 20
-    compaction_threshold: 6
+    buffer_size: 40
+    compaction_threshold: 10
 
 # Groq only: cloud 32b does everything
 groq_full:
@@ -64,8 +64,8 @@ groq_full:
     model: qwen/qwen3-32b
     fallback_to_ollama: false
   memory:
-    buffer_size: 20
-    compaction_threshold: 6
+    buffer_size: 40
+    compaction_threshold: 10
 
 # MoE narrates locally, Groq does brain
 moe_groq:
@@ -77,8 +77,8 @@ moe_groq:
     model: qwen/qwen3-32b
     fallback_to_ollama: false
   memory:
-    buffer_size: 20
-    compaction_threshold: 6
+    buffer_size: 40
+    compaction_threshold: 10
 
 # Qwen 3.6 Plus (free via OpenRouter) narrates, local 9B brain
 qwen36_local:
@@ -90,8 +90,8 @@ qwen36_local:
     model: qwen3.5:9b
     fallback_to_ollama: false
   memory:
-    buffer_size: 20
-    compaction_threshold: 6
+    buffer_size: 40
+    compaction_threshold: 10
 
 # Haiku narrator + local 9B brain (fast + cheap cloud narrator)
 haiku_local:

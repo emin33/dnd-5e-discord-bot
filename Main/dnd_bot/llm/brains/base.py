@@ -245,10 +245,11 @@ class Brain(ABC):
                 "content": "I have the session history and memory context.",
             })
 
-        # ── Recent messages (verbatim, last 5-8) ──
+        # ── Recent messages (verbatim) ──
+        # More history = better grounding. Models handle 32K-200K context.
+        # Cap at 24 messages (~12 exchanges) to stay within 15-25K target.
         history = context.message_history or context.recent_messages
-        # Limit to last 8 messages to keep context lean
-        recent = history[-8:] if len(history) > 8 else history
+        recent = history[-24:] if len(history) > 24 else history
         messages.extend(recent)
 
         # ── FINAL USER (HIGH ATTENTION): Player action + reminders ──
