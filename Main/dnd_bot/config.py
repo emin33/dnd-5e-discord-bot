@@ -124,6 +124,7 @@ class Settings(BaseSettings):
     groq_api_key: str = ""
     groq_max_retries: int = 3
     anthropic_api_key: str = ""
+    openrouter_api_key: str = ""
     gemini_api_key: str = ""
 
     # LLM Temperature

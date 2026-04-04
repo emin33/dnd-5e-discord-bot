@@ -740,6 +740,133 @@ class AnthropicClient:
         pass
 
 
+class OpenRouterClient:
+    """Async client for OpenRouter API (OpenAI-compatible)."""
+
+    def __init__(
+        self,
+        model: Optional[str] = None,
+        api_key: Optional[str] = None,
+    ):
+        try:
+            from openai import AsyncOpenAI
+        except ImportError:
+            raise ImportError(
+                "openai package required for OpenRouter. Install with: pip install openai"
+            )
+
+        settings = get_settings()
+        self.model = model or "qwen/qwen3.6-plus:free"
+        self.timeout = settings.llm_timeout
+        key = api_key or settings.openrouter_api_key
+        if not key:
+            raise ValueError("OPENROUTER_API_KEY must be set when using OpenRouter provider")
+        self._client = AsyncOpenAI(
+            api_key=key,
+            base_url="https://openrouter.ai/api/v1",
+        )
+
+    async def chat(
+        self,
+        messages: list[dict],
+        temperature: float = 0.7,
+        tools: Optional[list[dict]] = None,
+        max_tokens: Optional[int] = None,
+        json_mode: bool = False,
+        json_schema: Optional[dict] = None,
+        think: Optional[bool] = None,
+        tool_choice: Optional[str] = None,
+    ) -> LLMResponse:
+        """Send a chat request to OpenRouter. Same interface as other clients."""
+        kwargs: dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": temperature,
+        }
+
+        if max_tokens:
+            kwargs["max_tokens"] = max_tokens
+
+        if tools:
+            kwargs["tools"] = tools
+            if tool_choice:
+                if tool_choice in ("auto", "required", "none"):
+                    kwargs["tool_choice"] = tool_choice
+                else:
+                    kwargs["tool_choice"] = {
+                        "type": "function",
+                        "function": {"name": tool_choice},
+                    }
+
+        if json_schema or json_mode:
+            kwargs["response_format"] = {"type": "json_object"}
+
+        try:
+            import time as _time
+            _t0 = _time.monotonic()
+
+            response = await asyncio.wait_for(
+                self._client.chat.completions.create(**kwargs),
+                timeout=self.timeout,
+            )
+
+            _elapsed = _time.monotonic() - _t0
+
+            choice = response.choices[0] if response.choices else None
+            message = choice.message if choice else None
+            raw_content = message.content if message else ""
+
+            _write_debug_log(
+                f"OPENROUTER_RESPONSE (api={_elapsed:.1f}s)",
+                raw_content or "(empty)",
+            )
+
+            logger.info(
+                "openrouter_response",
+                content_length=len(raw_content) if raw_content else 0,
+                content_preview=(raw_content or "")[:200],
+                model=response.model if hasattr(response, 'model') else self.model,
+            )
+
+            # Extract tool calls
+            tool_calls = []
+            if message and message.tool_calls:
+                for tc in message.tool_calls:
+                    args = tc.function.arguments
+                    if isinstance(args, str):
+                        try:
+                            args = json.loads(args)
+                        except json.JSONDecodeError:
+                            args = {}
+                    tool_calls.append({
+                        "name": tc.function.name,
+                        "arguments": args,
+                    })
+
+            usage = response.usage
+            return LLMResponse(
+                content=raw_content or "",
+                tool_calls=tool_calls,
+                model=getattr(response, 'model', self.model) or self.model,
+                finish_reason=choice.finish_reason if choice else "",
+                prompt_tokens=usage.prompt_tokens if usage else 0,
+                completion_tokens=usage.completion_tokens if usage else 0,
+            )
+
+        except asyncio.TimeoutError:
+            logger.error("openrouter_chat_timeout", timeout=self.timeout, model=self.model)
+            raise TimeoutError(f"OpenRouter API call timed out after {self.timeout}s.")
+        except Exception as e:
+            logger.error("openrouter_chat_error", error=str(e))
+            raise
+
+    async def is_available(self) -> bool:
+        return True
+
+    def close(self):
+        pass
+
+
 # Global client instances
 _client = None
 _narrator_client = None
@@ -755,6 +882,8 @@ def _create_client(provider: str, model: str, fallback_to_ollama: bool = False):
         return client
     elif provider == "anthropic":
         return AnthropicClient(model=model)
+    elif provider == "openrouter":
+        return OpenRouterClient(model=model)
     else:  # ollama
         return OllamaClient(model=model)
 

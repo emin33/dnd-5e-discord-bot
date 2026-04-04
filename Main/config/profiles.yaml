@@ -80,6 +80,19 @@ moe_groq:
     buffer_size: 20
     compaction_threshold: 6
 
+# Qwen 3.6 Plus (free via OpenRouter) narrates, local 9B brain
+qwen36_local:
+  narrator:
+    provider: openrouter
+    model: qwen/qwen3.6-plus:free
+  brain:
+    provider: ollama
+    model: qwen3.5:9b
+    fallback_to_ollama: false
+  memory:
+    buffer_size: 20
+    compaction_threshold: 6
+
 # Sonnet narrator + local 9B brain
 sonnet_local:
   narrator:
