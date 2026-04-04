@@ -935,41 +935,17 @@ class DMOrchestrator:
             await self._extract_and_apply_state_delta(narrative, world_state, context)
             _turn_record.end_stage("state_extract")
 
-        # Step 3.7: NLI contradiction check (DeBERTa cross-encoder, ~150-300ms CPU)
-        # Validates narrator output against world state facts
+        # Step 3.7: NLI contradiction check — DISABLED
+        # The NLI layer detects contradictions but doesn't act on them (no re-narration
+        # or correction wired up). It adds 1-1.5s latency per turn for logging only.
+        # Re-enable when wired to trigger re-narration on contradiction.
+        # See roadmap: "NLI Correction Loop" under needs-work items.
         nli_contradictions = []
-        nli_tiebreaker_count = 0
-        if narrative and context.world_state_yaml:
-            _turn_record.start_stage("nli")
-            contradictions = self._nli_validator.validate(narrative, context.world_state_yaml)
-            if contradictions:
-                nli_contradictions = [{"claim": c.claim[:100], "fact": c.fact[:100], "score": round(c.score, 2)} for c in contradictions]
-                for c in contradictions:
-                    logger.warning(
-                        "nli_contradiction_detected",
-                        claim=c.claim[:100],
-                        fact=c.fact[:100],
-                        score=round(c.score, 2),
-                    )
-
-            # Step 3.8: LLM tiebreaker for ambiguous NLI results (~300-800ms, async)
-            # Only fires when NLI scores are in the 0.5-2.0 ambiguous zone
-            if hasattr(self._nli_validator, '_pending_ambiguous') and self._nli_validator._pending_ambiguous:
-                tiebreaker_results = await self._nli_validator.resolve_ambiguous()
-                nli_tiebreaker_count = len(tiebreaker_results)
-                for c in tiebreaker_results:
-                    logger.warning(
-                        "nli_tiebreaker_contradiction",
-                        claim=c.claim[:100],
-                        fact=c.fact[:100],
-                    )
-            _turn_record.end_stage("nli")
-
         _turn_record.record_nli(
-            pairs_checked=0,  # Updated by validator internally
-            contradictions=nli_contradictions,
+            pairs_checked=0,
+            contradictions=[],
             ambiguous_count=0,
-            tiebreaker_results=nli_tiebreaker_count,
+            tiebreaker_results=0,
         )
 
         # Step 4: Process narrator output - entity extraction + proposed effects
