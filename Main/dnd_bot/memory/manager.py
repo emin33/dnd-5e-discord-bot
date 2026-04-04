@@ -464,8 +464,19 @@ class MemoryManager:
             if not conversation:
                 return
 
-            # Generate summary using LLM
+            # Generate summary using LLM with structured output
             prompt = SUMMARIZE_PROMPT.format(conversation=conversation)
+
+            summary_schema = {
+                "type": "object",
+                "properties": {
+                    "summary": {"type": "string"},
+                    "key_events": {"type": "array", "items": {"type": "string"}},
+                    "npcs": {"type": "array", "items": {"type": "string"}},
+                    "locations": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["summary"],
+            }
 
             response = await client.chat(
                 messages=[
@@ -474,6 +485,7 @@ class MemoryManager:
                 ],
                 temperature=0.3,
                 max_tokens=300,
+                json_schema=summary_schema,
                 think=False,
             )
             response = response.content or ""
@@ -487,15 +499,21 @@ class MemoryManager:
 
             # Parse response
             try:
-                # Try to extract JSON from response
                 response_text = response.strip()
-                if "```json" in response_text:
-                    response_text = response_text.split("```json")[1].split("```")[0]
-                elif "```" in response_text:
-                    response_text = response_text.split("```")[1].split("```")[0]
 
-                # Find JSON object boundaries — models often omit the outer braces
-                response_text = response_text.strip()
+                # Strip markdown fences if present
+                if "```json" in response_text:
+                    start = response_text.find("```json") + 7
+                    end = response_text.find("```", start)
+                    if end > start:
+                        response_text = response_text[start:end].strip()
+                elif "```" in response_text:
+                    start = response_text.find("```") + 3
+                    end = response_text.find("```", start)
+                    if end > start:
+                        response_text = response_text[start:end].strip()
+
+                # Find JSON object boundaries
                 brace_start = response_text.find("{")
                 brace_end = response_text.rfind("}")
                 if brace_start != -1 and brace_end > brace_start:
@@ -540,7 +558,7 @@ class MemoryManager:
                     message_count=self._message_count,
                 )
 
-            except (json.JSONDecodeError, KeyError, ValueError, AttributeError, TypeError) as parse_err:
+            except (json.JSONDecodeError, KeyError, ValueError, AttributeError, TypeError, IndexError) as parse_err:
                 logger.warning(
                     "summary_json_parse_failed_using_raw",
                     error=str(parse_err)[:80],
