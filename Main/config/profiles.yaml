@@ -93,6 +93,19 @@ qwen36_local:
     buffer_size: 20
     compaction_threshold: 6
 
+# Haiku narrator + local 9B brain (fast + cheap cloud narrator)
+haiku_local:
+  narrator:
+    provider: anthropic
+    model: claude-haiku-4-5-20251001
+  brain:
+    provider: ollama
+    model: qwen3.5:9b
+    fallback_to_ollama: false
+  memory:
+    buffer_size: 30
+    compaction_threshold: 8
+
 # Sonnet narrator + local 9B brain
 sonnet_local:
   narrator:

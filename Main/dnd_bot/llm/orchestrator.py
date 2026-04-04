@@ -2267,6 +2267,71 @@ Start with PROSE: immediately."""
         except Exception as e:
             logger.warning("state_delta_extraction_failed", error=str(e))
 
+    def _sync_effect_to_world_state(self, effect: ProposedEffect) -> None:
+        """Sync a successfully executed effect into WorldState.
+
+        This is the critical bridge: INTENTS execute mechanically via the
+        effect system, and here we record them into WorldState so the
+        narrator sees them in the YAML snapshot next turn.
+        """
+        world_state = getattr(self._current_session, 'world_state', None) if self._current_session else None
+        if not world_state:
+            return
+
+        etype = effect.effect_type
+
+        if etype == EffectType.SPAWN_OBJECT:
+            obj_id = effect.object_name or "unknown_item"
+            desc = effect.object_description or effect.object_name or "an object"
+            world_state.spawn_item(obj_id, desc)
+            world_state.record_transfer(f"{desc} appeared in the scene")
+
+        elif etype == EffectType.TRANSFER_ITEM:
+            item = effect.item_name or "an item"
+            src = effect.from_entity or "somewhere"
+            dst = effect.to_entity or "someone"
+            # If player picked up from scene, remove from scene items
+            if src.startswith("scene"):
+                world_state.remove_item(effect.object_name or effect.item_name or "")
+            world_state.record_transfer(f"{item} moved from {src} to {dst}")
+
+        elif etype == EffectType.GRANT_CURRENCY:
+            parts = []
+            if effect.gold: parts.append(f"{effect.gold}gp")
+            if effect.silver: parts.append(f"{effect.silver}sp")
+            if effect.copper: parts.append(f"{effect.copper}cp")
+            if effect.platinum: parts.append(f"{effect.platinum}pp")
+            if effect.electrum: parts.append(f"{effect.electrum}ep")
+            amount = ", ".join(parts) if parts else "currency"
+            src = effect.source or "someone"
+            dst = effect.target or "player"
+            world_state.record_transfer(f"{src} gave {amount} to {dst}")
+
+        elif etype == EffectType.APPLY_DAMAGE:
+            target = effect.target or "someone"
+            amount = effect.amount or 0
+            dtype = effect.damage_type or "damage"
+            world_state.record_transfer(f"{target} took {amount} {dtype} damage")
+
+        elif etype == EffectType.APPLY_HEALING:
+            target = effect.target or "someone"
+            amount = effect.amount or 0
+            world_state.record_transfer(f"{target} healed {amount} HP")
+
+        elif etype == EffectType.ADD_CONDITION:
+            target = effect.target or "someone"
+            condition = effect.condition or "a condition"
+            world_state.record_transfer(f"{target} gained condition: {condition}")
+
+        elif etype == EffectType.REMOVE_CONDITION:
+            target = effect.target or "someone"
+            condition = effect.condition or "a condition"
+            world_state.record_transfer(f"{target} lost condition: {condition}")
+
+        elif etype == EffectType.CONSUME_RESOURCE:
+            resource = effect.resource_name or effect.item_name or "a resource"
+            world_state.record_transfer(f"Consumed {effect.quantity}x {resource}")
+
     def _sync_npcs_to_registry(
         self,
         delta: "StateDelta",
@@ -2470,6 +2535,9 @@ Start with PROSE: immediately."""
                     details=result.details,
                     was_duplicate=result.was_duplicate,
                 )
+
+                # Sync effect to WorldState (so narrator sees it next turn)
+                self._sync_effect_to_world_state(effect)
 
                 # Check if this effect triggers combat
                 if effect.effect_type == EffectType.START_COMBAT:

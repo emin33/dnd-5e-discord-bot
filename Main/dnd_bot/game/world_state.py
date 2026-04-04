@@ -134,17 +134,46 @@ class WorldState(BaseModel):
     npcs: dict[str, NPCState] = Field(default_factory=dict)
     players: dict[str, PlayerSnapshot] = Field(default_factory=dict)
 
+    # Scene items — objects present in the current scene (spawned, dropped, visible)
+    scene_items: dict[str, str] = Field(default_factory=dict)  # id -> description
+
+    # Transaction ledger — recent item/currency transfers (ring buffer, narrator sees these)
+    recent_transfers: list[str] = Field(default_factory=list)
+
     active_effects: list[str] = Field(default_factory=list)
     recent_events: list[str] = Field(default_factory=list)
     established_facts: list[str] = Field(default_factory=list)
     global_flags: dict[str, bool] = Field(default_factory=dict)
 
-    # Max recent events to keep (ring buffer)
+    # Max recent events/transfers to keep (ring buffer)
     _max_recent_events: int = 5
+    _max_recent_transfers: int = 8
 
     def increment_turn(self) -> None:
         """Advance the turn counter."""
         self.turn += 1
+
+    # ── Item & Currency Tracking ──
+
+    def spawn_item(self, item_id: str, description: str) -> None:
+        """Record an item appearing in the scene."""
+        self.scene_items[item_id] = description
+
+    def remove_item(self, item_id: str) -> None:
+        """Remove an item from the scene (picked up, destroyed, etc.)."""
+        self.scene_items.pop(item_id, None)
+
+    def record_transfer(self, description: str) -> None:
+        """Record an item or currency transfer for narrator context.
+
+        Examples:
+            "Player picked up Jeweled Dagger from the pedestal"
+            "Farmer gave 15gp to player"
+            "NPC returned silver coins to player"
+        """
+        self.recent_transfers.append(description)
+        if len(self.recent_transfers) > self._max_recent_transfers:
+            self.recent_transfers = self.recent_transfers[-self._max_recent_transfers:]
 
     def sync_player(self, name: str, hp: int, max_hp: int,
                     conditions: list[str], concentration: str = "") -> None:
@@ -351,6 +380,16 @@ class WorldState(BaseModel):
                 + (f" - {npc.notes[:60]}" if npc.notes else "")
                 for npc in distant_important
             ]
+
+        # Scene items (objects present in the current location)
+        if self.scene_items:
+            data["scene_items"] = [
+                f"{item_id}: {desc}" for item_id, desc in self.scene_items.items()
+            ]
+
+        # Recent transfers (item/currency changes the narrator must not contradict)
+        if self.recent_transfers:
+            data["recent_transfers"] = self.recent_transfers
 
         # Active effects
         if self.active_effects:
