@@ -50,7 +50,9 @@ def main():
 
     settings = get_settings()
 
-    logger.info("starting_bot", model=settings.ollama_model)
+    from .config import get_profile
+    profile = get_profile()
+    logger.info("starting_bot", profile=profile.name, narrator=f"{profile.narrator.provider}/{profile.narrator.model}", brain=f"{profile.brain.provider}/{profile.brain.model}")
 
     # Create and run bot
     bot = create_bot()

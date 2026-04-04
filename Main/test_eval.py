@@ -26,6 +26,8 @@ from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Optional
 
+import yaml
+
 # Force UTF-8 on Windows
 if sys.platform == "win32":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -885,15 +887,21 @@ class EvalSession:
 async def main():
     import argparse
 
+    # Load available profiles for --profile choices
+    from dnd_bot.config import load_profile
+    try:
+        profiles_path = Path(__file__).parent / "config" / "profiles.yaml"
+        with open(profiles_path, "r") as f:
+            available_profiles = list(yaml.safe_load(f).keys())
+    except Exception:
+        available_profiles = []
+
     parser = argparse.ArgumentParser(description="Automated narrator evaluation")
     parser.add_argument("--turns", type=int, default=30, help="Number of eval turns (default: 30)")
+    parser.add_argument("--profile", type=str, default=None,
+                        help=f"LLM profile (from config/profiles.yaml). Available: {', '.join(available_profiles)}")
     parser.add_argument("--persona", type=str, default="default",
                         choices=list(PERSONAS.keys()), help="Player persona")
-    parser.add_argument("--provider", type=str, default=None,
-                        choices=["ollama", "groq"],
-                        help="Override narrator LLM provider (default: use .env setting)")
-    parser.add_argument("--no-fallback", action="store_true",
-                        help="Disable Ollama fallback (Groq-only narration)")
     parser.add_argument("--seed", type=str, default=None,
                         help="Run a scenario from test_harness before eval turns")
     parser.add_argument("--player-model", type=str, default="gemini-2.5-flash",
@@ -902,14 +910,11 @@ async def main():
                         help="Gemini model for evaluator")
     args = parser.parse_args()
 
-    # Provider override (must be set before config loads)
-    if args.provider:
-        os.environ["LLM_PROVIDER"] = args.provider
-        print(f"{C.YELLOW}[CONFIG] Narrator provider: {args.provider}{C.RESET}")
-
-    if args.no_fallback:
-        os.environ["GROQ_FALLBACK_TO_OLLAMA"] = "false"
-        print(f"{C.YELLOW}[CONFIG] Ollama fallback disabled — Groq-only narration{C.RESET}")
+    # Profile override (must be set before config loads)
+    if args.profile:
+        from dnd_bot.config import set_profile
+        profile = set_profile(args.profile)
+        print(f"{C.YELLOW}[PROFILE] {args.profile}: narrator={profile.narrator.provider}/{profile.narrator.model}, brain={profile.brain.provider}/{profile.brain.model}{C.RESET}")
 
     eval_session = EvalSession(
         total_turns=args.turns,

@@ -1,13 +1,109 @@
-"""Configuration management using pydantic-settings."""
+"""Configuration management using pydantic-settings + YAML profiles."""
 
+from dataclasses import dataclass, field
 from pathlib import Path
 from functools import lru_cache
+from typing import Optional
 
+import yaml
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+# =============================================================================
+# LLM Profile (loaded from config/profiles.yaml)
+# =============================================================================
+
+@dataclass
+class ProviderConfig:
+    """Configuration for a single LLM provider role."""
+    provider: str = "ollama"     # ollama | groq | anthropic
+    model: str = ""
+    fallback_to_ollama: bool = False
+
+@dataclass
+class MemoryConfig:
+    """Memory system configuration."""
+    buffer_size: int = 20
+    compaction_threshold: int = 6
+
+@dataclass
+class LLMProfile:
+    """A named LLM configuration profile."""
+    name: str = "default"
+    narrator: ProviderConfig = field(default_factory=ProviderConfig)
+    brain: ProviderConfig = field(default_factory=ProviderConfig)
+    memory: MemoryConfig = field(default_factory=MemoryConfig)
+
+
+def load_profile(profile_name: str) -> LLMProfile:
+    """Load a named profile from config/profiles.yaml."""
+    profiles_path = Path(__file__).parent.parent / "config" / "profiles.yaml"
+
+    if not profiles_path.exists():
+        raise FileNotFoundError(f"Profiles file not found: {profiles_path}")
+
+    with open(profiles_path, "r", encoding="utf-8") as f:
+        profiles = yaml.safe_load(f)
+
+    if profile_name not in profiles:
+        available = ", ".join(profiles.keys())
+        raise ValueError(f"Unknown profile '{profile_name}'. Available: {available}")
+
+    data = profiles[profile_name]
+
+    narrator_data = data.get("narrator", {})
+    brain_data = data.get("brain", {})
+    memory_data = data.get("memory", {})
+
+    return LLMProfile(
+        name=profile_name,
+        narrator=ProviderConfig(
+            provider=narrator_data.get("provider", "ollama"),
+            model=narrator_data.get("model", ""),
+            fallback_to_ollama=narrator_data.get("fallback_to_ollama", False),
+        ),
+        brain=ProviderConfig(
+            provider=brain_data.get("provider", "ollama"),
+            model=brain_data.get("model", ""),
+            fallback_to_ollama=brain_data.get("fallback_to_ollama", False),
+        ),
+        memory=MemoryConfig(
+            buffer_size=memory_data.get("buffer_size", 20),
+            compaction_threshold=memory_data.get("compaction_threshold", 6),
+        ),
+    )
+
+
+# Cached profile instance
+_profile: Optional[LLMProfile] = None
+
+
+def get_profile() -> LLMProfile:
+    """Get the active LLM profile. Cached after first load."""
+    global _profile
+    if _profile is None:
+        settings = get_settings()
+        _profile = load_profile(settings.active_profile)
+    return _profile
+
+
+def set_profile(profile_name: str) -> LLMProfile:
+    """Override the active profile (used by test harness)."""
+    global _profile
+    _profile = load_profile(profile_name)
+    return _profile
+
+
+# =============================================================================
+# Base Settings (env vars + .env file)
+# =============================================================================
+
 class Settings(BaseSettings):
-    """Application settings loaded from environment variables."""
+    """Application settings loaded from environment variables.
+
+    LLM routing is now handled by profiles (config/profiles.yaml).
+    API keys and non-LLM settings remain here.
+    """
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -18,25 +114,23 @@ class Settings(BaseSettings):
     # Discord
     discord_bot_token: str
 
-    # LLM Provider: "ollama" for local, "groq" for Groq cloud API
-    llm_provider: str = "ollama"
+    # Active LLM profile (from config/profiles.yaml)
+    active_profile: str = "production"
 
-    # Ollama (local)
+    # Ollama connection (shared across profiles that use ollama)
     ollama_host: str = "http://localhost:11434"
-    ollama_model: str = "qwen3:14b"
 
-    # Groq (cloud)
+    # API keys (shared across profiles)
     groq_api_key: str = ""
-    groq_model: str = "qwen/qwen3-32b"
-    groq_max_retries: int = 3          # Retries before falling back to Ollama
-    groq_fallback_to_ollama: bool = True  # Fall back to local Ollama on rate limit
+    groq_max_retries: int = 3
+    anthropic_api_key: str = ""
+    gemini_api_key: str = ""
 
     # LLM Temperature
     narrator_temperature: float = 0.75
     rules_temperature: float = 0.1
 
-    # LLM Timeout (seconds) - max time to wait for a single LLM response
-    # Set high enough for cold model loads (~90s for 30B models)
+    # LLM Timeout (seconds)
     llm_timeout: float = 120.0
 
     # Database
@@ -52,26 +146,8 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
 
     # Debug
-    debug_show_intents: bool = False  # If True, append INTENTS to Discord messages
-    debug_log_llm_output: bool = False  # If True, write full LLM outputs to data/llm_debug.log
-
-    # Anthropic Claude (narrator provider option)
-    anthropic_api_key: str = ""
-    anthropic_model: str = "claude-sonnet-4-6"
-
-    # Narrator provider override: "default" uses the main llm_provider,
-    # "anthropic" routes ONLY narrator calls through Claude API
-    narrator_provider: str = "default"
-
-    # Narrator context limits (scale with model context window)
-    # "default" auto-selects based on narrator_provider:
-    #   Qwen/Ollama: buffer=20, compaction threshold=6
-    #   Anthropic Claude: buffer=50, compaction threshold=15
-    narrator_buffer_size: int = 0      # 0 = auto-select
-    narrator_compaction_threshold: int = 0  # 0 = auto-select
-
-    # Gemini (used by test_eval.py only — not used in game runtime)
-    gemini_api_key: str = ""
+    debug_show_intents: bool = False
+    debug_log_llm_output: bool = False
 
     @property
     def database_url(self) -> str:

@@ -53,22 +53,11 @@ class MemoryManager:
     def __init__(self, campaign_id: str):
         self.campaign_id = campaign_id
 
-        # Auto-select buffer size based on narrator provider
-        from ..config import get_settings
-        settings = get_settings()
-        if settings.narrator_buffer_size > 0:
-            buffer_size = settings.narrator_buffer_size
-        elif settings.narrator_provider == "anthropic":
-            buffer_size = 30   # Claude: 1M context, but still need regular fact extraction
-        else:
-            buffer_size = 20   # Qwen: smaller context
-
-        if settings.narrator_compaction_threshold > 0:
-            compaction_threshold = settings.narrator_compaction_threshold
-        elif settings.narrator_provider == "anthropic":
-            compaction_threshold = 8  # Compact sooner to pin facts earlier
-        else:
-            compaction_threshold = 6
+        # Read memory settings from active profile
+        from ..config import get_profile
+        profile = get_profile()
+        buffer_size = profile.memory.buffer_size
+        compaction_threshold = profile.memory.compaction_threshold
 
         # Initialize memory tiers
         self.core = CoreMemory(campaign_id)

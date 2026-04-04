@@ -1,0 +1,94 @@
+# LLM Profile Configuration
+# Switch profiles by setting ACTIVE_PROFILE in .env or environment
+# Each profile defines narrator, brain (triage/extraction/compaction), and memory settings
+
+# Production: Sonnet narrates, Groq handles brain
+production:
+  narrator:
+    provider: anthropic
+    model: claude-sonnet-4-6
+  brain:
+    provider: groq
+    model: qwen/qwen3-32b
+    fallback_to_ollama: true
+  memory:
+    buffer_size: 30
+    compaction_threshold: 8
+
+# Local MoE: everything on one model, zero cost
+local_moe:
+  narrator:
+    provider: ollama
+    model: qwen3.5:35b-a3b
+  brain:
+    provider: ollama
+    model: qwen3.5:35b-a3b
+    fallback_to_ollama: false
+  memory:
+    buffer_size: 20
+    compaction_threshold: 6
+
+# Local split: MoE narrates, dense 9B does brain (needs ~38GB VRAM)
+local_split:
+  narrator:
+    provider: ollama
+    model: qwen3.5:35b-a3b
+  brain:
+    provider: ollama
+    model: qwen3.5:9b
+    fallback_to_ollama: false
+  memory:
+    buffer_size: 20
+    compaction_threshold: 6
+
+# Local dense: 27B does everything
+local_dense:
+  narrator:
+    provider: ollama
+    model: qwen3.5:27b
+  brain:
+    provider: ollama
+    model: qwen3.5:27b
+    fallback_to_ollama: false
+  memory:
+    buffer_size: 20
+    compaction_threshold: 6
+
+# Groq only: cloud 32b does everything
+groq_full:
+  narrator:
+    provider: groq
+    model: qwen/qwen3-32b
+  brain:
+    provider: groq
+    model: qwen/qwen3-32b
+    fallback_to_ollama: false
+  memory:
+    buffer_size: 20
+    compaction_threshold: 6
+
+# MoE narrates locally, Groq does brain
+moe_groq:
+  narrator:
+    provider: ollama
+    model: qwen3.5:35b-a3b
+  brain:
+    provider: groq
+    model: qwen/qwen3-32b
+    fallback_to_ollama: false
+  memory:
+    buffer_size: 20
+    compaction_threshold: 6
+
+# Sonnet narrator + local 9B brain
+sonnet_local:
+  narrator:
+    provider: anthropic
+    model: claude-sonnet-4-6
+  brain:
+    provider: ollama
+    model: qwen3.5:9b
+    fallback_to_ollama: false
+  memory:
+    buffer_size: 30
+    compaction_threshold: 8

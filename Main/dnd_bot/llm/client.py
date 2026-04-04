@@ -12,7 +12,7 @@ import json
 import ollama
 import structlog
 
-from ..config import get_settings
+from ..config import get_settings, get_profile
 
 logger = structlog.get_logger()
 
@@ -94,7 +94,7 @@ class OllamaClient:
         max_workers: int = 4,
     ):
         settings = get_settings()
-        self.model = model or settings.ollama_model
+        self.model = model or "qwen3.5:35b-a3b"
         self.host = host or settings.ollama_host
         self.timeout = settings.llm_timeout
         self._executor = ThreadPoolExecutor(max_workers=max_workers)
@@ -423,10 +423,10 @@ class GroqClient:
             )
 
         settings = get_settings()
-        self.model = model or settings.groq_model
+        self.model = model or "qwen/qwen3-32b"
         self.timeout = settings.llm_timeout
         self._max_retries = settings.groq_max_retries
-        self._fallback_enabled = settings.groq_fallback_to_ollama
+        self._fallback_enabled = False  # Set by _create_client from profile
         key = api_key or settings.groq_api_key
         if not key:
             raise ValueError("GROQ_API_KEY must be set when using Groq provider")
@@ -625,7 +625,7 @@ class AnthropicClient:
             )
 
         settings = get_settings()
-        self.model = model or settings.anthropic_model
+        self.model = model or "claude-sonnet-4-6"
         self.timeout = settings.llm_timeout
         key = api_key or settings.anthropic_api_key
         if not key:
@@ -745,58 +745,65 @@ _client = None
 _narrator_client = None
 
 
+def _create_client(provider: str, model: str, fallback_to_ollama: bool = False):
+    """Create an LLM client for a given provider and model."""
+    settings = get_settings()
+
+    if provider == "groq":
+        client = GroqClient(model=model)
+        client._fallback_enabled = fallback_to_ollama
+        return client
+    elif provider == "anthropic":
+        return AnthropicClient(model=model)
+    else:  # ollama
+        return OllamaClient(model=model)
+
+
 def get_llm_client():
-    """Get the global LLM client based on configured provider."""
+    """Get the brain/triage LLM client based on active profile."""
     global _client
     if _client is None:
-        settings = get_settings()
-        if settings.llm_provider == "groq":
-            _client = GroqClient()
-            logger.info("llm_client_init", provider="groq", model=settings.groq_model)
-        else:
-            _client = OllamaClient()
-            logger.info("llm_client_init", provider="ollama", model=settings.ollama_model)
+        profile = get_profile()
+        brain = profile.brain
+        _client = _create_client(brain.provider, brain.model, brain.fallback_to_ollama)
+        logger.info(
+            "brain_client_init",
+            provider=brain.provider,
+            model=brain.model,
+            profile=profile.name,
+        )
     return _client
 
 
 def get_narrator_client():
-    """Get the narrator-specific LLM client.
+    """Get the narrator LLM client based on active profile.
 
-    Supports independent narrator routing:
-    - "anthropic": Claude API (premium creative writing)
-    - "ollama": Local Ollama model (can differ from the triage model)
-    - "groq": Groq cloud (can differ from local triage)
-    - "default": Same client as get_llm_client()
-
-    This allows e.g. MoE on Ollama for narration + Groq for triage.
+    Supports independent routing from the brain client — different
+    provider, different model, different everything.
     """
     global _narrator_client
     if _narrator_client is None:
-        settings = get_settings()
-        if settings.narrator_provider == "anthropic" and settings.anthropic_api_key:
-            _narrator_client = AnthropicClient()
+        profile = get_profile()
+        narrator = profile.narrator
+
+        # If narrator and brain use same provider+model, share the client
+        if (narrator.provider == profile.brain.provider
+                and narrator.model == profile.brain.model):
+            _narrator_client = get_llm_client()
             logger.info(
                 "narrator_client_init",
-                provider="anthropic",
-                model=settings.anthropic_model,
-            )
-        elif settings.narrator_provider == "ollama":
-            _narrator_client = OllamaClient()
-            logger.info(
-                "narrator_client_init",
-                provider="ollama",
-                model=settings.ollama_model,
-            )
-        elif settings.narrator_provider == "groq":
-            _narrator_client = GroqClient()
-            logger.info(
-                "narrator_client_init",
-                provider="groq",
-                model=settings.groq_model,
+                provider=narrator.provider,
+                model=narrator.model,
+                shared_with="brain",
             )
         else:
-            _narrator_client = get_llm_client()
-            logger.info("narrator_client_init", provider="default (same as llm)")
+            _narrator_client = _create_client(narrator.provider, narrator.model)
+            logger.info(
+                "narrator_client_init",
+                provider=narrator.provider,
+                model=narrator.model,
+                profile=profile.name,
+            )
     return _narrator_client
 
 
