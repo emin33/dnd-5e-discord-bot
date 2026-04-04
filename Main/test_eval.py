@@ -681,7 +681,6 @@ class EvalSession:
                     resp = await session.send_action(action)
                     if resp and resp.narrative:
                         self.player.record_turn(action, resp.narrative, "seed")
-                    await asyncio.sleep(1)
 
             # Main game loop — play all turns first, evaluate transcript after
             header("GAME SESSION")
@@ -748,7 +747,6 @@ class EvalSession:
                 ))
 
                 self._save_log()
-                await asyncio.sleep(1)
 
         finally:
             self.finished_at = time.strftime("%Y-%m-%d %H:%M:%S")
