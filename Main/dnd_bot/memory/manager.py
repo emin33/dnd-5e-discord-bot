@@ -558,11 +558,12 @@ class MemoryManager:
                     message_count=self._message_count,
                 )
 
-            except (json.JSONDecodeError, KeyError, ValueError, AttributeError, TypeError, IndexError) as parse_err:
+            except Exception as parse_err:
                 logger.warning(
                     "summary_json_parse_failed_using_raw",
-                    error=str(parse_err)[:80],
-                    response_preview=response[:100],
+                    error_type=type(parse_err).__name__,
+                    error=str(parse_err)[:120],
+                    response_preview=response[:200],
                 )
                 # Fallback: use the raw response as a plain text summary
                 raw_summary = response.strip()
@@ -581,10 +582,13 @@ class MemoryManager:
                     self._last_summary_time = time.monotonic()
 
         except Exception as e:
+            import traceback
             logger.error(
                 "summary_generation_failed",
                 campaign_id=self.campaign_id,
+                error_type=type(e).__name__,
                 error=str(e),
+                traceback=traceback.format_exc()[:500],
             )
         finally:
             self._is_consolidating = False
