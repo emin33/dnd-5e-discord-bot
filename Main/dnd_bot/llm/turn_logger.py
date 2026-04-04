@@ -101,7 +101,8 @@ class TurnRecord:
         }
 
     def record_triage(self, action_type: str, needs_roll: bool,
-                       skill: str = "", dc: int = 0) -> None:
+                       skill: str = "", dc: int = 0,
+                       parse_warnings: list[str] | None = None) -> None:
         """Record triage decision."""
         self.data["triage"] = {
             "action_type": action_type,
@@ -109,13 +110,18 @@ class TurnRecord:
             "skill": skill,
             "dc": dc,
         }
+        if parse_warnings:
+            self.data["triage"]["parse_warnings"] = parse_warnings
 
-    def record_state_delta(self, delta_dict: dict, rejections: list[str]) -> None:
+    def record_state_delta(self, delta_dict: dict, rejections: list[str],
+                            parse_warnings: list[str] | None = None) -> None:
         """Record extracted StateDelta and any rejections."""
         self.data["state_delta"] = {
             "delta": delta_dict,
             "rejections": rejections,
         }
+        if parse_warnings:
+            self.data["state_delta"]["parse_warnings"] = parse_warnings
 
     def record_nli(self, pairs_checked: int, contradictions: list[dict],
                     ambiguous_count: int = 0, tiebreaker_results: int = 0) -> None:

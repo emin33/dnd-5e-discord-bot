@@ -686,3 +686,9 @@ def get_rules_brain() -> RulesBrain:
     if _rules is None:
         _rules = RulesBrain()
     return _rules
+
+
+def _reset_rules():
+    """Clear cached rules brain so it recreates from the active profile."""
+    global _rules
+    _rules = None

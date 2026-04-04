@@ -209,6 +209,84 @@ class AdminCog(commands.Cog):
         return colors.get(category, discord.Color.greyple())
 
 
+    # ------------------------------------------------------------------
+    # Profile switching
+    # ------------------------------------------------------------------
+
+    @discord.slash_command(
+        name="profile",
+        description="View or switch the active LLM profile",
+    )
+    async def profile(
+        self,
+        ctx: discord.ApplicationContext,
+        name: discord.Option(
+            str,
+            description="Profile to switch to (omit to show current)",
+            required=False,
+            default=None,
+        ),
+    ):
+        """View the current LLM profile or switch to a different one.
+
+        Profiles are defined in config/profiles.yaml. Switching takes
+        effect on the next turn — in-progress turns finish with the
+        old profile.
+        """
+        from ...config import get_profile, switch_profile, list_profiles, load_profile
+
+        if name is None:
+            # Show current profile
+            profile = get_profile()
+            available = list_profiles()
+            embed = discord.Embed(
+                title="LLM Profile",
+                color=discord.Color.blue(),
+            )
+            embed.add_field(
+                name=f"Active: `{profile.name}`",
+                value=(
+                    f"**Narrator:** {profile.narrator.provider} / `{profile.narrator.model}`\n"
+                    f"**Brain:** {profile.brain.provider} / `{profile.brain.model}`\n"
+                    f"**Memory:** buffer={profile.memory.buffer_size}, "
+                    f"verbatim={profile.memory.verbatim_size}"
+                ),
+                inline=False,
+            )
+            embed.add_field(
+                name="Available profiles",
+                value=", ".join(f"`{p}`" for p in available),
+                inline=False,
+            )
+            await ctx.respond(embed=embed)
+            return
+
+        # Switch to the requested profile
+        try:
+            profile = switch_profile(name)
+        except ValueError as e:
+            await ctx.respond(f"❌ {e}", ephemeral=True)
+            return
+
+        embed = discord.Embed(
+            title="Profile Switched",
+            description=f"Now using **{profile.name}**",
+            color=discord.Color.green(),
+        )
+        embed.add_field(
+            name="Narrator",
+            value=f"{profile.narrator.provider} / `{profile.narrator.model}`",
+            inline=True,
+        )
+        embed.add_field(
+            name="Brain",
+            value=f"{profile.brain.provider} / `{profile.brain.model}`",
+            inline=True,
+        )
+        embed.set_footer(text="Takes effect on the next turn")
+        await ctx.respond(embed=embed)
+
+
 def setup(bot: commands.Bot):
     """Load the cog."""
     bot.add_cog(AdminCog(bot))

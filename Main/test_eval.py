@@ -755,6 +755,20 @@ class EvalSession:
                 narrative = response.narrative
                 mechanics = response.mechanical_result
 
+                # 2b. Auto-resolve combat for eval runs.
+                # Real combat uses Discord buttons/panels — the LLM player
+                # can't interact with those.  Reset to ACTIVE so the
+                # narrator continues in exploration mode next turn.
+                if response.combat_triggered:
+                    game_session = session.manager._sessions.get(session.channel_id)
+                    if game_session:
+                        from dnd_bot.game.session import SessionState
+                        game_session.state = SessionState.ACTIVE
+                        if game_session.world_state:
+                            game_session.world_state.phase = "exploration"
+                        print(f"  {C.YELLOW}[EVAL] Combat triggered — auto-resolved, "
+                              f"continuing exploration{C.RESET}")
+
                 # 3. Record for player history
                 self.player.record_turn(action, narrative, phase)
 

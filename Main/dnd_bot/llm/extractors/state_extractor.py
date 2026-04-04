@@ -28,14 +28,17 @@ Only include fields where something actually changed. Omit unchanged fields.
 ## What to extract:
 
 **time_change** - Only if time of day shifted (dawn/morning/midday/afternoon/dusk/evening/night/midnight)
-**location_change** - Set this if the narrative describes the party being in a named or distinct area (e.g., "a clearing", "the tavern", "the forest trail"). Set it on the FIRST turn if the narrator establishes where the party is, even without explicit movement.
+**location_change** - Short place NAME only (2-4 words max). Examples: "the tavern", "forest clearing", "north gate". NEVER a description or sentence. If the narrative just describes surroundings without the party moving to a distinct named area, do NOT set this.
 **location_description** - Brief description of the new location (only if location changed)
-**new_connections** - Newly revealed exits or paths from current location. Use SHORT place names only (e.g., "north gate", "the river", "dark cave"), NOT full sentences.
+**new_connections** - Newly revealed exits or paths from current location. SHORT place names only (2-4 words, e.g., "north gate", "the river", "dark cave"). NEVER full sentences or descriptions.
 **new_npcs** - NPCs appearing for the FIRST time. Include:
-  - name, location (where they are), disposition (hostile/unfriendly/neutral/friendly/allied)
+  - name: the NPC's name or short label (e.g., "Marta", "the blacksmith")
+  - location: MUST use the current location name from the world state (the "location" field). Do NOT invent sub-locations like "behind the stall" or "inside the cottage". If the NPC is where the party is, use the same location string.
+  - disposition (hostile/unfriendly/neutral/friendly/allied)
   - description (brief), important (true if quest-giver, ally, or key story NPC)
 **npc_updates** - Changes to EXISTING NPCs (moved, changed disposition, died, etc.)
   - Only include the fields that changed
+  - location: use short place names, not descriptions
 **removed_npcs** - NPCs who LEFT the scene (not dead, just departed)
 **new_quests** - Quests or tasks assigned to the party for the FIRST time. Include:
   - name (short quest title), giver (NPC who assigned it), status ("active")
@@ -46,6 +49,13 @@ Only include fields where something actually changed. Omit unchanged fields.
 **new_facts** - Established facts that must not be contradicted later
 **flag_changes** - World flags that changed (e.g., "bridge_destroyed": true)
 **phase_change** - Only if game phase changed (exploration/combat/dialogue/rest)
+
+## Location naming rules:
+- ALL location names (location_change, new_connections, NPC location) must be SHORT: 2-4 words max.
+- Use proper place names when available ("Thornfield", "the market"), not descriptions ("small makeshift stall between stable and general store").
+- For NPCs at the party's location, copy the exact current location string from the world state.
+- Good: "settlement", "the tavern", "north gate", "old mill"
+- Bad: "a small clearing near the river bend", "interior of the sealed building", "behind the merchant's stall"
 
 ## Rules:
 - Extract ONLY what the narrative establishes. Do not infer or speculate.
@@ -109,7 +119,13 @@ class StateExtractor:
                 think=False,
             )
 
-            delta = self._parse_response(response.content)
+            delta, parse_warnings = self._parse_response(response.content)
+
+            if parse_warnings:
+                logger.warning(
+                    "state_delta_parse_warnings",
+                    warnings=parse_warnings,
+                )
 
             logger.info(
                 "state_delta_extracted",
@@ -121,16 +137,22 @@ class StateExtractor:
                 new_facts=len(delta.new_facts),
             )
 
+            # Attach warnings for turn log observability
+            delta._parse_warnings = parse_warnings
             return delta
 
         except Exception as e:
             logger.warning("state_extraction_failed", error=str(e))
             return StateDelta()
 
-    def _parse_response(self, content: str) -> StateDelta:
-        """Parse LLM response into StateDelta."""
+    def _parse_response(self, content: str) -> tuple[StateDelta, list[str]]:
+        """Parse LLM response into StateDelta.
+
+        Returns (delta, parse_warnings) for turn log observability.
+        """
+        warnings: list[str] = []
         if not content:
-            return StateDelta()
+            return StateDelta(), warnings
 
         content = content.strip()
 
@@ -140,18 +162,22 @@ class StateExtractor:
             end = content.find("```", start)
             if end > start:
                 content = content[start:end].strip()
+                warnings.append("stripped_markdown_fence")
         elif "```" in content:
             start = content.find("```") + 3
             end = content.find("```", start)
             if end > start:
                 content = content[start:end].strip()
+                warnings.append("stripped_code_fence")
 
         # Extract JSON object
         if "{" in content:
-            start = content.find("{")
-            end = content.rfind("}") + 1
-            if end > start:
-                content = content[start:end]
+            json_start = content.find("{")
+            json_end = content.rfind("}") + 1
+            if json_start > 0 or json_end < len(content):
+                warnings.append("extracted_json_from_text")
+            if json_end > json_start:
+                content = content[json_start:json_end]
 
         try:
             data = json.loads(content)
@@ -161,17 +187,19 @@ class StateExtractor:
                 error=str(e),
                 content_preview=content[:200],
             )
-            return StateDelta()
+            warnings.append(f"json_parse_failed: {e}")
+            return StateDelta(), warnings
 
         try:
-            return StateDelta(**data)
+            return StateDelta(**data), warnings
         except ValidationError as e:
             logger.warning(
                 "state_delta_validation_failed",
                 error=str(e),
                 data_preview=str(data)[:300],
             )
-            return StateDelta()
+            warnings.append(f"validation_failed: {e}")
+            return StateDelta(), warnings
 
 
 # Singleton

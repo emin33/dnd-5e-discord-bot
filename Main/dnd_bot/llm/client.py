@@ -910,6 +910,13 @@ _client = None
 _narrator_client = None
 
 
+def _reset_clients():
+    """Clear cached client instances so they recreate from the active profile."""
+    global _client, _narrator_client
+    _client = None
+    _narrator_client = None
+
+
 def _create_client(provider: str, model: str, fallback_to_ollama: bool = False):
     """Create an LLM client for a given provider and model."""
     settings = get_settings()

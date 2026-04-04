@@ -338,29 +338,18 @@ class VectorStore:
 
         memory_id = f"entity_{node_id}"
         try:
-            # Upsert: try update first, fall back to add
-            try:
-                collection.update(
-                    ids=[memory_id],
-                    documents=[content],
-                    metadatas=[{
-                        "type": "entity",
-                        "node_id": node_id,
-                        "entity_type": entity_type,
-                        "name": name,
-                    }],
-                )
-            except Exception:
-                collection.add(
-                    ids=[memory_id],
-                    documents=[content],
-                    metadatas=[{
-                        "type": "entity",
-                        "node_id": node_id,
-                        "entity_type": entity_type,
-                        "name": name,
-                    }],
-                )
+            # ChromaDB 1.4+ update() silently no-ops on missing IDs,
+            # so use upsert() which adds-or-updates in one call.
+            collection.upsert(
+                ids=[memory_id],
+                documents=[content],
+                metadatas=[{
+                    "type": "entity",
+                    "node_id": node_id,
+                    "entity_type": entity_type,
+                    "name": name,
+                }],
+            )
             return True
         except Exception as e:
             logger.error("entity_description_add_failed", node_id=node_id, error=str(e))

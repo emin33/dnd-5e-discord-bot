@@ -99,9 +99,10 @@ def print_response(response: DMResponse, elapsed: float):
         if line.strip():
             print(line)
 
-    # Combat
+    # Combat — in automated tests, auto-resolve since real combat
+    # uses Discord buttons/panels that the LLM player can't interact with.
     if response.combat_triggered:
-        print_section("COMBAT", "TRIGGERED!", Colors.RED)
+        print_section("COMBAT", "TRIGGERED → auto-resolved for test", Colors.YELLOW)
 
     # Tool calls
     if response.tool_calls_made:
@@ -406,6 +407,16 @@ class TestSession:
                       f"({memory_state['summary_len']}ch), "
                       f"scratchpad={memory_state['scratchpad_entries']}"
                       f"{Colors.RESET}")
+
+            # Auto-resolve combat for automated tests — real combat uses
+            # Discord buttons/panels that the LLM player can't interact with.
+            if response.combat_triggered:
+                game_session = self.manager._sessions.get(self.channel_id)
+                if game_session:
+                    from dnd_bot.game.session import SessionState
+                    game_session.state = SessionState.ACTIVE
+                    if game_session.world_state:
+                        game_session.world_state.phase = "exploration"
 
             self.action_log.append({
                 "turn": self.turn_number,

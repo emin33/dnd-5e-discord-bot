@@ -98,6 +98,54 @@ def set_profile(profile_name: str) -> LLMProfile:
     return _profile
 
 
+def switch_profile(profile_name: str) -> LLMProfile:
+    """Switch the active profile at runtime, resetting all cached LLM singletons.
+
+    Safe to call while the bot is running. The next turn will use the new
+    profile's narrator/brain/memory settings. In-progress turns finish
+    with their existing clients.
+    """
+    profile = set_profile(profile_name)
+
+    # Reset all cached LLM singletons so they recreate with the new profile.
+    # Import inline to avoid circular imports at module load time.
+    from .llm.client import _reset_clients
+    _reset_clients()
+
+    from .llm.brains.narrator import _reset_narrator
+    _reset_narrator()
+
+    from .llm.brains.rules import _reset_rules
+    _reset_rules()
+
+    from .llm.brains.adjudicator import _reset_adjudicator
+    _reset_adjudicator()
+
+    from .llm.orchestrator import _reset_orchestrator
+    _reset_orchestrator()
+
+    import structlog
+    logger = structlog.get_logger()
+    logger.info(
+        "profile_switched",
+        profile=profile.name,
+        narrator=f"{profile.narrator.provider}/{profile.narrator.model}",
+        brain=f"{profile.brain.provider}/{profile.brain.model}",
+    )
+
+    return profile
+
+
+def list_profiles() -> list[str]:
+    """Return available profile names from config/profiles.yaml."""
+    profiles_path = Path(__file__).parent.parent / "config" / "profiles.yaml"
+    if not profiles_path.exists():
+        return []
+    with open(profiles_path, "r", encoding="utf-8") as f:
+        profiles = yaml.safe_load(f)
+    return list(profiles.keys())
+
+
 # =============================================================================
 # Base Settings (env vars + .env file)
 # =============================================================================

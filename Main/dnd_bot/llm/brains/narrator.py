@@ -726,3 +726,9 @@ def get_narrator() -> NarratorBrain:
     if _narrator is None:
         _narrator = NarratorBrain()
     return _narrator
+
+
+def _reset_narrator():
+    """Clear cached narrator so it recreates from the active profile."""
+    global _narrator
+    _narrator = None

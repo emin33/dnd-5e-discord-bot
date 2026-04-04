@@ -754,6 +754,7 @@ class DMOrchestrator:
             needs_roll=triage.needs_roll,
             skill=triage.skill or "",
             dc=triage.dc or 0,
+            parse_warnings=getattr(triage, "_parse_warnings", None),
         )
 
         logger.info(
@@ -1008,6 +1009,14 @@ class DMOrchestrator:
             delta = await self._extract_and_apply_state_delta(narrative, world_state, context)
             _turn_record.end_stage("state_extract")
 
+            # Record state delta to turn log (including parse warnings)
+            if delta:
+                _turn_record.record_state_delta(
+                    delta_dict=delta.model_dump(exclude_none=True, exclude_defaults=True),
+                    rejections=[],
+                    parse_warnings=getattr(delta, "_parse_warnings", None),
+                )
+
         # Step 3.6b: Bridge state delta to knowledge graph
         _kg_ops_applied = 0
         _kg_ops_rejected = 0
@@ -1181,7 +1190,7 @@ class DMOrchestrator:
             )
 
             # Parse JSON response
-            triage_data = self._parse_triage_json(response.content)
+            triage_data, parse_warnings = self._parse_triage_json(response.content)
 
             # Log parse failures at warning level so they're visible
             if triage_data.get("_parse_failed"):
@@ -1189,6 +1198,12 @@ class DMOrchestrator:
                     "triage_parse_failure_detected",
                     raw_response=response.content[:300] if response.content else "empty",
                     action=action[:100],
+                )
+            if parse_warnings:
+                logger.warning(
+                    "triage_parse_warnings",
+                    warnings=parse_warnings,
+                    action=action[:80],
                 )
 
             # Log for debugging
@@ -1210,7 +1225,7 @@ class DMOrchestrator:
             def _or_none(val):
                 return val if val else None
 
-            return TriageResult(
+            result = TriageResult(
                 action_type=action_type,
                 reasoning=triage_data.get("reasoning", ""),
                 needs_roll=needs_roll,
@@ -1237,6 +1252,9 @@ class DMOrchestrator:
                 # Currency spending
                 currency_spent=triage_data.get("currency_spent") or None,
             )
+            # Attach parse warnings for turn log observability
+            result._parse_warnings = parse_warnings
+            return result
 
         except Exception as e:
             import traceback
@@ -1398,12 +1416,16 @@ class DMOrchestrator:
 
         return "\n".join(capabilities)
 
-    def _parse_triage_json(self, content: str) -> dict:
+    def _parse_triage_json(self, content: str) -> tuple[dict, list[str]]:
         """Parse and validate JSON from triage response.
 
         Uses Pydantic validation against TriageSchema. Logs warnings on
         parse failures instead of silently returning defaults.
+
+        Returns (data_dict, parse_warnings) so callers can record warnings
+        in the turn log for post-mortem observability.
         """
+        warnings: list[str] = []
         content = content.strip()
 
         # Strip markdown code fences if present
@@ -1412,18 +1434,23 @@ class DMOrchestrator:
             end = content.find("```", start)
             if end > start:
                 content = content[start:end].strip()
+                warnings.append("stripped_markdown_fence")
         elif "```" in content:
             start = content.find("```") + 3
             end = content.find("```", start)
             if end > start:
                 content = content[start:end].strip()
+                warnings.append("stripped_code_fence")
 
         # Extract JSON object
         if "{" in content:
-            start = content.find("{")
-            end = content.rfind("}") + 1
-            if end > start:
-                content = content[start:end]
+            json_start = content.find("{")
+            json_end = content.rfind("}") + 1
+            if json_start > 0 or json_end < len(content):
+                # Had to extract JSON from surrounding text
+                warnings.append("extracted_json_from_text")
+            if json_end > json_start:
+                content = content[json_start:json_end]
 
         try:
             data = json.loads(content)
@@ -1433,30 +1460,32 @@ class DMOrchestrator:
                 raw_content=content[:500],
                 error=str(e),
             )
+            warnings.append(f"json_parse_failed: {e}")
             # Return a clearly marked failure so callers can detect it
             return {
                 "action_type": "roleplay",
                 "needs_roll": False,
                 "reasoning": "TRIAGE_PARSE_FAILURE: LLM returned non-JSON response",
                 "_parse_failed": True,
-            }
+            }, warnings
 
         # Validate against schema — log any coercion issues but don't reject
         try:
             validated = TriageSchema(**data)
-            return validated.model_dump()
+            return validated.model_dump(), warnings
         except Exception as e:
             logger.warning(
                 "triage_schema_validation_failed",
                 raw_data=str(data)[:500],
                 error=str(e),
             )
+            warnings.append(f"schema_validation_failed: {e}")
             # Data parsed as JSON but failed schema validation — use raw data
             # with defaults for missing fields
             data.setdefault("action_type", "roleplay")
             data.setdefault("needs_roll", False)
             data.setdefault("reasoning", "Schema validation failed, using raw data")
-            return data
+            return data, warnings
 
     # =========================================================================
     # ACTION HANDLERS - Execute mechanics based on action_type
@@ -3929,3 +3958,9 @@ def get_orchestrator() -> DMOrchestrator:
     if _orchestrator is None:
         _orchestrator = DMOrchestrator()
     return _orchestrator
+
+
+def _reset_orchestrator():
+    """Clear cached orchestrator so it recreates from the active profile."""
+    global _orchestrator
+    _orchestrator = None

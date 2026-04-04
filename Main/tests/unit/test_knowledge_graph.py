@@ -616,6 +616,25 @@ class TestEntityNameMatcher:
         matcher = EntityNameMatcher(matcher_kg)
         assert matcher.scene_seeds(None) == []
 
+    async def test_scene_seeds_npc_sublocation(self, matcher_kg):
+        """NPCs at sub-locations (e.g. 'inside the tavern') should still seed."""
+        matcher = EntityNameMatcher(matcher_kg)
+        ws = WorldState()
+        ws.current_location = "Ironforge Tavern"
+        ws.npcs["Grimjaw"] = NPCState(name="Grimjaw", location="back room of the tavern")
+        seeds = matcher.scene_seeds(ws)
+        assert "grimjaw" in seeds
+        assert "ironforge-tavern" in seeds
+
+    async def test_scene_seeds_dead_npc_excluded(self, matcher_kg):
+        """Dead NPCs should not be seeded."""
+        matcher = EntityNameMatcher(matcher_kg)
+        ws = WorldState()
+        ws.current_location = "Ironforge Tavern"
+        ws.npcs["Grimjaw"] = NPCState(name="Grimjaw", location="Ironforge Tavern", alive=False)
+        seeds = matcher.scene_seeds(ws)
+        assert "grimjaw" not in seeds
+
     async def test_scene_seeds_unknown_location(self, matcher_kg):
         matcher = EntityNameMatcher(matcher_kg)
         ws = WorldState()

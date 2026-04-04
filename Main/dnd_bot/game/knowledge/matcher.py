@@ -66,27 +66,47 @@ class EntityNameMatcher:
     # ------------------------------------------------------------------
 
     def scene_seeds(self, world_state) -> list[str]:
-        """Return node_ids for the current scene: location + present NPCs.
+        """Return node_ids for the full scene context.
 
-        Guarantees graph context injection every turn regardless of
-        whether the player names entities verbatim.
+        Seeds ALL entity types present in the WorldState: location, NPCs,
+        quests, connected locations, and scene items. BFS from these seeds
+        traverses the graph web and pulls in related entities automatically
+        (e.g. quest → giver NPC → giver's location).
+
+        The max_entities cap in get_context_subgraph prevents over-injection.
         """
         seeds: list[str] = []
+        seen: set[str] = set()
         if not world_state:
             return seeds
 
+        def _try_add(node_id: str) -> None:
+            if node_id and node_id not in seen and self._graph.has_node(node_id):
+                seeds.append(node_id)
+                seen.add(node_id)
+
         # Current location
         if world_state.current_location:
-            loc_id = slugify(world_state.current_location)
-            if self._graph.has_node(loc_id):
-                seeds.append(loc_id)
+            _try_add(slugify(world_state.current_location))
 
-        # NPCs at current location
+        # All alive NPCs in the graph
         for npc_name, npc_state in world_state.npcs.items():
-            if npc_state.location == world_state.current_location and npc_state.alive:
-                npc_id = slugify(npc_name)
-                if self._graph.has_node(npc_id):
-                    seeds.append(npc_id)
+            if npc_state.alive:
+                _try_add(slugify(npc_name))
+
+        # Active quests
+        for quest_name, quest_state in world_state.quests.items():
+            if quest_state.status == "active":
+                _try_add(slugify(quest_name))
+
+        # Connected locations (exits) — lower priority but ensures
+        # the graph web stays reachable for navigation context
+        for conn in world_state.connected_locations:
+            _try_add(slugify(conn))
+
+        # Scene items (objects present in current location)
+        for item_id in world_state.scene_items:
+            _try_add(slugify(item_id))
 
         return seeds
 
