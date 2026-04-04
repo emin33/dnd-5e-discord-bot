@@ -64,6 +64,27 @@ def get_style_hint(turn: int) -> str:
     return NARRATOR_STYLES[turn % len(NARRATOR_STYLES)]
 
 
+# Format instructions — XML for Claude, text markers for others
+NARRATOR_FORMAT_XML = (
+    "Output your response in these two XML blocks:\n"
+    "<prose>\n[2-4 paragraphs - your narration]\n</prose>\n\n"
+    "<intents>\n[intent commands, or NONE]\n</intents>\n\n"
+    "Start with <prose> immediately."
+)
+
+NARRATOR_FORMAT_TEXT = (
+    "Output ONLY these two blocks:\n"
+    "PROSE:\n[2-4 paragraphs]\n\n"
+    "INTENTS:\n[intent commands, or NONE]\n\n"
+    "Start with PROSE: immediately."
+)
+
+
+def _is_anthropic_client(client) -> bool:
+    """Check if the narrator client is Anthropic (Claude)."""
+    return type(client).__name__ == "AnthropicClient"
+
+
 # =============================================================================
 # TRIAGE PROMPT - Rules Brain decides if mechanics are needed
 # =============================================================================
@@ -1636,6 +1657,7 @@ class DMOrchestrator:
         # Narrator: Output PROSE + INTENTS
         # Use bookend layout when world state is available
         # =====================================================================
+        fmt = NARRATOR_FORMAT_XML if _is_anthropic_client(self.narrator.client) else NARRATOR_FORMAT_TEXT
         prompt = f"""The player {player_name} attempted: "{action}"
 
 {resolution_text}
@@ -1645,14 +1667,7 @@ Narrate this action dramatically. Remember:
 - Connect to ongoing tension or stakes from the current scene
 - End with something that maintains momentum
 
-Output ONLY these two blocks:
-PROSE:
-[2-4 sentences - action result + world reaction + forward momentum]
-
-INTENTS:
-[intent commands, or NONE]
-
-Start with PROSE: immediately."""
+{fmt}"""
 
         if context.world_state_yaml:
             enhanced_context.world_state_yaml = context.world_state_yaml
@@ -1683,7 +1698,11 @@ Start with PROSE: immediately."""
                 # Reprompt once
                 messages.append({
                     "role": "system",
-                    "content": "Your response was malformed. Start with PROSE: on the first line. Respond now:",
+                    "content": (
+                        "Your response was malformed. Start with <prose> immediately."
+                        if _is_anthropic_client(self.narrator.client)
+                        else "Your response was malformed. Start with PROSE: on the first line. Respond now:"
+                    ),
                 })
                 response = await self.narrator.client.chat(
                     messages=messages,
@@ -1884,6 +1903,8 @@ Start with PROSE: immediately."""
 
         phase_line = f"**Phase tone:** {phase_hint}\n\n" if phase_hint else "\n"
 
+        fmt = NARRATOR_FORMAT_XML if _is_anthropic_client(self.narrator.client) else NARRATOR_FORMAT_TEXT
+
         messages.append({
             "role": "system",
             "content": (
@@ -1896,10 +1917,7 @@ Start with PROSE: immediately."""
                 "- Show the world's REACTION (environment, NPCs, atmosphere)\n"
                 "- Connect to ongoing tension or stakes\n"
                 "- End with forward momentum that invites further action\n\n"
-                "Output ONLY these two blocks:\n"
-                "PROSE:\n[2-4 paragraphs - action + world reaction + momentum]\n\n"
-                "INTENTS:\n[intent commands, or NONE]\n\n"
-                "Start with PROSE: immediately."
+                f"{fmt}"
             ),
         })
 
@@ -1946,14 +1964,22 @@ Start with PROSE: immediately."""
                 content_preview=raw_content[:100] if raw_content else "(empty)",
             )
 
+            reprompt_fmt = (
+                "Your response was malformed. Use XML tags:\n"
+                "<prose>\n[your narration]\n</prose>\n\n"
+                "<intents>\n[commands or NONE]\n</intents>\n\n"
+                "Respond now, starting with <prose>:"
+            ) if _is_anthropic_client(self.narrator.client) else (
+                "Your response was malformed. You MUST start with PROSE: on the first line.\n\n"
+                "Correct format:\n"
+                "PROSE:\n[your narration]\n\n"
+                "INTENTS:\n[commands or NONE]\n\n"
+                "Respond now, starting with PROSE:"
+            )
             messages[-1] = {
                 "role": "system",
                 "content": (
-                    "Your response was malformed. You MUST start with PROSE: on the first line.\n\n"
-                    "Correct format:\n"
-                    "PROSE:\n[your narration]\n\n"
-                    "INTENTS:\n[commands or NONE]\n\n"
-                    "Respond now, starting with PROSE:"
+                    reprompt_fmt
                 ),
             }
 
@@ -2078,10 +2104,7 @@ Start with PROSE: immediately."""
                 "- Show the world's REACTION to the success or failure\n"
                 "- Connect to ongoing tension or stakes\n"
                 "- End with forward momentum\n\n"
-                "Output ONLY these two blocks:\n"
-                "PROSE:\n[2-4 paragraphs - outcome + world reaction + momentum]\n\n"
-                "INTENTS:\n[intent commands, or NONE]\n\n"
-                "Start with PROSE: immediately."
+                f"{NARRATOR_FORMAT_XML if _is_anthropic_client(self.narrator.client) else NARRATOR_FORMAT_TEXT}"
             ),
         })
 
@@ -2107,16 +2130,26 @@ Start with PROSE: immediately."""
             )
 
             # Reprompt with corrective instruction
-            messages[-1] = {
-                "role": "system",
-                "content": (
+            if _is_anthropic_client(self.narrator.client):
+                reprompt_content = (
+                    "Your response was malformed. Use XML tags:\n\n"
+                    f"RESOLUTION: {narrator_context}\n\n"
+                    "<prose>\n[your narration]\n</prose>\n\n"
+                    "<intents>\n[commands or NONE]\n</intents>\n\n"
+                    "Respond now, starting with <prose>:"
+                )
+            else:
+                reprompt_content = (
                     "Your response was malformed. You MUST start with PROSE: on the first line.\n\n"
                     f"RESOLUTION: {narrator_context}\n\n"
                     "Correct format:\n"
                     "PROSE:\n[your narration]\n\n"
                     "INTENTS:\n[commands or NONE]\n\n"
                     "Respond now, starting with PROSE:"
-                ),
+                )
+            messages[-1] = {
+                "role": "system",
+                "content": reprompt_content,
             }
 
             response = await self.narrator.client.chat(

@@ -100,7 +100,11 @@ def validate_narrator_format(response: str) -> bool:
     """
     Validate that narrator response follows the PROSE:/INTENTS: contract.
 
-    Returns True if response starts with PROSE: (possibly after whitespace/code blocks).
+    Accepts two formats:
+    - Text markers: PROSE: ... INTENTS: ... (Qwen/Groq/OpenRouter)
+    - XML tags: <prose>...</prose> <intents>...</intents> (Claude/Anthropic)
+
+    Returns True if response contains valid prose output in either format.
     """
     if not response:
         return False
@@ -110,16 +114,18 @@ def validate_narrator_format(response: str) -> bool:
 
     # Strip leading code block markers (```, ```text, etc.)
     if normalized.startswith("```"):
-        # Find end of first line (the ``` marker line)
         first_newline = normalized.find("\n")
         if first_newline != -1:
             normalized = normalized[first_newline + 1:]
-        # Also strip trailing ```
         if normalized.rstrip().endswith("```"):
             normalized = normalized.rstrip()[:-3]
         normalized = normalized.strip()
 
-    # Must start with PROSE: (case-insensitive)
+    # Accept XML format: <prose>...</prose>
+    if "<prose>" in normalized.lower():
+        return True
+
+    # Accept text marker format: PROSE: (case-insensitive)
     return normalized.upper().startswith("PROSE:")
 
 
@@ -174,6 +180,10 @@ def extract_intents_block(response: str) -> tuple[str, str]:
     """
     Extract PROSE and INTENTS blocks from narrator response.
 
+    Supports two formats:
+    - Text markers: PROSE: ... INTENTS: ... (Qwen/Groq/OpenRouter)
+    - XML tags: <prose>...</prose> <intents>...</intents> (Claude/Anthropic)
+
     Returns:
         Tuple of (prose, intents_block)
     """
@@ -192,6 +202,15 @@ def extract_intents_block(response: str) -> tuple[str, str]:
         if response.rstrip().endswith("```"):
             response = response.rstrip()[:-3]
         response = response.strip()
+
+    # Try XML format first: <prose>...</prose> <intents>...</intents>
+    prose_xml = re.search(r'<prose>(.*?)</prose>', response, re.DOTALL | re.IGNORECASE)
+    if prose_xml:
+        prose = prose_xml.group(1).strip()
+        intents_xml = re.search(r'<intents>(.*?)</intents>', response, re.DOTALL | re.IGNORECASE)
+        if intents_xml:
+            intents = intents_xml.group(1).strip()
+        return prose, intents
 
     # Find INTENTS marker with various formats:
     # - "INTENTS:" (preferred)

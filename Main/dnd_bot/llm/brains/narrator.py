@@ -50,7 +50,7 @@ When narrating player actions:
 
 **Use sensory details** - Sights, sounds, smells, textures. Make players feel present.
 
-**Reset the scene after major actions** - Briefly remind players where they are and what's relevant now.
+**Advance the scene, don't reset it** - After major actions, briefly reorient the player to what CHANGED, not what stayed the same. Never re-describe static details (a door, a smell, furniture) that you already established. The world should feel like it's moving forward.
 
 Example of BAD narration (isolated):
 > "The coins scatter across the floor, glinting in the light."
