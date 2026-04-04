@@ -23,8 +23,10 @@ class ProviderConfig:
 @dataclass
 class MemoryConfig:
     """Memory system configuration."""
-    buffer_size: int = 20
-    compaction_threshold: int = 6
+    buffer_size: int = 20           # Total message capacity
+    verbatim_size: int = 8          # Tier 1: full prose messages
+    condensed_size: int = 12        # Tier 2: per-exchange summary slots
+    compaction_threshold: int = 6   # Tier 3: overflow before batch compaction
 
 @dataclass
 class LLMProfile:
@@ -69,6 +71,8 @@ def load_profile(profile_name: str) -> LLMProfile:
         ),
         memory=MemoryConfig(
             buffer_size=memory_data.get("buffer_size", 20),
+            verbatim_size=memory_data.get("verbatim_size", 8),
+            condensed_size=memory_data.get("condensed_size", 12),
             compaction_threshold=memory_data.get("compaction_threshold", 6),
         ),
     )

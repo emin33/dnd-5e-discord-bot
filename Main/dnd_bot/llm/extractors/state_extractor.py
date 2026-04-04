@@ -28,15 +28,20 @@ Only include fields where something actually changed. Omit unchanged fields.
 ## What to extract:
 
 **time_change** - Only if time of day shifted (dawn/morning/midday/afternoon/dusk/evening/night/midnight)
-**location_change** - Only if the party moved to a new location
+**location_change** - Set this if the narrative describes the party being in a named or distinct area (e.g., "a clearing", "the tavern", "the forest trail"). Set it on the FIRST turn if the narrator establishes where the party is, even without explicit movement.
 **location_description** - Brief description of the new location (only if location changed)
-**new_connections** - Newly revealed exits or paths from current location
+**new_connections** - Newly revealed exits or paths from current location. Use SHORT place names only (e.g., "north gate", "the river", "dark cave"), NOT full sentences.
 **new_npcs** - NPCs appearing for the FIRST time. Include:
   - name, location (where they are), disposition (hostile/unfriendly/neutral/friendly/allied)
   - description (brief), important (true if quest-giver, ally, or key story NPC)
 **npc_updates** - Changes to EXISTING NPCs (moved, changed disposition, died, etc.)
   - Only include the fields that changed
 **removed_npcs** - NPCs who LEFT the scene (not dead, just departed)
+**new_quests** - Quests or tasks assigned to the party for the FIRST time. Include:
+  - name (short quest title), giver (NPC who assigned it), status ("active")
+  - objectives (list of goals), location (where to go, if mentioned)
+**quest_updates** - Changes to EXISTING quests (completed, failed, new objectives revealed)
+  - Only include the fields that changed
 **new_events** - Significant narrative events (1 sentence each, max 2)
 **new_facts** - Established facts that must not be contradicted later
 **flag_changes** - World flags that changed (e.g., "bridge_destroyed": true)

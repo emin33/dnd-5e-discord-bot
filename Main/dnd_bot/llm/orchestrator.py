@@ -906,6 +906,76 @@ class DMOrchestrator:
             except Exception as e:
                 logger.warning("on_mechanics_ready_callback_failed", error=str(e))
 
+        # Step 2.75: Knowledge graph context for narrator
+        # Multi-tier entity resolution: scene seeds + substring match + vector fallback
+        kg = getattr(self._current_session, 'knowledge_graph', None) if self._current_session else None
+        _kg_seed_ids: list[str] = []
+        _kg_vector_matches = 0
+        _kg_narrative_recalled = 0
+        if kg and kg.node_count() > 0:
+            try:
+                from ..game.knowledge.matcher import EntityNameMatcher
+                from ..memory import get_vector_store
+
+                matcher = EntityNameMatcher(kg)
+                world_state_pre = getattr(self._current_session, 'world_state', None) if self._current_session else None
+
+                # Tier 1: Substring match on player text
+                text_seeds = matcher.match(action)
+
+                # Tier 2: Always include current scene (location + present NPCs)
+                scene_seeds = matcher.scene_seeds(world_state_pre) if world_state_pre else []
+
+                # Tier 3: Vector fallback if player text didn't match any entities
+                if not text_seeds and kg.node_count() > 0:
+                    vs = get_vector_store()
+                    text_seeds = matcher.vector_match(action, context.campaign_id, vs)
+                    _kg_vector_matches = len(text_seeds)
+
+                # Merge and deduplicate (text matches first for priority)
+                seen = set()
+                _kg_seed_ids = []
+                for sid in text_seeds + scene_seeds:
+                    if sid not in seen:
+                        _kg_seed_ids.append(sid)
+                        seen.add(sid)
+
+                if _kg_seed_ids:
+                    # Graph context: structured relationships
+                    context.kg_context_yaml = kg.to_context_yaml(_kg_seed_ids)
+
+                    # Narrative recall: past prose about these entities
+                    try:
+                        vs = get_vector_store()
+                        seed_names = [kg.get_entity(s).name for s in _kg_seed_ids if kg.get_entity(s)]
+                        if seed_names:
+                            ws_turn = world_state_pre.turn if world_state_pre else 0
+                            past_chunks = vs.recall_narratives_for_entities(
+                                campaign_id=context.campaign_id,
+                                entity_ids=_kg_seed_ids,
+                                query_text=" ".join(seed_names),
+                                max_results=2,
+                                current_turn=ws_turn,
+                            )
+                            if past_chunks:
+                                context.narrative_memory = "\n---\n".join(
+                                    c["content"][:300] for c in past_chunks
+                                )
+                                _kg_narrative_recalled = len(past_chunks)
+                    except Exception as e:
+                        logger.warning("kg_narrative_recall_failed", error=str(e))
+
+                    logger.debug(
+                        "kg_context_injected",
+                        seed_count=len(_kg_seed_ids),
+                        text_matches=len(text_seeds),
+                        scene_seeds=len(scene_seeds),
+                        vector_matches=_kg_vector_matches,
+                        narrative_recalled=_kg_narrative_recalled,
+                    )
+            except Exception as e:
+                logger.warning("kg_context_failed", error=str(e))
+
         # Step 3: Narrator dramatizes the outcome (with mechanical result as context)
         proposed_effects: list[ProposedEffect] = []
 
@@ -929,11 +999,102 @@ class DMOrchestrator:
 
         # Step 3.6: World state extraction — extract StateDelta and apply
         # Uses cheap brain model to identify what changed in the world
+        delta = None
         world_state = getattr(self._current_session, 'world_state', None) if self._current_session else None
+        # Capture pre-delta location for knowledge graph connectivity
+        pre_delta_location = world_state.current_location if world_state else ""
         if narrative and world_state:
             _turn_record.start_stage("state_extract")
-            await self._extract_and_apply_state_delta(narrative, world_state, context)
+            delta = await self._extract_and_apply_state_delta(narrative, world_state, context)
             _turn_record.end_stage("state_extract")
+
+        # Step 3.6b: Bridge state delta to knowledge graph
+        _kg_ops_applied = 0
+        _kg_ops_rejected = 0
+        graph_ops = []
+        if kg and delta and world_state:
+            try:
+                from ..game.knowledge.bridge import DeltaBridge
+                bridge = DeltaBridge(context.campaign_id)
+                existing_ids = set(kg._entities.keys()) if kg._entities else set()
+                graph_ops = bridge.convert(
+                    delta, world_state,
+                    existing_node_ids=existing_ids,
+                    previous_location=pre_delta_location,
+                )
+                if graph_ops:
+                    rejections = await kg.apply_operations(graph_ops)
+                    _kg_ops_applied = len(graph_ops) - len(rejections)
+                    _kg_ops_rejected = len(rejections)
+                    if rejections:
+                        logger.debug("kg_bridge_rejections", rejections=rejections)
+            except Exception as e:
+                logger.warning("kg_bridge_failed", error=str(e))
+
+        # Step 3.6c: Sync entity descriptions to ChromaDB for vector matching
+        if kg and graph_ops:
+            try:
+                from ..game.knowledge.models import AddNode, UpdateNode
+                from ..memory import get_vector_store
+                vs = get_vector_store()
+                for op in graph_ops:
+                    if isinstance(op, AddNode):
+                        entity = kg.get_entity(op.entity.node_id)
+                    elif isinstance(op, UpdateNode):
+                        entity = kg.get_entity(op.node_id)
+                    else:
+                        continue
+                    if entity and entity.properties.get("description"):
+                        vs.add_entity_description(
+                            campaign_id=context.campaign_id,
+                            node_id=entity.node_id,
+                            entity_type=entity.entity_type.value,
+                            name=entity.name,
+                            description=entity.properties["description"],
+                            aliases=entity.aliases,
+                        )
+            except Exception as e:
+                logger.warning("kg_entity_sync_failed", error=str(e))
+
+        # Step 3.6d: Store tagged narrative chunk for future recall
+        _narrative_chunk_stored = False
+        if narrative and kg:
+            try:
+                from ..game.knowledge.matcher import EntityNameMatcher
+                from ..memory import get_vector_store
+                matcher = EntityNameMatcher(kg)
+
+                # Tag with entities mentioned in the narrative + scene seeds
+                narrator_entity_ids = matcher.match(narrative)
+                all_tags = list(set(narrator_entity_ids + _kg_seed_ids))
+
+                if all_tags:
+                    vs = get_vector_store()
+                    vs.add_narrative_chunk(
+                        campaign_id=context.campaign_id,
+                        chunk_id=str(uuid.uuid4()),
+                        narrative_text=narrative,
+                        entity_ids=all_tags,
+                        turn=world_state.turn if world_state else 0,
+                        location=world_state.current_location if world_state else "",
+                    )
+                    _narrative_chunk_stored = True
+            except Exception as e:
+                logger.warning("kg_narrative_store_failed", error=str(e))
+
+        # Record knowledge graph state in turn log
+        if kg:
+            _turn_record.record_knowledge_graph(
+                nodes_total=kg.node_count(),
+                edges_total=kg.edge_count(),
+                seed_entities=_kg_seed_ids,
+                context_injected=bool(context.kg_context_yaml),
+                ops_applied=_kg_ops_applied,
+                ops_rejected=_kg_ops_rejected,
+                narrative_chunk_stored=_narrative_chunk_stored,
+                vector_matches=_kg_vector_matches,
+                narrative_chunks_recalled=_kg_narrative_recalled,
+            )
 
         # Step 3.7: NLI contradiction check — DISABLED
         # The NLI layer detects contradictions but doesn't act on them (no re-narration
@@ -2280,11 +2441,12 @@ Narrate this action dramatically. Remember:
         narrative: str,
         world_state: "WorldState",
         context: BrainContext,
-    ) -> None:
+    ) -> Optional["StateDelta"]:
         """Extract a StateDelta from narrator prose and apply to WorldState.
 
         Also syncs NPC changes back to SceneEntityRegistry so the existing
-        entity system stays in sync.
+        entity system stays in sync. Returns the delta for downstream use
+        (e.g., knowledge graph bridge).
         """
         from ..game.world_state import WorldState, NPCState
 
@@ -2318,8 +2480,11 @@ Narrate this action dramatically. Remember:
                 facts_count=len(world_state.established_facts),
             )
 
+            return delta
+
         except Exception as e:
             logger.warning("state_delta_extraction_failed", error=str(e))
+            return None
 
     def _sync_effect_to_world_state(self, effect: ProposedEffect) -> None:
         """Sync a successfully executed effect into WorldState.

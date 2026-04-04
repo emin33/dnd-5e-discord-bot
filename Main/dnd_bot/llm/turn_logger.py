@@ -153,6 +153,31 @@ class TurnRecord:
             "has_summary": has_summary,
         }
 
+    def record_knowledge_graph(
+        self,
+        nodes_total: int,
+        edges_total: int,
+        seed_entities: list[str],
+        context_injected: bool,
+        ops_applied: int = 0,
+        ops_rejected: int = 0,
+        narrative_chunk_stored: bool = False,
+        vector_matches: int = 0,
+        narrative_chunks_recalled: int = 0,
+    ) -> None:
+        """Record knowledge graph activity for this turn."""
+        self.data["knowledge_graph"] = {
+            "nodes_total": nodes_total,
+            "edges_total": edges_total,
+            "seed_entities": seed_entities,
+            "context_injected": context_injected,
+            "ops_applied": ops_applied,
+            "ops_rejected": ops_rejected,
+            "narrative_chunk_stored": narrative_chunk_stored,
+            "vector_matches": vector_matches,
+            "narrative_chunks_recalled": narrative_chunks_recalled,
+        }
+
     def record_error(self, stage: str, error: str) -> None:
         """Record an error at any pipeline stage."""
         if "errors" not in self.data:

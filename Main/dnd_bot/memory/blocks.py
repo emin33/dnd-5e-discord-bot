@@ -78,29 +78,93 @@ class Message:
 
 class MessageBuffer:
     """
-    Sliding window buffer with context compaction.
+    Three-tier sliding window buffer with gradual context compaction.
 
-    Keeps the last N messages for immediate context. When messages
-    overflow, they're captured in a compaction buffer for summarization
-    into a running "story so far" block (inspired by agentic orchestration
-    continuation strategy — summarize old, preserve recent verbatim).
+    Tier 1 (Verbatim): Last N messages in full prose — the narrator
+        sees exactly what was said.
+    Tier 2 (Condensed): Per-exchange summaries (1-2 sentences each) —
+        the narrator knows what happened but not every word.
+    Tier 3 (Compressed): Batch narrative summary + pinned facts —
+        broad strokes of older events.
+
+    Messages flow: Verbatim → Condensation buffer → Condensed →
+                   Overflow buffer → Running summary + Pinned facts
     """
 
-    def __init__(self, max_messages: int = 20, preserve_recent: int = 4):
-        self.max_messages = max_messages
-        self.preserve_recent = preserve_recent  # Messages to keep verbatim
+    def __init__(
+        self,
+        max_messages: int = 20,
+        verbatim_size: int = 8,
+        condensed_size: int = 12,
+        preserve_recent: int = 4,
+    ):
+        self.max_messages = max_messages       # Kept for compat
+        self._verbatim_size = verbatim_size    # Tier 1 cap
+        self._condensed_size = condensed_size  # Tier 2 cap
+        self.preserve_recent = preserve_recent
+
+        # Tier 1: Full prose messages
         self._messages: list[Message] = []
-        self._overflow_buffer: list[Message] = []  # Messages waiting for compaction
-        self._running_summary: str = ""  # Compacted "story so far"
-        self._pinned_facts: list[str] = []  # Typed facts that survive compaction
+
+        # Tier 1→2 transition buffer
+        self._condensation_buffer: list[Message] = []
+
+        # Tier 2: Per-exchange summaries
+        self._condensed: list[str] = []
+
+        # Tier 2→3 transition buffer (existing)
+        self._overflow_buffer: list[Message] = []
+
+        # Tier 3: Batch narrative + facts (existing)
+        self._running_summary: str = ""
+        self._pinned_facts: list[str] = []
 
     def add(self, message: Message) -> None:
-        """Add a message to the buffer. Overflow goes to compaction buffer."""
+        """Add a message. Overflow cascades through tiers."""
         self._messages.append(message)
-        # When we exceed max, move oldest to overflow buffer
-        while len(self._messages) > self.max_messages:
-            overflow_msg = self._messages.pop(0)
-            self._overflow_buffer.append(overflow_msg)
+        # Tier 1 overflow → condensation buffer
+        while len(self._messages) > self._verbatim_size:
+            aged = self._messages.pop(0)
+            self._condensation_buffer.append(aged)
+
+    # ------------------------------------------------------------------
+    # Tier 1→2: Condensation
+    # ------------------------------------------------------------------
+
+    @property
+    def has_pending_condensation(self) -> bool:
+        """True when enough messages are waiting for condensation (~2 exchanges)."""
+        return len(self._condensation_buffer) >= 4
+
+    def get_condensation_text(self) -> str:
+        """Get condensation buffer as text for LLM summarization."""
+        return self._format_messages(self._condensation_buffer)
+
+    def condense(self, summaries: list[str]) -> None:
+        """Store per-exchange summaries from condensation, clear the buffer.
+
+        If Tier 2 overflows, oldest summaries cascade to the Tier 3 overflow buffer.
+        """
+        self._condensed.extend(summaries)
+        self._condensation_buffer.clear()
+
+        # Tier 2 overflow → Tier 3 overflow buffer
+        while len(self._condensed) > self._condensed_size:
+            old_summary = self._condensed.pop(0)
+            self._overflow_buffer.append(Message(
+                role="system",
+                content=old_summary,
+                is_dm_narration=False,
+            ))
+
+    @property
+    def condensed_summaries(self) -> list[str]:
+        """Tier 2 per-exchange summaries for context building."""
+        return list(self._condensed)
+
+    # ------------------------------------------------------------------
+    # Tier 2→3: Compaction (existing, unchanged)
+    # ------------------------------------------------------------------
 
     @property
     def has_pending_compaction(self) -> bool:
@@ -110,31 +174,15 @@ class MessageBuffer:
 
     def get_overflow_text(self) -> str:
         """Get overflow messages as text for summarization."""
-        lines = []
-        for msg in self._overflow_buffer:
-            if msg.author_name:
-                lines.append(f"{msg.author_name}: {msg.content}")
-            elif msg.role == "assistant":
-                lines.append(f"DM: {msg.content}")
-            else:
-                lines.append(msg.content)
-        return "\n\n".join(lines)
+        return self._format_messages(self._overflow_buffer)
 
     def compact(self, summary: str, extracted_facts: Optional[list[str]] = None) -> None:
-        """Merge a new summary with existing running summary, clear overflow.
-
-        Args:
-            summary: Narrative prose summary of the compacted messages.
-            extracted_facts: Typed facts (NPC names, locations, events) that must
-                survive future compaction intact. These are pinned separately from
-                the narrative and never re-summarized.
-        """
+        """Merge a new summary with existing running summary, clear overflow."""
         if self._running_summary:
             self._running_summary = f"{self._running_summary}\n\n{summary}"
         else:
             self._running_summary = summary
 
-        # Pin extracted facts — deduplicated, never re-summarized
         if extracted_facts:
             for fact in extracted_facts:
                 fact = fact.strip()
@@ -152,6 +200,22 @@ class MessageBuffer:
     def pinned_facts(self) -> list[str]:
         """Typed facts extracted during compaction that must survive indefinitely."""
         return self._pinned_facts
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _format_messages(self, messages: list[Message]) -> str:
+        """Format a list of messages as text for LLM summarization."""
+        lines = []
+        for msg in messages:
+            if msg.author_name:
+                lines.append(f"{msg.author_name}: {msg.content}")
+            elif msg.role == "assistant":
+                lines.append(f"DM: {msg.content}")
+            else:
+                lines.append(msg.content)
+        return "\n\n".join(lines)
 
     def add_user_message(
         self,

@@ -34,13 +34,10 @@ class VectorStore:
 
         try:
             import chromadb
-            from chromadb.config import Settings
 
-            self._client = chromadb.Client(Settings(
-                chroma_db_impl="duckdb+parquet",
-                persist_directory=str(self.persist_directory),
-                anonymized_telemetry=False,
-            ))
+            self._client = chromadb.PersistentClient(
+                path=str(self.persist_directory),
+            )
 
             self._initialized = True
             logger.info("chromadb_initialized", path=str(self.persist_directory))
@@ -314,13 +311,178 @@ class VectorStore:
 
         return "\n".join(lines)
 
-    def persist(self) -> None:
-        """Persist the database to disk."""
-        if self._client:
+    # ------------------------------------------------------------------
+    # Knowledge graph entity descriptions (for semantic entity matching)
+    # ------------------------------------------------------------------
+
+    def add_entity_description(
+        self,
+        campaign_id: str,
+        node_id: str,
+        entity_type: str,
+        name: str,
+        description: str,
+        aliases: list[str] | None = None,
+    ) -> bool:
+        """Index an entity description for vector-based entity resolution.
+
+        Enables semantic matching: player says "the scarred dwarf" and
+        vector search finds the entity whose description mentions scars.
+        """
+        alias_text = f"\nAlso known as: {', '.join(aliases)}" if aliases else ""
+        content = f"{entity_type}: {name}\n{description}{alias_text}"
+
+        collection = self._get_collection(campaign_id)
+        if not collection:
+            return False
+
+        memory_id = f"entity_{node_id}"
+        try:
+            # Upsert: try update first, fall back to add
             try:
-                self._client.persist()
-            except Exception as e:
-                logger.error("chromadb_persist_failed", error=str(e))
+                collection.update(
+                    ids=[memory_id],
+                    documents=[content],
+                    metadatas=[{
+                        "type": "entity",
+                        "node_id": node_id,
+                        "entity_type": entity_type,
+                        "name": name,
+                    }],
+                )
+            except Exception:
+                collection.add(
+                    ids=[memory_id],
+                    documents=[content],
+                    metadatas=[{
+                        "type": "entity",
+                        "node_id": node_id,
+                        "entity_type": entity_type,
+                        "name": name,
+                    }],
+                )
+            return True
+        except Exception as e:
+            logger.error("entity_description_add_failed", node_id=node_id, error=str(e))
+            return False
+
+    def search_entities(
+        self,
+        campaign_id: str,
+        query: str,
+        n_results: int = 3,
+        max_distance: float = 1.5,
+    ) -> list[dict]:
+        """Search entity descriptions by semantic similarity.
+
+        Returns entities whose descriptions are semantically close to the query.
+        Used as a fallback when substring matching fails.
+        """
+        results = self.search(
+            campaign_id=campaign_id,
+            query=query,
+            n_results=n_results,
+            where={"type": "entity"},
+        )
+        # Filter by distance threshold
+        return [
+            {
+                "node_id": r["metadata"].get("node_id", ""),
+                "name": r["metadata"].get("name", ""),
+                "distance": r["distance"],
+            }
+            for r in results
+            if r["distance"] < max_distance and r["metadata"].get("node_id")
+        ]
+
+    # ------------------------------------------------------------------
+    # Tagged narrative chunks (for narrative tone/context recall)
+    # ------------------------------------------------------------------
+
+    def add_narrative_chunk(
+        self,
+        campaign_id: str,
+        chunk_id: str,
+        narrative_text: str,
+        entity_ids: list[str],
+        turn: int = 0,
+        location: str = "",
+    ) -> bool:
+        """Store a narration chunk tagged with entity IDs.
+
+        Each narrator output gets stored with the entities it mentions,
+        enabling retrieval of past prose when those entities come up again.
+        """
+        return self.add_memory(
+            campaign_id=campaign_id,
+            memory_id=f"narrative_{chunk_id}",
+            content=narrative_text,
+            metadata={
+                "type": "narrative",
+                "turn": turn,
+                "location": location,
+                "entity_ids": ",".join(entity_ids),
+            },
+        )
+
+    def recall_narratives_for_entities(
+        self,
+        campaign_id: str,
+        entity_ids: list[str],
+        query_text: str = "",
+        max_results: int = 3,
+        min_turn_age: int = 12,
+        current_turn: int = 0,
+    ) -> list[dict]:
+        """Retrieve past narration related to specific entities.
+
+        Uses entity names as the semantic query (filtered to narrative type)
+        so ChromaDB naturally surfaces narration that mentions those entities.
+
+        Args:
+            min_turn_age: Skip chunks from the last N turns to avoid
+                duplicating content already in the message buffer window.
+                Default 12 (conservative — message buffer holds ~24 messages
+                which is ~12 turns of player+narrator pairs).
+            current_turn: The current turn number for age filtering.
+        """
+        if not entity_ids and not query_text:
+            return []
+
+        query = query_text or " ".join(entity_ids)
+
+        results = self.search(
+            campaign_id=campaign_id,
+            query=query,
+            n_results=max_results * 3,  # Over-fetch to survive filtering
+            where={"type": "narrative"},
+        )
+
+        # Filter: must share entity ID + must be old enough to not be in buffer
+        cutoff_turn = current_turn - min_turn_age
+        entity_set = set(entity_ids)
+        filtered = []
+        for r in results:
+            chunk_turn = r["metadata"].get("turn", 0)
+            # Skip recent chunks — they're still in the message buffer
+            if current_turn > 0 and chunk_turn > cutoff_turn:
+                continue
+            chunk_entities = set(r["metadata"].get("entity_ids", "").split(","))
+            if chunk_entities & entity_set:
+                filtered.append({
+                    "content": r["content"],
+                    "turn": chunk_turn,
+                    "entity_ids": list(chunk_entities - {""}),
+                    "distance": r["distance"],
+                })
+            if len(filtered) >= max_results:
+                break
+
+        return filtered
+
+    def persist(self) -> None:
+        """No-op: PersistentClient auto-persists."""
+        pass
 
 
 # Singleton instance

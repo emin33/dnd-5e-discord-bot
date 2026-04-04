@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 import asyncio
 import structlog
 
@@ -73,6 +73,9 @@ class GameSession:
 
     # Authoritative world state (narrator reads, Python writes)
     world_state: Optional[WorldState] = None
+
+    # Knowledge graph (persistent entity relationships)
+    knowledge_graph: Optional[Any] = None  # KnowledgeGraph, Optional to avoid circular import
 
     def add_player(self, user_id: int, user_name: str, character: Character) -> PlayerInfo:
         """Add a player to the session."""
@@ -188,6 +191,40 @@ class GameSessionManager:
 
         # Initialize authoritative world state
         session.world_state = WorldState()
+
+        # Load knowledge graph for persistent entity relationships
+        try:
+            from .knowledge import KnowledgeGraph, get_kg_repo
+            kg_repo = await get_kg_repo()
+            session.knowledge_graph = KnowledgeGraph(campaign_id, kg_repo)
+            await session.knowledge_graph.load()
+
+            # Sync entity descriptions to ChromaDB for vector matching
+            if session.knowledge_graph.node_count() > 0:
+                try:
+                    from ..memory import get_vector_store
+                    vs = get_vector_store()
+                    for entity in session.knowledge_graph.get_entities_for_indexing():
+                        vs.add_entity_description(
+                            campaign_id=campaign_id,
+                            node_id=entity.node_id,
+                            entity_type=entity.entity_type.value,
+                            name=entity.name,
+                            description=entity.properties.get("description", ""),
+                            aliases=entity.aliases,
+                        )
+                except Exception as e:
+                    logger.warning("kg_entity_description_sync_failed", error=str(e))
+
+            logger.info(
+                "knowledge_graph_loaded",
+                campaign_id=campaign_id,
+                nodes=session.knowledge_graph.node_count(),
+                edges=session.knowledge_graph.edge_count(),
+            )
+        except Exception as e:
+            logger.warning("knowledge_graph_load_failed", error=str(e))
+            session.knowledge_graph = None
 
         self._sessions[channel_id] = session
 
@@ -354,6 +391,15 @@ class GameSessionManager:
                     self._memory_managers[session_data["campaign_id"]] = get_memory_manager_sync(
                         session_data["campaign_id"]
                     )
+
+                # Load knowledge graph
+                try:
+                    from .knowledge import KnowledgeGraph, get_kg_repo
+                    kg_repo = await get_kg_repo()
+                    session.knowledge_graph = KnowledgeGraph(session_data["campaign_id"], kg_repo)
+                    await session.knowledge_graph.load()
+                except Exception:
+                    session.knowledge_graph = None
 
                 recovered += 1
                 logger.info(

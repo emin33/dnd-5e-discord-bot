@@ -21,7 +21,7 @@ class TestMessageBufferOverflow:
 
     def test_no_overflow_under_limit(self):
         """Messages within max_messages stay in the main buffer."""
-        buf = MessageBuffer(max_messages=5)
+        buf = MessageBuffer(max_messages=5, verbatim_size=5)
         for i in range(5):
             buf.add_user_message(f"msg {i}", "Player")
 
@@ -30,48 +30,48 @@ class TestMessageBufferOverflow:
         assert not buf.has_pending_compaction
 
     def test_overflow_moves_oldest_messages(self):
-        """Adding beyond max_messages pushes oldest into overflow."""
-        buf = MessageBuffer(max_messages=5)
+        """Adding beyond verbatim_size pushes oldest into condensation buffer."""
+        buf = MessageBuffer(max_messages=5, verbatim_size=5)
         for i in range(8):
             buf.add_user_message(f"msg {i}", "Player")
 
-        # 5 in main, 3 in overflow
+        # 5 in verbatim, 3 in condensation buffer
         assert len(buf._messages) == 5
-        assert len(buf._overflow_buffer) == 3
-        # Oldest messages went to overflow
-        assert buf._overflow_buffer[0].content == "msg 0"
-        assert buf._overflow_buffer[1].content == "msg 1"
-        assert buf._overflow_buffer[2].content == "msg 2"
-        # Newest stay in main
+        assert len(buf._condensation_buffer) == 3
+        # Oldest messages went to condensation
+        assert buf._condensation_buffer[0].content == "msg 0"
+        assert buf._condensation_buffer[1].content == "msg 1"
+        assert buf._condensation_buffer[2].content == "msg 2"
+        # Newest stay in verbatim
         assert buf._messages[0].content == "msg 3"
 
-    def test_has_pending_compaction_threshold(self):
-        """has_pending_compaction triggers at 6+ overflow messages."""
-        buf = MessageBuffer(max_messages=5)
-        # Add 10 messages → 5 overflow
-        for i in range(10):
+    def test_has_pending_condensation_threshold(self):
+        """has_pending_condensation triggers at 4+ condensation buffer messages."""
+        buf = MessageBuffer(max_messages=5, verbatim_size=5)
+        # Add 8 messages → 3 in condensation buffer
+        for i in range(8):
             buf.add_user_message(f"msg {i}", "Player")
-        assert not buf.has_pending_compaction  # 5 < 6
+        assert not buf.has_pending_condensation  # 3 < 4
 
-        # One more → 6 overflow
-        buf.add_user_message("msg 10", "Player")
-        assert buf.has_pending_compaction  # 6 >= 6
+        # One more → 4 in condensation buffer
+        buf.add_user_message("msg 8", "Player")
+        assert buf.has_pending_condensation  # 4 >= 4
 
-    def test_overflow_text_formatting(self):
-        """get_overflow_text formats player vs DM messages correctly."""
-        buf = MessageBuffer(max_messages=2)
+    def test_condensation_text_formatting(self):
+        """get_condensation_text formats player vs DM messages correctly."""
+        buf = MessageBuffer(max_messages=2, verbatim_size=2)
         buf.add_user_message("I look around", "Kael")
         buf.add_assistant_message("The tavern is dimly lit.")
         buf.add_user_message("I talk to the bartender", "Kael")
         buf.add_assistant_message("The bartender nods.")
-        # First 2 messages overflowed
-        text = buf.get_overflow_text()
+        # First 2 messages went to condensation buffer
+        text = buf.get_condensation_text()
         assert "Kael: I look around" in text
         assert "DM: The tavern is dimly lit." in text
 
     def test_compact_merges_summaries(self):
         """compact() merges new summary with existing running summary."""
-        buf = MessageBuffer(max_messages=5)
+        buf = MessageBuffer(max_messages=5, verbatim_size=5)
 
         # First compaction
         buf._overflow_buffer = [Message(role="user", content="old stuff")]
@@ -87,22 +87,26 @@ class TestMessageBufferOverflow:
 
     def test_compact_clears_overflow(self):
         """compact() clears the overflow buffer."""
-        buf = MessageBuffer(max_messages=3)
+        buf = MessageBuffer(max_messages=3, verbatim_size=3)
         for i in range(10):
             buf.add_user_message(f"msg {i}", "Player")
 
-        assert len(buf._overflow_buffer) > 0
+        # Messages overflow to condensation buffer first
+        assert len(buf._condensation_buffer) > 0
+        # Simulate condensation moving some to overflow
+        buf._overflow_buffer = list(buf._condensation_buffer)
+        buf._condensation_buffer.clear()
         buf.compact("Summary of old messages.")
         assert len(buf._overflow_buffer) == 0
 
     def test_running_summary_starts_empty(self):
         """Fresh buffer has no running summary."""
-        buf = MessageBuffer(max_messages=10)
+        buf = MessageBuffer(max_messages=10, verbatim_size=10)
         assert buf.running_summary == ""
 
-    def test_get_messages_returns_current(self):
-        """get_messages only returns current buffer, not overflow."""
-        buf = MessageBuffer(max_messages=3)
+    def test_get_messages_returns_verbatim_only(self):
+        """get_messages only returns verbatim tier, not condensation/overflow."""
+        buf = MessageBuffer(max_messages=3, verbatim_size=3)
         for i in range(5):
             buf.add_user_message(f"msg {i}", "Player")
 
@@ -113,7 +117,7 @@ class TestMessageBufferOverflow:
 
     def test_compact_with_pinned_facts(self):
         """compact() stores typed facts separately from narrative summary."""
-        buf = MessageBuffer(max_messages=5)
+        buf = MessageBuffer(max_messages=5, verbatim_size=5)
         buf.compact(
             "The party entered the tavern and met the innkeeper.",
             ["NPC: Garrick - friendly bartender", "LOCATION: The Silver Tankard - tavern"],
@@ -125,7 +129,7 @@ class TestMessageBufferOverflow:
 
     def test_pinned_facts_deduplicated(self):
         """Duplicate facts aren't added twice."""
-        buf = MessageBuffer(max_messages=5)
+        buf = MessageBuffer(max_messages=5, verbatim_size=5)
         buf.compact("First summary.", ["NPC: Garrick - bartender"])
         buf.compact("Second summary.", ["NPC: Garrick - bartender", "NPC: Mira - merchant"])
 
@@ -133,7 +137,7 @@ class TestMessageBufferOverflow:
 
     def test_pinned_facts_survive_multiple_compactions(self):
         """Facts from early compaction survive later ones."""
-        buf = MessageBuffer(max_messages=5)
+        buf = MessageBuffer(max_messages=5, verbatim_size=5)
         buf.compact("Part 1.", ["NPC: Aldric - guard captain"])
         buf.compact("Part 2.", ["LOCATION: Eldermoor - small village"])
         buf.compact("Part 3.", ["EVENT: Wolves attacked the caravan"])
@@ -145,19 +149,94 @@ class TestMessageBufferOverflow:
 
     def test_pinned_facts_start_empty(self):
         """Fresh buffer has no pinned facts."""
-        buf = MessageBuffer(max_messages=10)
+        buf = MessageBuffer(max_messages=10, verbatim_size=10)
         assert buf.pinned_facts == []
 
     def test_system_messages_overflow_too(self):
         """System messages participate in overflow like any other."""
-        buf = MessageBuffer(max_messages=3)
+        buf = MessageBuffer(max_messages=3, verbatim_size=3)
         buf.add_system_message("Combat started")
         buf.add_user_message("I attack", "Player")
         buf.add_assistant_message("You swing your sword.")
         buf.add_system_message("Goblin takes 5 damage")  # This pushes "Combat started" out
 
-        assert len(buf._overflow_buffer) == 1
-        assert buf._overflow_buffer[0].content == "Combat started"
+        assert len(buf._condensation_buffer) == 1
+        assert buf._condensation_buffer[0].content == "Combat started"
+
+
+# ==================== Tiered Compression ====================
+
+
+class TestTieredCompression:
+    """Test the three-tier message compression system."""
+
+    def test_tier1_to_condensation_buffer(self):
+        """Messages overflow from verbatim to condensation buffer at verbatim_size."""
+        buf = MessageBuffer(verbatim_size=4, condensed_size=6)
+        for i in range(6):
+            buf.add_user_message(f"msg {i}", "Player")
+
+        assert len(buf._messages) == 4
+        assert len(buf._condensation_buffer) == 2
+
+    def test_condense_moves_to_tier2(self):
+        """condense() adds summaries to the condensed tier."""
+        buf = MessageBuffer(verbatim_size=4, condensed_size=6)
+        buf.condense(["Party entered the tavern.", "Kael talked to the barkeep."])
+
+        assert len(buf.condensed_summaries) == 2
+        assert "tavern" in buf.condensed_summaries[0]
+
+    def test_condensed_overflow_to_tier3(self):
+        """When condensed tier exceeds condensed_size, oldest flow to overflow."""
+        buf = MessageBuffer(verbatim_size=4, condensed_size=3)
+        buf.condense(["Event 1", "Event 2", "Event 3", "Event 4", "Event 5"])
+
+        # 3 kept in condensed, 2 overflow
+        assert len(buf.condensed_summaries) == 3
+        assert len(buf._overflow_buffer) == 2
+        # Oldest went to overflow
+        assert buf._overflow_buffer[0].content == "Event 1"
+
+    def test_condensation_buffer_cleared_after_condense(self):
+        """condense() clears the condensation buffer."""
+        buf = MessageBuffer(verbatim_size=4, condensed_size=6)
+        for i in range(8):
+            buf.add_user_message(f"msg {i}", "Player")
+        assert len(buf._condensation_buffer) == 4
+
+        buf.condense(["Summary 1", "Summary 2"])
+        assert len(buf._condensation_buffer) == 0
+
+    def test_full_three_tier_flow(self):
+        """Messages flow through all three tiers correctly."""
+        buf = MessageBuffer(verbatim_size=4, condensed_size=3)
+        buf._compaction_threshold = 2
+
+        # Fill verbatim
+        for i in range(4):
+            buf.add_user_message(f"msg {i}", "Player")
+        assert len(buf._messages) == 4
+        assert len(buf._condensation_buffer) == 0
+
+        # Overflow to condensation
+        for i in range(4, 8):
+            buf.add_user_message(f"msg {i}", "Player")
+        assert len(buf._messages) == 4
+        assert len(buf._condensation_buffer) == 4
+
+        # Condense → fills Tier 2
+        buf.condense(["Sum A", "Sum B", "Sum C", "Sum D"])
+        assert len(buf.condensed_summaries) == 3  # condensed_size=3
+        assert len(buf._overflow_buffer) == 1     # 1 overflowed to Tier 3
+
+    def test_condensed_summaries_property(self):
+        """condensed_summaries returns a copy, not the internal list."""
+        buf = MessageBuffer(verbatim_size=4, condensed_size=6)
+        buf.condense(["One", "Two"])
+        summaries = buf.condensed_summaries
+        summaries.append("Mutated")
+        assert len(buf.condensed_summaries) == 2  # internal unaffected
 
 
 # ==================== Three-Gate Consolidation ====================

@@ -57,11 +57,17 @@ class MemoryManager:
         from ..config import get_profile
         profile = get_profile()
         buffer_size = profile.memory.buffer_size
+        verbatim_size = profile.memory.verbatim_size
+        condensed_size = profile.memory.condensed_size
         compaction_threshold = profile.memory.compaction_threshold
 
         # Initialize memory tiers
         self.core = CoreMemory(campaign_id)
-        self.buffer = MessageBuffer(max_messages=buffer_size)
+        self.buffer = MessageBuffer(
+            max_messages=buffer_size,
+            verbatim_size=verbatim_size,
+            condensed_size=condensed_size,
+        )
         self.buffer._compaction_threshold = compaction_threshold
         self.vector_store = get_vector_store()
 
@@ -97,7 +103,11 @@ class MemoryManager:
         )
         self._message_count += 1
 
-        # Compact overflow messages into running summary when buffer overflows
+        # Tier 1→2: Condense recently aged-out messages into per-exchange summaries
+        if self.buffer.has_pending_condensation:
+            await self._condense_recent()
+
+        # Tier 2→3: Compact overflow into running summary when condensed tier overflows
         if self.buffer.has_pending_compaction:
             await self._compact_overflow()
 
@@ -126,8 +136,72 @@ class MemoryManager:
         )
         self._message_count += 1
 
+    async def _condense_recent(self) -> None:
+        """Tier 1→2: Condense aged-out verbatim messages into per-exchange summaries.
+
+        Produces 1-2 sentence summaries per player-DM exchange, preserving
+        key actions, outcomes, and NPC dialogue. This is the middle tier —
+        more detail than running_summary, less than verbatim.
+        """
+        text = self.buffer.get_condensation_text()
+        if not text:
+            self.buffer._condensation_buffer.clear()
+            return
+
+        try:
+            client = get_ollama_client()
+
+            condense_prompt = (
+                "Summarize each player-DM exchange below as a SEPARATE bullet point "
+                "(1-2 sentences each). Preserve key actions, outcomes, NPC names, "
+                "dialogue highlights, and discoveries. Do NOT merge into one paragraph.\n\n"
+                f"Conversation:\n{text}\n\n"
+                "Respond with one bullet per exchange, starting each with '- '."
+            )
+
+            response = await client.chat(
+                messages=[
+                    {"role": "system", "content": "You produce concise per-exchange summaries of D&D conversations."},
+                    {"role": "user", "content": condense_prompt},
+                ],
+                temperature=0.2,
+                max_tokens=400,
+                think=False,
+            )
+
+            raw = response.content.strip() if response.content else ""
+            if not raw:
+                self.buffer._condensation_buffer.clear()
+                return
+
+            # Parse bullet points
+            summaries = []
+            for line in raw.split("\n"):
+                line = line.strip()
+                if line.startswith("- "):
+                    summaries.append(line[2:].strip())
+                elif line.startswith("* "):
+                    summaries.append(line[2:].strip())
+
+            if summaries:
+                self.buffer.condense(summaries)
+                logger.info(
+                    "messages_condensed",
+                    campaign_id=self.campaign_id,
+                    summaries_produced=len(summaries),
+                    condensed_total=len(self.buffer.condensed_summaries),
+                )
+            else:
+                # Fallback: treat whole response as one summary
+                self.buffer.condense([raw[:200]])
+                logger.warning("condense_parse_fallback", raw_preview=raw[:100])
+
+        except Exception as e:
+            logger.warning("condensation_failed", error=str(e))
+            self.buffer._condensation_buffer.clear()
+
     async def _compact_overflow(self) -> None:
-        """Compact overflow messages with typed fact extraction.
+        """Tier 2→3: Compact overflow into running narrative with typed fact extraction.
 
         Inspired by the AutoDream consolidation pattern from agentic orchestration:
         - Summarize old messages into narrative prose
@@ -420,7 +494,16 @@ class MemoryManager:
                 elif "```" in response_text:
                     response_text = response_text.split("```")[1].split("```")[0]
 
+                # Find JSON object boundaries — models often omit the outer braces
+                response_text = response_text.strip()
+                brace_start = response_text.find("{")
+                brace_end = response_text.rfind("}")
+                if brace_start != -1 and brace_end > brace_start:
+                    response_text = response_text[brace_start:brace_end + 1]
+
                 data = json.loads(response_text)
+                if not isinstance(data, dict):
+                    raise ValueError(f"Expected dict, got {type(data).__name__}")
 
                 summary = SessionSummary(
                     session_id=f"incremental_{self._message_count}",
@@ -457,7 +540,7 @@ class MemoryManager:
                     message_count=self._message_count,
                 )
 
-            except (json.JSONDecodeError, KeyError, ValueError) as parse_err:
+            except (json.JSONDecodeError, KeyError, ValueError, AttributeError, TypeError) as parse_err:
                 logger.warning(
                     "summary_json_parse_failed_using_raw",
                     error=str(parse_err)[:80],
@@ -512,11 +595,19 @@ class MemoryManager:
             parts.append("</established_facts>")
             parts.append("")
 
-        # Running compacted narrative from message overflow
+        # Running compacted narrative from message overflow (Tier 3)
         if self.buffer.running_summary:
             parts.append("<story_so_far>")
             parts.append(self.buffer.running_summary)
             parts.append("</story_so_far>")
+            parts.append("")
+
+        # Condensed per-exchange summaries (Tier 2 — more detail than story_so_far)
+        if self.buffer.condensed_summaries:
+            parts.append("<recent_events>")
+            for summary in self.buffer.condensed_summaries:
+                parts.append(f"- {summary}")
+            parts.append("</recent_events>")
             parts.append("")
 
         # RAG recall for relevant past context

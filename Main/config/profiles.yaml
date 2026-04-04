@@ -1,8 +1,17 @@
 # LLM Profile Configuration
 # Switch profiles by setting ACTIVE_PROFILE in .env or environment
 # Each profile defines narrator, brain (triage/extraction/compaction), and memory settings
+#
+# Memory settings:
+#   buffer_size: Messages held in buffer before overflow → compaction.
+#     This IS the narrator's message window — the bookend layout uses all of them.
+#     Larger = more verbatim history, but more tokens in the low-attention middle zone.
+#   compaction_threshold: Overflow messages before triggering summary generation.
+#   narrator_messages: Max recent messages injected into narrator context.
+#     Defaults to buffer_size if not set. Allows decoupling buffer from context.
 
 # Production: Sonnet narrates, Groq handles brain
+# Sonnet handles 200K context — can use a large message window
 production:
   narrator:
     provider: anthropic
@@ -12,10 +21,13 @@ production:
     model: qwen/qwen3-32b
     fallback_to_ollama: true
   memory:
-    buffer_size: 30
-    compaction_threshold: 8
+    buffer_size: 40
+    verbatim_size: 12
+    condensed_size: 16
+    compaction_threshold: 10
 
 # Local MoE: everything on one model, zero cost
+# Local 35B MoE: 32K context, weaker middle-attention — keep window moderate
 local_moe:
   narrator:
     provider: ollama
@@ -25,8 +37,10 @@ local_moe:
     model: qwen3.5:35b-a3b
     fallback_to_ollama: false
   memory:
-    buffer_size: 40
-    compaction_threshold: 10
+    buffer_size: 24
+    verbatim_size: 8
+    condensed_size: 10
+    compaction_threshold: 6
 
 # Local split: MoE narrates, dense 9B does brain (needs ~38GB VRAM)
 local_split:
@@ -38,8 +52,10 @@ local_split:
     model: qwen3.5:9b
     fallback_to_ollama: false
   memory:
-    buffer_size: 40
-    compaction_threshold: 10
+    buffer_size: 24
+    verbatim_size: 8
+    condensed_size: 10
+    compaction_threshold: 6
 
 # Local dense: 27B does everything
 local_dense:
@@ -51,8 +67,10 @@ local_dense:
     model: qwen3.5:27b
     fallback_to_ollama: false
   memory:
-    buffer_size: 40
-    compaction_threshold: 10
+    buffer_size: 24
+    verbatim_size: 8
+    condensed_size: 10
+    compaction_threshold: 6
 
 # Groq only: cloud 32b does everything
 groq_full:
@@ -64,8 +82,10 @@ groq_full:
     model: qwen/qwen3-32b
     fallback_to_ollama: false
   memory:
-    buffer_size: 40
-    compaction_threshold: 10
+    buffer_size: 30
+    verbatim_size: 10
+    condensed_size: 12
+    compaction_threshold: 8
 
 # MoE narrates locally, Groq does brain
 moe_groq:
@@ -77,10 +97,13 @@ moe_groq:
     model: qwen/qwen3-32b
     fallback_to_ollama: false
   memory:
-    buffer_size: 40
-    compaction_threshold: 10
+    buffer_size: 24
+    verbatim_size: 8
+    condensed_size: 10
+    compaction_threshold: 6
 
 # Qwen 3.6 Plus (free via OpenRouter) narrates, local 9B brain
+# OpenRouter models handle large context well
 qwen36_local:
   narrator:
     provider: openrouter
@@ -90,10 +113,13 @@ qwen36_local:
     model: qwen3.5:9b
     fallback_to_ollama: false
   memory:
-    buffer_size: 40
-    compaction_threshold: 10
+    buffer_size: 30
+    verbatim_size: 10
+    condensed_size: 12
+    compaction_threshold: 8
 
 # Haiku narrator + local 9B brain (fast + cheap cloud narrator)
+# Haiku handles 200K context
 haiku_local:
   narrator:
     provider: anthropic
@@ -104,9 +130,12 @@ haiku_local:
     fallback_to_ollama: false
   memory:
     buffer_size: 30
+    verbatim_size: 10
+    condensed_size: 12
     compaction_threshold: 8
 
 # Sonnet narrator + local 9B brain
+# Sonnet handles 200K context
 sonnet_local:
   narrator:
     provider: anthropic
@@ -116,5 +145,7 @@ sonnet_local:
     model: qwen3.5:9b
     fallback_to_ollama: false
   memory:
-    buffer_size: 30
-    compaction_threshold: 8
+    buffer_size: 40
+    verbatim_size: 12
+    condensed_size: 16
+    compaction_threshold: 10

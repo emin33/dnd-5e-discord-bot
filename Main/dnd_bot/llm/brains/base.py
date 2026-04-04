@@ -48,6 +48,12 @@ class BrainContext:
     # Authoritative world state (YAML-serialized for narrator bookend injection)
     world_state_yaml: str = ""
 
+    # Knowledge graph context (YAML-serialized entity relationships)
+    kg_context_yaml: str = ""
+
+    # Past narration about relevant entities (for narrative consistency)
+    narrative_memory: str = ""
+
     # Previous turn mechanical trace (injected in bottom reminder for grounding)
     last_turn_trace: str = ""
 
@@ -192,6 +198,14 @@ class Brain(ABC):
         if context.world_state_yaml:
             top_parts.append(f"<world_state>\n{context.world_state_yaml}</world_state>")
 
+        # Knowledge graph relationships (persistent entity context)
+        if context.kg_context_yaml:
+            top_parts.append(f"<entity_relationships>\n{context.kg_context_yaml}</entity_relationships>")
+
+        # Past narration about relevant entities (narrative consistency)
+        if context.narrative_memory:
+            top_parts.append(f"<past_narration>\n{context.narrative_memory}\n</past_narration>")
+
         # Party status (critical for narrator to know HP, conditions)
         party = context.party_members or context.party_status
         if party:
@@ -246,11 +260,11 @@ class Brain(ABC):
             })
 
         # ── Recent messages (verbatim) ──
-        # More history = better grounding. Models handle 32K-200K context.
-        # Cap at 24 messages (~12 exchanges) to stay within 15-25K target.
+        # Message window controlled by profile buffer_size. Larger models
+        # (Sonnet 200K) can handle more; local models (32K) need less.
+        # The buffer_size IS the message window — no separate cap needed.
         history = context.message_history or context.recent_messages
-        recent = history[-24:] if len(history) > 24 else history
-        messages.extend(recent)
+        messages.extend(history)
 
         # ── FINAL USER (HIGH ATTENTION): Player action + reminders ──
         if context.player_action:

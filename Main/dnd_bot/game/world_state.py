@@ -66,6 +66,23 @@ class NPCState(BaseModel):
     important: bool = False  # Quest-givers, allies, key story NPCs stay visible
 
 
+class QuestState(BaseModel):
+    """State of a quest in the world."""
+    name: str                  # Quest name or description
+    giver: str = ""            # NPC who assigned it
+    status: str = "active"     # active/completed/failed
+    objectives: list[str] = Field(default_factory=list)
+    location: str = ""         # Where the quest leads
+
+
+class QuestUpdate(BaseModel):
+    """A proposed change to an existing quest."""
+    name: str
+    status: Optional[str] = None     # active/completed/failed
+    objectives: Optional[list[str]] = None
+    location: Optional[str] = None
+
+
 class NPCUpdate(BaseModel):
     """A proposed change to an existing NPC."""
     name: str
@@ -99,6 +116,8 @@ class StateDelta(BaseModel):
     npc_updates: list[NPCUpdate] = Field(default_factory=list)
     new_npcs: list[NPCState] = Field(default_factory=list)
     removed_npcs: list[str] = Field(default_factory=list)
+    new_quests: list[QuestState] = Field(default_factory=list)
+    quest_updates: list[QuestUpdate] = Field(default_factory=list)
     new_events: list[str] = Field(default_factory=list)
     new_facts: list[str] = Field(default_factory=list)
     flag_changes: dict[str, bool] = Field(default_factory=dict)
@@ -132,6 +151,7 @@ class WorldState(BaseModel):
     connected_locations: list[str] = Field(default_factory=list)
 
     npcs: dict[str, NPCState] = Field(default_factory=dict)
+    quests: dict[str, QuestState] = Field(default_factory=dict)
     players: dict[str, PlayerSnapshot] = Field(default_factory=dict)
 
     # Scene items — objects present in the current scene (spawned, dropped, visible)
@@ -259,6 +279,32 @@ class WorldState(BaseModel):
             if update.important is not None:
                 existing.important = update.important
 
+        # New quests
+        for quest in delta.new_quests:
+            if quest.name not in self.quests:
+                self.quests[quest.name] = quest
+            else:
+                rejections.append(f"Quest already exists: {quest.name}")
+
+        # Quest updates
+        for update in delta.quest_updates:
+            existing = self.quests.get(update.name)
+            if not existing:
+                # Case-insensitive fallback
+                for key, q in self.quests.items():
+                    if key.lower() == update.name.lower():
+                        existing = q
+                        break
+            if not existing:
+                rejections.append(f"Quest not found for update: {update.name}")
+                continue
+            if update.status is not None:
+                existing.status = update.status
+            if update.objectives is not None:
+                existing.objectives = update.objectives
+            if update.location is not None:
+                existing.location = update.location
+
         # Removed NPCs (left the scene, not dead)
         for name in delta.removed_npcs:
             npc = self._find_npc(name)
@@ -379,6 +425,19 @@ class WorldState(BaseModel):
                 f"{npc.name}: at {npc.location or 'unknown'}, {npc.disposition}"
                 + (f" - {npc.notes[:60]}" if npc.notes else "")
                 for npc in distant_important
+            ]
+
+        # Active quests
+        active_quests = [q for q in self.quests.values() if q.status == "active"]
+        if active_quests:
+            data["active_quests"] = [
+                {
+                    "name": q.name,
+                    **({"giver": q.giver} if q.giver else {}),
+                    **({"location": q.location} if q.location else {}),
+                    **({"objectives": q.objectives} if q.objectives else {}),
+                }
+                for q in active_quests
             ]
 
         # Scene items (objects present in the current location)
