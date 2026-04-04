@@ -566,7 +566,6 @@ Score the transcript as a whole — NOT per-turn averages."""
                 temperature=0.1,
                 max_tokens=4096,
                 json_mode=True,
-                think=True,  # Evaluator benefits from reasoning over the transcript
             )
             return self._parse_eval(raw)
         except Exception as e:
