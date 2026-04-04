@@ -25,7 +25,34 @@ TIME_PROGRESSION = [
 ]
 
 # Valid game phases
-VALID_PHASES = ["exploration", "combat", "dialogue", "rest"]
+VALID_PHASES = ["exploration", "combat", "dialogue", "rest", "shopping"]
+
+# Phase State Machine — valid transitions between game phases.
+# Each phase maps to the set of phases it can transition TO.
+# Prevents nonsensical transitions (e.g., shopping during combat).
+PHASE_TRANSITIONS = {
+    "exploration": {"combat", "dialogue", "rest", "shopping", "exploration"},
+    "combat":      {"exploration", "dialogue", "combat"},  # Can't shop/rest mid-combat
+    "dialogue":    {"exploration", "combat", "shopping", "dialogue"},
+    "rest":        {"exploration", "combat", "rest"},  # Can be interrupted by combat
+    "shopping":    {"exploration", "dialogue", "combat", "shopping"},
+}
+
+# Phase-specific narrator style hints — injected into the narrator instruction
+# to shape tone and pacing per phase.
+PHASE_STYLE_HINTS = {
+    "exploration": "Describe the environment with rich detail. Build atmosphere and mystery. Invite the player to investigate.",
+    "combat": "Write with urgency and kinetic energy. Short, punchy sentences. Focus on action and consequences.",
+    "dialogue": "Give NPCs distinct voices and mannerisms. Let subtext and personality drive the scene.",
+    "rest": "Slow the pace. Reflective, quiet moments. Campfire conversations and recovery.",
+    "shopping": "Be practical but characterful. Merchants have personalities. Describe wares vividly.",
+}
+
+
+def is_valid_phase_transition(current: str, target: str) -> bool:
+    """Check if a phase transition is valid according to the FSM."""
+    valid_targets = PHASE_TRANSITIONS.get(current, set())
+    return target in valid_targets
 
 
 class NPCState(BaseModel):
@@ -134,12 +161,16 @@ class WorldState(BaseModel):
         """Validate and apply a StateDelta. Returns list of rejected changes."""
         rejections = []
 
-        # Phase change
+        # Phase change (validated against FSM)
         if delta.phase_change:
-            if delta.phase_change in VALID_PHASES:
-                self.phase = delta.phase_change
-            else:
+            if delta.phase_change not in VALID_PHASES:
                 rejections.append(f"Invalid phase: {delta.phase_change}")
+            elif not is_valid_phase_transition(self.phase, delta.phase_change):
+                rejections.append(
+                    f"Invalid phase transition: {self.phase} -> {delta.phase_change}"
+                )
+            else:
+                self.phase = delta.phase_change
 
         # Time change
         if delta.time_change:

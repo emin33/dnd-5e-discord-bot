@@ -21,6 +21,7 @@ from .brains.rules import RulesBrain, get_rules_brain
 from .intents import validate_narrator_format, strip_planning_text_fallback
 from .extractors.entity_extractor import get_entity_extractor, EntityExtractor
 from .extractors.state_extractor import get_state_extractor, StateExtractor
+from .validators.nli_validator import get_nli_validator, NLIValidator
 from .effects import (
     ProposedEffect,
     EffectType,
@@ -508,6 +509,7 @@ class DMOrchestrator:
         self._scene_registry: Optional[SceneEntityRegistry] = None
         self._entity_extractor: EntityExtractor = get_entity_extractor()
         self._state_extractor: StateExtractor = get_state_extractor()
+        self._nli_validator: NLIValidator = get_nli_validator()
 
         # Effect processing (replaces mechanics extraction)
         self._effect_validator: Optional[EffectValidator] = None
@@ -544,12 +546,13 @@ class DMOrchestrator:
     # ==================== Post-Generation Validation ====================
 
     def _validate_npc_references(self, narrative: str) -> str:
-        """Deterministic check for NPC name misuse in narrator output.
+        """Deterministic check for NPC references in narrator output.
 
-        Logs warnings when the narrator references NPCs that shouldn't be
-        in the current scene. Does NOT modify the narrative — just logs
-        issues for debugging. A future version could strip or replace
-        misplaced NPC references.
+        Two-layer validation:
+        1. SceneEntityRegistry: logs NPC mentions for tracking
+        2. WorldState: flags NPCs mentioned that aren't at the current location
+
+        Does NOT modify the narrative — logs issues for debugging.
         """
         if not self._scene_registry:
             return narrative
@@ -559,21 +562,39 @@ class DMOrchestrator:
         if not npcs:
             return narrative
 
-        # Build a set of known NPC names
-        npc_names = {e.name.lower(): e for e in npcs}
+        narrative_lower = narrative.lower()
 
-        # Check if any NPC name appears in the narrative
-        # This is a simple substring check — not perfect but catches obvious cases
+        # Layer 1: SceneEntityRegistry check
+        npc_names = {e.name.lower(): e for e in npcs}
         for name_lower, entity in npc_names.items():
             if len(name_lower) < 3:
-                continue  # Skip very short names to avoid false matches
-            if name_lower in narrative.lower():
-                # NPC is mentioned — this is fine, just track it
+                continue
+            if name_lower in narrative_lower:
                 logger.debug(
                     "narrator_npc_reference",
                     npc=entity.name,
                     disposition=entity.disposition.value if entity.disposition else "unknown",
                 )
+
+        # Layer 2: WorldState location validation (referenced_entities check)
+        world_state = getattr(self._current_session, 'world_state', None) if self._current_session else None
+        if world_state and world_state.current_location:
+            for npc_name, npc_state in world_state.npcs.items():
+                if len(npc_name) < 3:
+                    continue
+                if npc_name.lower() in narrative_lower:
+                    # NPC mentioned — check if they're at the right location
+                    if (
+                        npc_state.location
+                        and npc_state.location.lower() != world_state.current_location.lower()
+                        and npc_state.alive
+                    ):
+                        logger.warning(
+                            "npc_location_mismatch",
+                            npc=npc_name,
+                            npc_location=npc_state.location,
+                            party_location=world_state.current_location,
+                        )
 
         return narrative
 
@@ -867,6 +888,30 @@ class DMOrchestrator:
         world_state = getattr(self._current_session, 'world_state', None) if self._current_session else None
         if narrative and world_state:
             await self._extract_and_apply_state_delta(narrative, world_state, context)
+
+        # Step 3.7: NLI contradiction check (DeBERTa cross-encoder, ~150-300ms CPU)
+        # Validates narrator output against world state facts
+        if narrative and context.world_state_yaml:
+            contradictions = self._nli_validator.validate(narrative, context.world_state_yaml)
+            if contradictions:
+                for c in contradictions:
+                    logger.warning(
+                        "nli_contradiction_detected",
+                        claim=c.claim[:100],
+                        fact=c.fact[:100],
+                        score=round(c.score, 2),
+                    )
+
+            # Step 3.8: LLM tiebreaker for ambiguous NLI results (~300-800ms, async)
+            # Only fires when NLI scores are in the 0.5-2.0 ambiguous zone
+            if hasattr(self._nli_validator, '_pending_ambiguous') and self._nli_validator._pending_ambiguous:
+                tiebreaker_results = await self._nli_validator.resolve_ambiguous()
+                for c in tiebreaker_results:
+                    logger.warning(
+                        "nli_tiebreaker_contradiction",
+                        claim=c.claim[:100],
+                        fact=c.fact[:100],
+                    )
 
         # Step 4: Process narrator output - entity extraction + proposed effects
         # Skip entity extraction during combat or for simple actions (saves API calls)
@@ -1831,15 +1876,21 @@ Start with PROSE: immediately."""
             messages = self.narrator._build_bookend_messages(enhanced_context)
         else:
             messages = self.narrator._build_messages(enhanced_context)
-        # Style rotation for prose variety
+        # Style rotation + phase-specific tone
         style_hint = get_style_hint(self._scratchpad_turn)
+        from ..game.world_state import PHASE_STYLE_HINTS
+        world_state = getattr(self._current_session, 'world_state', None) if self._current_session else None
+        phase_hint = PHASE_STYLE_HINTS.get(world_state.phase, "") if world_state else ""
+
+        phase_line = f"**Phase tone:** {phase_hint}\n\n" if phase_hint else "\n"
 
         messages.append({
             "role": "system",
             "content": (
                 "###INSTRUCTION###\n"
                 "Narrate the player's action according to the NARRATIVE DIRECTION above.\n\n"
-                f"**Style for this scene:** {style_hint}\n\n"
+                f"**Style for this scene:** {style_hint}\n"
+                f"{phase_line}"
                 "Remember your storytelling principles:\n"
                 "- Acknowledge the action briefly\n"
                 "- Show the world's REACTION (environment, NPCs, atmosphere)\n"

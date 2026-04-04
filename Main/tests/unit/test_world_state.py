@@ -10,6 +10,9 @@ from dnd_bot.game.world_state import (
     NPCUpdate,
     PlayerSnapshot,
     get_state_delta_schema,
+    is_valid_phase_transition,
+    PHASE_TRANSITIONS,
+    PHASE_STYLE_HINTS,
 )
 
 
@@ -211,6 +214,21 @@ class TestStateDelta:
         assert len(rejections) == 1
         assert "Invalid phase" in rejections[0]
 
+    def test_reject_invalid_phase_transition(self):
+        ws = WorldState(phase="combat")
+        delta = StateDelta(phase_change="shopping")  # Can't shop mid-combat
+        rejections = ws.apply_delta(delta)
+        assert len(rejections) == 1
+        assert "Invalid phase transition" in rejections[0]
+        assert ws.phase == "combat"  # Unchanged
+
+    def test_valid_phase_transition(self):
+        ws = WorldState(phase="combat")
+        delta = StateDelta(phase_change="exploration")  # Valid: combat -> exploration
+        rejections = ws.apply_delta(delta)
+        assert rejections == []
+        assert ws.phase == "exploration"
+
     def test_case_insensitive_npc_lookup(self):
         ws = WorldState()
         ws.npcs["Grimjaw"] = NPCState(name="Grimjaw", location="tavern")
@@ -298,6 +316,31 @@ class TestWorldStateYAML:
         assert "flags" in data
         assert data["flags"]["bridge_destroyed"] is True
         assert "door_locked" not in data["flags"]  # False flags omitted
+
+
+class TestPhaseStateMachine:
+    """Test phase FSM transitions."""
+
+    def test_exploration_can_enter_combat(self):
+        assert is_valid_phase_transition("exploration", "combat")
+
+    def test_combat_cannot_enter_shopping(self):
+        assert not is_valid_phase_transition("combat", "shopping")
+
+    def test_combat_cannot_enter_rest(self):
+        assert not is_valid_phase_transition("combat", "rest")
+
+    def test_rest_can_be_interrupted_by_combat(self):
+        assert is_valid_phase_transition("rest", "combat")
+
+    def test_all_phases_have_transitions(self):
+        for phase in ["exploration", "combat", "dialogue", "rest", "shopping"]:
+            assert phase in PHASE_TRANSITIONS
+
+    def test_all_phases_have_style_hints(self):
+        for phase in ["exploration", "combat", "dialogue", "rest", "shopping"]:
+            assert phase in PHASE_STYLE_HINTS
+            assert len(PHASE_STYLE_HINTS[phase]) > 10
 
 
 class TestStateDeltaSchema:

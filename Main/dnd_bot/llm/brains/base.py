@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from ..client import LLMResponse, OllamaClient
+from ..validators.rule_injector import get_rule_injector
 
 
 @dataclass
@@ -208,6 +209,16 @@ class Brain(ABC):
         if context.character_stats:
             char_stats = context.character_stats if isinstance(context.character_stats, str) else str(context.character_stats)
             top_parts.append(f"<acting_character>\n{char_stats}\n</acting_character>")
+
+        # Dynamic SRD rule injection — top-3 relevant rules for this action
+        if context.player_action:
+            injector = get_rule_injector()
+            relevant_rules = injector.get_relevant_rules(
+                action=context.player_action,
+                phase=context.world_state_yaml.split("phase:")[1].split("\n")[0].strip() if "phase:" in context.world_state_yaml else "exploration",
+            )
+            if relevant_rules:
+                top_parts.append(f"<relevant_rules>\n{relevant_rules}\n</relevant_rules>")
 
         if top_parts:
             messages.append({"role": "user", "content": "\n\n".join(top_parts)})
