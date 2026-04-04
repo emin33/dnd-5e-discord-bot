@@ -42,14 +42,14 @@ local_moe:
     condensed_size: 10
     compaction_threshold: 6
 
-# Local split: MoE narrates, dense 9B does brain (needs ~38GB VRAM)
+# Local split: MoE narrates, dense 27B does brain
 local_split:
   narrator:
     provider: ollama
     model: qwen3.5:35b-a3b
   brain:
     provider: ollama
-    model: qwen3.5:9b
+    model: qwen3.5:27b
     fallback_to_ollama: false
   memory:
     buffer_size: 24
@@ -102,7 +102,7 @@ moe_groq:
     condensed_size: 10
     compaction_threshold: 6
 
-# Qwen 3.6 Plus (free via OpenRouter) narrates, local 9B brain
+# Qwen 3.6 Plus (free via OpenRouter) narrates, local 27B brain
 # OpenRouter models handle large context well
 qwen36_local:
   narrator:
@@ -110,7 +110,7 @@ qwen36_local:
     model: qwen/qwen3.6-plus:free
   brain:
     provider: ollama
-    model: qwen3.5:9b
+    model: qwen3.5:27b
     fallback_to_ollama: false
   memory:
     buffer_size: 30
@@ -118,7 +118,7 @@ qwen36_local:
     condensed_size: 12
     compaction_threshold: 8
 
-# Haiku narrator + local 9B brain (fast + cheap cloud narrator)
+# Haiku narrator + local 27B brain (fast + cheap cloud narrator)
 # Haiku handles 200K context
 haiku_local:
   narrator:
@@ -126,7 +126,7 @@ haiku_local:
     model: claude-haiku-4-5-20251001
   brain:
     provider: ollama
-    model: qwen3.5:9b
+    model: qwen3.5:27b
     fallback_to_ollama: false
   memory:
     buffer_size: 30
@@ -134,7 +134,7 @@ haiku_local:
     condensed_size: 12
     compaction_threshold: 8
 
-# Sonnet narrator + local 9B brain
+# Sonnet narrator + local 27B brain
 # Sonnet handles 200K context
 sonnet_local:
   narrator:
@@ -142,7 +142,7 @@ sonnet_local:
     model: claude-sonnet-4-6
   brain:
     provider: ollama
-    model: qwen3.5:9b
+    model: qwen3.5:27b
     fallback_to_ollama: false
   memory:
     buffer_size: 40
