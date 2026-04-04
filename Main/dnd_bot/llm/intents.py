@@ -123,10 +123,17 @@ def validate_narrator_format(response: str) -> bool:
 
     # Accept XML format: <prose>...</prose>
     if "<prose>" in normalized.lower():
+        import structlog
+        structlog.get_logger().info("narrator_format_ok", format="xml")
         return True
 
     # Accept text marker format: PROSE: (case-insensitive)
-    return normalized.upper().startswith("PROSE:")
+    if normalized.upper().startswith("PROSE:"):
+        import structlog
+        structlog.get_logger().info("narrator_format_ok", format="text")
+        return True
+
+    return False
 
 
 def strip_planning_text_fallback(text: str) -> tuple[str, bool]:
@@ -210,6 +217,12 @@ def extract_intents_block(response: str) -> tuple[str, str]:
         intents_xml = re.search(r'<intents>(.*?)</intents>', response, re.DOTALL | re.IGNORECASE)
         if intents_xml:
             intents = intents_xml.group(1).strip()
+        import structlog
+        structlog.get_logger().debug(
+            "narrator_xml_format_parsed",
+            prose_length=len(prose),
+            has_intents=bool(intents),
+        )
         return prose, intents
 
     # Find INTENTS marker with various formats:
