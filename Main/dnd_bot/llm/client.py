@@ -762,10 +762,13 @@ def get_llm_client():
 def get_narrator_client():
     """Get the narrator-specific LLM client.
 
-    When narrator_provider is "anthropic", returns a Claude client.
-    Otherwise falls back to the default LLM client (Groq/Ollama).
-    This allows routing only narrator calls through a premium model
-    while keeping triage, extraction, and compaction on the cheaper provider.
+    Supports independent narrator routing:
+    - "anthropic": Claude API (premium creative writing)
+    - "ollama": Local Ollama model (can differ from the triage model)
+    - "groq": Groq cloud (can differ from local triage)
+    - "default": Same client as get_llm_client()
+
+    This allows e.g. MoE on Ollama for narration + Groq for triage.
     """
     global _narrator_client
     if _narrator_client is None:
@@ -776,6 +779,20 @@ def get_narrator_client():
                 "narrator_client_init",
                 provider="anthropic",
                 model=settings.anthropic_model,
+            )
+        elif settings.narrator_provider == "ollama":
+            _narrator_client = OllamaClient()
+            logger.info(
+                "narrator_client_init",
+                provider="ollama",
+                model=settings.ollama_model,
+            )
+        elif settings.narrator_provider == "groq":
+            _narrator_client = GroqClient()
+            logger.info(
+                "narrator_client_init",
+                provider="groq",
+                model=settings.groq_model,
             )
         else:
             _narrator_client = get_llm_client()
