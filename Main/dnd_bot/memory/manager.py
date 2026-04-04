@@ -31,12 +31,12 @@ Conversation:
 {conversation}
 
 Respond in JSON format:
-{
+{{
     "summary": "narrative summary here",
     "key_events": ["event 1", "event 2"],
     "npcs": ["npc name 1", "npc name 2"],
     "locations": ["location 1", "location 2"]
-}"""
+}}"""
 
 
 class MemoryManager:
