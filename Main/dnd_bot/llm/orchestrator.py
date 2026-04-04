@@ -314,40 +314,46 @@ class ActionType(str, Enum):
 
 
 class TriageSchema(BaseModel):
-    """Pydantic schema for structured triage output."""
-    # Action classification (NEW - routes to appropriate handler)
+    """Pydantic schema for structured triage output.
+
+    IMPORTANT: All optional fields use plain defaults (str="", int=0)
+    instead of Optional[T]=None to avoid anyOf unions in the JSON schema.
+    Groq's JSON validator chokes on anyOf patterns, causing intermittent
+    "Failed to generate/validate JSON" 400 errors.
+    """
+    # Action classification
     action_type: str  # One of ActionType values
-    reasoning: str
+    reasoning: str = ""
 
     # For skill_check/saving_throw actions
     needs_roll: bool = False
-    roll_type: Optional[str] = None  # "ability_check" or "saving_throw"
-    ability: Optional[str] = None
-    skill: Optional[str] = None
-    dc: Optional[int] = None
+    roll_type: str = ""       # "ability_check" or "saving_throw"
+    ability: str = ""
+    skill: str = ""
+    dc: int = 0               # 0 = not set
     advantage: bool = False
     disadvantage: bool = False
-    advantage_reason: Optional[str] = None
+    advantage_reason: str = ""
     on_success: list[str] = []
     on_failure: list[str] = []
 
     # For purchase/sell actions
-    item_name: Optional[str] = None
-    item_cost: Optional[int] = None  # In gold pieces
+    item_name: str = ""
+    item_cost: int = 0        # In gold pieces, 0 = not set
     quantity: int = 1
 
     # For attack actions
-    target_name: Optional[str] = None  # What/who they're attacking
+    target_name: str = ""     # What/who they're attacking
     is_creature_target: bool = False  # True if target is a creature (triggers combat)
 
     # For social/roleplay (no mechanics needed)
-    narrative_direction: Optional[str] = None
+    narrative_direction: str = ""
 
     # Resources consumed by the action (ammunition, consumables, etc.)
     resources_consumed: list[dict] = []  # [{"item": "Arrow", "quantity": 1}]
 
     # Currency spent/lost by the action (tipping, paying, dropping, etc.)
-    currency_spent: Optional[dict] = None  # {"gold": 50} or {"silver": 10, "copper": 5}
+    currency_spent: dict = {}  # {"gold": 50} or empty = not set
 
 
 # Cache the schema so we don't regenerate it every call
@@ -919,32 +925,37 @@ class DMOrchestrator:
             if action_type in ("social", "roleplay", "exploration") and not narrative_direction:
                 narrative_direction = f"The action proceeds. {triage_data.get('reasoning', 'Describe the outcome.')}"
 
+            # Convert empty strings to None (schema uses "" defaults to avoid
+            # anyOf unions that break Groq, but downstream expects None for "not set")
+            def _or_none(val):
+                return val if val else None
+
             return TriageResult(
                 action_type=action_type,
                 reasoning=triage_data.get("reasoning", ""),
                 needs_roll=needs_roll,
-                roll_type=triage_data.get("roll_type"),
-                ability=triage_data.get("ability"),
-                skill=triage_data.get("skill"),
-                dc=triage_data.get("dc"),
+                roll_type=_or_none(triage_data.get("roll_type")),
+                ability=_or_none(triage_data.get("ability")),
+                skill=_or_none(triage_data.get("skill")),
+                dc=triage_data.get("dc") or None,
                 advantage=triage_data.get("advantage", False),
                 disadvantage=triage_data.get("disadvantage", False),
-                advantage_reason=triage_data.get("advantage_reason"),
+                advantage_reason=_or_none(triage_data.get("advantage_reason")),
                 on_success=triage_data.get("on_success", []),
                 on_failure=triage_data.get("on_failure", []),
                 # Purchase fields
-                item_name=triage_data.get("item_name"),
-                item_cost=triage_data.get("item_cost"),
+                item_name=_or_none(triage_data.get("item_name")),
+                item_cost=triage_data.get("item_cost") or None,
                 quantity=triage_data.get("quantity", 1),
                 # Attack fields
-                target_name=triage_data.get("target_name"),
+                target_name=_or_none(triage_data.get("target_name")),
                 is_creature_target=triage_data.get("is_creature_target", False),
                 # Narrative guidance
-                narrative_direction=narrative_direction,
+                narrative_direction=_or_none(narrative_direction),
                 # Resource consumption
                 resources_consumed=triage_data.get("resources_consumed", []),
                 # Currency spending
-                currency_spent=triage_data.get("currency_spent"),
+                currency_spent=triage_data.get("currency_spent") or None,
             )
 
         except Exception as e:
