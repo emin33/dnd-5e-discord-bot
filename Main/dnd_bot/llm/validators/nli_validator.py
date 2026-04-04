@@ -92,13 +92,31 @@ class NLIValidator:
                 continue
 
             # Prioritize sentences with factual indicators
-            is_factual = any(indicator in sentence.lower() for indicator in [
+            sentence_lower = sentence.lower()
+            is_factual = any(indicator in sentence_lower for indicator in [
+                # Static state
                 " is ", " are ", " was ", " were ", " stands ", " sits ",
-                " lies ", " holds ", " wears ", " carries ",
+                " lies ", " holds ", " wears ", " carries ", " contains ",
+                # Time/environment
                 "the sun ", "the moon ", "dawn ", "dusk ", "night ",
                 "morning ", "afternoon ", "evening ",
+                # Existence/presence
                 " dead ", " alive ", " gone ", " left ", " arrived ",
                 " empty ", " locked ", " open ", " closed ",
+                " appears ", " disappears ", " vanishes ",
+                # State-changing actions (items, currency, inventory)
+                " gives ", " gave ", " hands ", " handed ",
+                " takes ", " took ", " picks up ", " picked up ",
+                " drops ", " dropped ", " slides ", " slid ",
+                " returns ", " returned ", " offers ", " offered ",
+                " pays ", " paid ", " pockets ", " pocketed ",
+                " draws ", " drew ", " sheathes ", " sheathed ",
+                " drinks ", " drank ", " eats ", " ate ",
+                " opens ", " opened ", " closes ", " closed ",
+                " lights ", " lit ", " extinguishes ",
+                # Currency/commerce
+                " coin", " gold ", " silver ", " copper ",
+                " platinum ", " electrum ",
             ])
 
             if is_factual:
@@ -166,6 +184,16 @@ class NLIValidator:
         if "recent_events" in data:
             for event in data["recent_events"][-3:]:
                 facts.append(event)
+
+        # Scene items (objects present)
+        if "scene_items" in data:
+            for item_line in data["scene_items"]:
+                facts.append(f"In the scene: {item_line}.")
+
+        # Recent transfers (item/currency state changes)
+        if "recent_transfers" in data:
+            for transfer in data["recent_transfers"]:
+                facts.append(transfer)
 
         return facts
 
