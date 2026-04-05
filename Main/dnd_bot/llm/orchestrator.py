@@ -1970,11 +1970,11 @@ class DMOrchestrator:
         return NARRATOR_TOOLS_CORE
 
     def _append_tool_reminder(self, messages: list[dict]) -> None:
-        """Append entity constraints + tool reminder as the final message.
+        """Append entity constraints, situational directives, and tool reminder.
 
         Placed last so it's the freshest instruction in the model's
-        attention window. Includes current entity facts so the narrator
-        cannot contradict established data.
+        attention window. Dynamically injects rules based on current
+        game state rather than loading all rules upfront.
         """
         parts = []
 
@@ -1982,14 +1982,27 @@ class DMOrchestrator:
         world_state = getattr(self._current_session, 'world_state', None) if self._current_session else None
         if world_state and world_state.npcs:
             constraints = []
+            hostile_npcs = []
             for name, npc in world_state.npcs.items():
                 if npc.alive:
                     desc = npc.description[:80] if npc.description else ""
                     constraints.append(f"- {name}: {npc.disposition}, {desc}")
+                    if npc.disposition in ("hostile", "unfriendly"):
+                        hostile_npcs.append(name)
             if constraints:
                 parts.append(
                     "ENTITY FACTS (your prose MUST NOT contradict these):\n"
                     + "\n".join(constraints)
+                )
+
+            # Dynamic escalation: hostile NPCs should act, not wait
+            if hostile_npcs:
+                parts.append(
+                    "HOSTILE NPC DIRECTIVE: "
+                    + ", ".join(hostile_npcs)
+                    + " are hostile. They do NOT wait passively. They advance, "
+                    "threaten, attack, flee, or take tactical action EVERY turn. "
+                    "Describe what THEY do, not just what they look like."
                 )
 
         parts.append(
