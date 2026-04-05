@@ -2573,6 +2573,17 @@ Write your narration directly."""
             condition = effect.condition or "a condition"
             world_state.record_transfer(f"{target} lost condition: {condition}")
 
+        elif etype == EffectType.ADD_NPC:
+            from ..game.world_state import NPCState
+            npc_name = effect.npc_name or "Unknown"
+            if npc_name not in world_state.npcs:
+                world_state.npcs[npc_name] = NPCState(
+                    name=npc_name,
+                    location=world_state.current_location,
+                    disposition=effect.npc_disposition or "neutral",
+                    description=effect.npc_description or "",
+                )
+
         elif etype == EffectType.CONSUME_RESOURCE:
             resource = effect.resource_name or effect.item_name or "a resource"
             world_state.record_transfer(f"Consumed {effect.quantity}x {resource}")
