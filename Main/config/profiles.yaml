@@ -42,6 +42,21 @@ local_moe:
     condensed_size: 10
     compaction_threshold: 6
 
+# Local 9B: lightweight dense model for everything, fits any GPU
+local_9b:
+  narrator:
+    provider: ollama
+    model: qwen3.5:9b
+  brain:
+    provider: ollama
+    model: qwen3.5:9b
+    fallback_to_ollama: false
+  memory:
+    buffer_size: 20
+    verbatim_size: 6
+    condensed_size: 8
+    compaction_threshold: 5
+
 # Local split: MoE narrates, dense 27B does brain
 local_split:
   narrator:
