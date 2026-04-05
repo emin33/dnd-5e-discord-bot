@@ -102,6 +102,21 @@ groq_full:
     condensed_size: 12
     compaction_threshold: 8
 
+# Groq Qwen3-32B narrates, local 9B does brain
+groq_local:
+  narrator:
+    provider: groq
+    model: qwen/qwen3-32b
+  brain:
+    provider: ollama
+    model: qwen3.5:9b
+    fallback_to_ollama: false
+  memory:
+    buffer_size: 30
+    verbatim_size: 10
+    condensed_size: 12
+    compaction_threshold: 8
+
 # MoE narrates locally, Groq does brain
 moe_groq:
   narrator:
