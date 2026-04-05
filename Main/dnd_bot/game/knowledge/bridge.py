@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING
 
@@ -23,8 +24,28 @@ from .models import (
 
 if TYPE_CHECKING:
     from ..world_state import StateDelta, WorldState
+    from ...llm.effects import ProposedEffect
 
 logger = structlog.get_logger()
+
+
+@dataclass(frozen=True)
+class NamePromotion:
+    """Suggestion to promote an unnamed entity to a proper name."""
+
+    node_id: str
+    new_name: str
+
+
+def _is_proper_name(name: str) -> bool:
+    """Check if *name* looks like a proper name rather than a descriptor."""
+    lower = name.lower()
+    if lower.startswith(("the ", "a ", "an ")):
+        return False
+    # All lowercase ⇒ descriptive ("old merchant", "cloaked figure")
+    if name == lower:
+        return False
+    return any(word[0].isupper() for word in name.split() if word)
 
 
 class DeltaBridge:
@@ -432,4 +453,217 @@ class DeltaBridge:
                 created_at=now,
             )))
 
+        return ops
+
+    # ── Tool-effect entry point ──────────────────────────────────────
+
+    def convert_effects(
+        self,
+        effects: list["ProposedEffect"],
+        world_state: "WorldState",
+        existing_node_ids: set[str] | None = None,
+    ) -> tuple[list[GraphOperation], list[NamePromotion]]:
+        """Convert executed narrator tool effects into KG operations.
+
+        Companion to :meth:`convert` which handles StateDelta.  This handles
+        ``ProposedEffect`` objects produced by narrator tool calls
+        (add_npc, spawn_object, ref_entity, remove_entity).
+
+        Returns ``(graph_ops, name_promotions)``.
+        """
+        from ...llm.effects import EffectType
+
+        ops: list[GraphOperation] = []
+        promotions: list[NamePromotion] = []
+        known = existing_node_ids or set()
+        now = datetime.utcnow()
+
+        for effect in effects:
+            etype = effect.effect_type
+            if etype == EffectType.ADD_NPC:
+                ops.extend(self._effect_add_npc(effect, world_state, known, now))
+            elif etype == EffectType.SPAWN_OBJECT:
+                ops.extend(self._effect_spawn_object(effect, world_state, known, now))
+            elif etype == EffectType.REF_ENTITY:
+                promo = self._effect_ref_entity(effect, known)
+                if promo:
+                    promotions.append(promo)
+            elif etype == EffectType.REMOVE_ENTITY:
+                ops.extend(self._effect_remove_entity(effect))
+
+        if ops or promotions:
+            logger.debug(
+                "effect_bridge_converted",
+                op_count=len(ops),
+                promotion_count=len(promotions),
+            )
+        return ops, promotions
+
+    # ── Per-effect helpers ───────────────────────────────────────────
+
+    def _effect_add_npc(
+        self,
+        effect: "ProposedEffect",
+        world_state: "WorldState",
+        known: set[str],
+        now: datetime,
+    ) -> list[GraphOperation]:
+        """ADD_NPC → AddNode(NPC) + LOCATED_AT edge."""
+        ops: list[GraphOperation] = []
+        npc_name = effect.npc_name or "Unknown"
+        npc_id = slugify(npc_name)
+        if not npc_id:
+            return ops
+
+        props: dict[str, str] = {}
+        if effect.npc_description:
+            props["description"] = effect.npc_description
+        if effect.npc_disposition:
+            props["disposition"] = effect.npc_disposition
+
+        # Detect unnamed NPCs (same heuristic as _handle_new_npc)
+        name_lower = npc_name.lower()
+        is_named = not (
+            name_lower.startswith(("the ", "a ", "an "))
+            or name_lower == npc_name  # all lowercase ⇒ descriptive
+        )
+        if not is_named:
+            props["named"] = "false"
+
+        npc_location = world_state.current_location
+        if npc_location:
+            props["location"] = npc_location
+
+        ops.append(AddNode(entity=Entity(
+            node_id=npc_id,
+            entity_type=EntityType.NPC,
+            name=npc_name,
+            campaign_id=self._campaign_id,
+            properties=props,
+            created_at=now,
+            updated_at=now,
+        )))
+        known.add(npc_id)
+
+        # LOCATED_AT edge
+        if npc_location:
+            loc_id = slugify(npc_location)
+            if loc_id not in known:
+                ops.append(AddNode(entity=Entity(
+                    node_id=loc_id,
+                    entity_type=EntityType.LOCATION,
+                    name=npc_location,
+                    campaign_id=self._campaign_id,
+                    properties={"placeholder": "true"},
+                    created_at=now,
+                    updated_at=now,
+                )))
+                known.add(loc_id)
+
+            ops.append(AddEdge(relationship=Relationship(
+                source_id=npc_id,
+                target_id=loc_id,
+                relation_type=RelationType.LOCATED_AT,
+                weight=DEFAULT_WEIGHTS[RelationType.LOCATED_AT],
+                campaign_id=self._campaign_id,
+                created_at=now,
+            )))
+
+        return ops
+
+    def _effect_spawn_object(
+        self,
+        effect: "ProposedEffect",
+        world_state: "WorldState",
+        known: set[str],
+        now: datetime,
+    ) -> list[GraphOperation]:
+        """SPAWN_OBJECT → AddNode(ITEM) + LOCATED_AT edge."""
+        ops: list[GraphOperation] = []
+        obj_name = effect.object_name or "unknown_item"
+        obj_id = slugify(obj_name)
+        if not obj_id:
+            return ops
+
+        props: dict[str, str] = {}
+        if effect.object_description:
+            props["description"] = effect.object_description
+
+        location = world_state.current_location
+        if location:
+            props["location"] = location
+
+        ops.append(AddNode(entity=Entity(
+            node_id=obj_id,
+            entity_type=EntityType.ITEM,
+            name=obj_name,
+            campaign_id=self._campaign_id,
+            properties=props,
+            created_at=now,
+            updated_at=now,
+        )))
+        known.add(obj_id)
+
+        if location:
+            loc_id = slugify(location)
+            if loc_id not in known:
+                ops.append(AddNode(entity=Entity(
+                    node_id=loc_id,
+                    entity_type=EntityType.LOCATION,
+                    name=location,
+                    campaign_id=self._campaign_id,
+                    properties={"placeholder": "true"},
+                    created_at=now,
+                    updated_at=now,
+                )))
+                known.add(loc_id)
+
+            ops.append(AddEdge(relationship=Relationship(
+                source_id=obj_id,
+                target_id=loc_id,
+                relation_type=RelationType.LOCATED_AT,
+                weight=DEFAULT_WEIGHTS[RelationType.LOCATED_AT],
+                campaign_id=self._campaign_id,
+                created_at=now,
+            )))
+
+        return ops
+
+    def _effect_ref_entity(
+        self,
+        effect: "ProposedEffect",
+        known: set[str],
+    ) -> NamePromotion | None:
+        """REF_ENTITY → name promotion suggestion (if alias is a proper name)."""
+        entity_id = effect.ref_entity_id
+        alias = effect.ref_alias_used
+        if not entity_id or not alias:
+            return None
+
+        node_id = slugify(entity_id)
+        if not node_id or alias.lower() == entity_id.lower():
+            return None
+
+        if _is_proper_name(alias):
+            return NamePromotion(node_id=node_id, new_name=alias)
+        return None
+
+    def _effect_remove_entity(
+        self,
+        effect: "ProposedEffect",
+    ) -> list[GraphOperation]:
+        """REMOVE_ENTITY → clear location, remove LOCATED_AT edge (keep node)."""
+        ops: list[GraphOperation] = []
+        target = effect.target
+        if not target:
+            return ops
+
+        node_id = slugify(target)
+        if node_id:
+            ops.append(UpdateNode(node_id=node_id, properties={"location": ""}))
+            ops.append(RemoveEdge(
+                source_id=node_id,
+                target_id="",
+                relation_type=RelationType.LOCATED_AT,
+            ))
         return ops

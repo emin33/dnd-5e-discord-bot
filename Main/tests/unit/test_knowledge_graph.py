@@ -20,7 +20,7 @@ from dnd_bot.game.knowledge.models import (
     slugify,
 )
 from dnd_bot.game.knowledge.graph import KnowledgeGraph
-from dnd_bot.game.knowledge.bridge import DeltaBridge
+from dnd_bot.game.knowledge.bridge import DeltaBridge, NamePromotion, _is_proper_name
 from dnd_bot.game.knowledge.matcher import EntityNameMatcher
 from dnd_bot.game.world_state import StateDelta, NPCState, NPCUpdate, QuestState, WorldState
 
@@ -763,3 +763,187 @@ class TestQuestBridge:
         loc_edges = [e for e in edges if e.relationship.relation_type == RelationType.OBJECTIVE_AT]
         assert len(loc_edges) == 1
         assert loc_edges[0].relationship.target_id == "shadow-ruins"
+
+
+# ======================================================================
+# Effect bridge — convert_effects
+# ======================================================================
+
+class TestEffectBridge:
+    """Tests for DeltaBridge.convert_effects (tool-effect → KG path)."""
+
+    @pytest.fixture
+    def bridge(self):
+        return DeltaBridge("test-campaign")
+
+    @pytest.fixture
+    def world_state(self):
+        ws = WorldState()
+        ws.current_location = "Market Square"
+        return ws
+
+    @staticmethod
+    def _make_effect(**kwargs):
+        """Build a minimal ProposedEffect for testing."""
+        from dnd_bot.llm.effects import ProposedEffect, EffectType
+        defaults = {"effect_type": EffectType.ADD_NPC}
+        defaults.update(kwargs)
+        return ProposedEffect(**defaults)
+
+    def test_empty_effects_no_ops(self, bridge, world_state):
+        ops, promotions = bridge.convert_effects([], world_state)
+        assert ops == []
+        assert promotions == []
+
+    def test_add_npc_creates_node_and_edge(self, bridge, world_state):
+        from dnd_bot.llm.effects import EffectType
+        effect = self._make_effect(
+            effect_type=EffectType.ADD_NPC,
+            npc_name="Grimjaw",
+            npc_description="A gruff dwarf",
+            npc_disposition="hostile",
+        )
+        ops, promotions = bridge.convert_effects([effect], world_state)
+
+        add_nodes = [o for o in ops if isinstance(o, AddNode)]
+        add_edges = [o for o in ops if isinstance(o, AddEdge)]
+
+        npc_nodes = [n for n in add_nodes if n.entity.entity_type == EntityType.NPC]
+        assert len(npc_nodes) == 1
+        assert npc_nodes[0].entity.name == "Grimjaw"
+        assert npc_nodes[0].entity.properties["disposition"] == "hostile"
+        assert npc_nodes[0].entity.properties["description"] == "A gruff dwarf"
+
+        located_at = [e for e in add_edges if e.relationship.relation_type == RelationType.LOCATED_AT]
+        assert len(located_at) == 1
+        assert located_at[0].relationship.source_id == "grimjaw"
+        assert located_at[0].relationship.target_id == "market-square"
+
+    def test_add_npc_unnamed_detection(self, bridge, world_state):
+        from dnd_bot.llm.effects import EffectType
+        effect = self._make_effect(
+            effect_type=EffectType.ADD_NPC,
+            npc_name="the cloaked stranger",
+            npc_description="A mysterious figure",
+        )
+        ops, _ = bridge.convert_effects([effect], world_state)
+        npc_nodes = [o for o in ops if isinstance(o, AddNode) and o.entity.entity_type == EntityType.NPC]
+        assert npc_nodes[0].entity.properties.get("named") == "false"
+
+    def test_spawn_object_creates_item_node(self, bridge, world_state):
+        from dnd_bot.llm.effects import EffectType
+        effect = self._make_effect(
+            effect_type=EffectType.SPAWN_OBJECT,
+            object_name="Iron Key",
+            object_description="A heavy iron key with rust spots",
+        )
+        ops, _ = bridge.convert_effects([effect], world_state)
+
+        item_nodes = [o for o in ops if isinstance(o, AddNode) and o.entity.entity_type == EntityType.ITEM]
+        assert len(item_nodes) == 1
+        assert item_nodes[0].entity.name == "Iron Key"
+        assert item_nodes[0].entity.properties["description"] == "A heavy iron key with rust spots"
+
+        located_at = [o for o in ops if isinstance(o, AddEdge)]
+        assert len(located_at) == 1
+
+    def test_ref_entity_proper_name_promotion(self, bridge, world_state):
+        from dnd_bot.llm.effects import EffectType
+        effect = self._make_effect(
+            effect_type=EffectType.REF_ENTITY,
+            ref_entity_id="the cloaked stranger",
+            ref_alias_used="Silas Vane",
+        )
+        ops, promotions = bridge.convert_effects([effect], world_state)
+        assert ops == []  # ref_entity produces no graph ops
+        assert len(promotions) == 1
+        assert promotions[0].node_id == "the-cloaked-stranger"
+        assert promotions[0].new_name == "Silas Vane"
+
+    def test_ref_entity_descriptor_alias_no_promotion(self, bridge, world_state):
+        from dnd_bot.llm.effects import EffectType
+        effect = self._make_effect(
+            effect_type=EffectType.REF_ENTITY,
+            ref_entity_id="Grimjaw",
+            ref_alias_used="the dwarf",
+        )
+        _, promotions = bridge.convert_effects([effect], world_state)
+        assert promotions == []
+
+    def test_ref_entity_same_name_no_promotion(self, bridge, world_state):
+        from dnd_bot.llm.effects import EffectType
+        effect = self._make_effect(
+            effect_type=EffectType.REF_ENTITY,
+            ref_entity_id="Grimjaw",
+            ref_alias_used="Grimjaw",
+        )
+        _, promotions = bridge.convert_effects([effect], world_state)
+        assert promotions == []
+
+    def test_remove_entity_clears_location(self, bridge, world_state):
+        from dnd_bot.llm.effects import EffectType
+        effect = self._make_effect(
+            effect_type=EffectType.REMOVE_ENTITY,
+            target="Grimjaw",
+        )
+        ops, _ = bridge.convert_effects([effect], world_state)
+        assert len(ops) == 2
+        assert isinstance(ops[0], UpdateNode)
+        assert ops[0].properties == {"location": ""}
+        assert isinstance(ops[1], RemoveEdge)
+        assert ops[1].source_id == "grimjaw"
+
+    def test_mixed_effects_batch(self, bridge, world_state):
+        from dnd_bot.llm.effects import EffectType
+        effects = [
+            self._make_effect(
+                effect_type=EffectType.ADD_NPC,
+                npc_name="Captain Elara",
+                npc_description="A stern guard captain",
+            ),
+            self._make_effect(
+                effect_type=EffectType.SPAWN_OBJECT,
+                object_name="Wanted Poster",
+                object_description="A poster on the wall",
+            ),
+            self._make_effect(
+                effect_type=EffectType.REF_ENTITY,
+                ref_entity_id="the hooded figure",
+                ref_alias_used="Marcus Grey",
+            ),
+        ]
+        ops, promotions = bridge.convert_effects(effects, world_state)
+
+        # 2 entity AddNodes + 2 location placeholders possible + 2 LOCATED_AT edges
+        add_nodes = [o for o in ops if isinstance(o, AddNode)]
+        add_edges = [o for o in ops if isinstance(o, AddEdge)]
+        assert len(add_nodes) >= 2  # at least the NPC and the item
+        assert len(add_edges) == 2  # LOCATED_AT for each
+        assert len(promotions) == 1
+        assert promotions[0].new_name == "Marcus Grey"
+
+
+# ======================================================================
+# _is_proper_name helper
+# ======================================================================
+
+class TestIsProperName:
+
+    def test_proper_name(self):
+        assert _is_proper_name("Silas Vane") is True
+
+    def test_titled_name(self):
+        assert _is_proper_name("Captain Elara") is True
+
+    def test_article_prefix(self):
+        assert _is_proper_name("the cloaked stranger") is False
+
+    def test_all_lowercase(self):
+        assert _is_proper_name("old merchant") is False
+
+    def test_single_capital(self):
+        assert _is_proper_name("Grimjaw") is True
+
+    def test_indefinite_article(self):
+        assert _is_proper_name("a mysterious figure") is False
+        assert _is_proper_name("an armored knight") is False

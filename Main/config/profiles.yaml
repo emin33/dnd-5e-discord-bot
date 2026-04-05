@@ -59,14 +59,17 @@ local_9b:
     condensed_size: 8
     compaction_threshold: 5
 
-# Local split: MoE narrates, dense 27B does brain
+# Local split: MoE narrates, dense 9B does brain
+# MoE ~20GB + 9B ~7GB = ~27GB, fits on 32GB GPU
 local_split:
   narrator:
     provider: ollama
     model: qwen3.5:35b-a3b
+    context_size: 32000
   brain:
     provider: ollama
-    model: qwen3.5:27b
+    model: qwen3.5:9b
+    context_size: 8000
     fallback_to_ollama: false
   memory:
     buffer_size: 24

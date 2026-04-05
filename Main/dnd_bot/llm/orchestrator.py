@@ -539,6 +539,7 @@ class DMOrchestrator:
         self._effect_validator: Optional[EffectValidator] = None
         self._effect_executor: Optional[EffectExecutor] = None
         self._applied_effects: set[str] = set()  # Idempotency tracking
+        self._last_executed_effects: list[ProposedEffect] = []  # For KG bridging
 
         # DM Scratchpad: session-scoped state for narrator continuity.
         # Inspired by coordinator scratchpad pattern from agentic orchestration.
@@ -1152,6 +1153,83 @@ class DMOrchestrator:
                 narrative, context, proposed_effects, message_id,
                 skip_entity_extraction=skip_extraction,
             )
+
+        # Step 4b: Bridge executed tool effects into KG + ChromaDB
+        # Tool effects (add_npc, spawn_object, ref_entity) already landed in
+        # WorldState via _sync_effect_to_world_state, but the KG and vector
+        # store only received data from the StateDelta path (Step 3.6b/c).
+        # This step closes the gap so every tool-created entity gets a KG node,
+        # LOCATED_AT edges, and a ChromaDB vector entry.
+        _effect_kg_ops = 0
+        if kg and world_state and self._last_executed_effects:
+            try:
+                from ..game.knowledge.bridge import DeltaBridge, NamePromotion
+                from ..game.knowledge.models import AddNode as _AddNode, UpdateNode as _UpdateNode
+                from ..memory import get_vector_store
+
+                bridge = DeltaBridge(context.campaign_id)
+                existing_ids = set(kg._entities.keys()) if kg._entities else set()
+                effect_ops, promotions = bridge.convert_effects(
+                    self._last_executed_effects, world_state,
+                    existing_node_ids=existing_ids,
+                )
+
+                # Apply graph operations
+                if effect_ops:
+                    rejections = await kg.apply_operations(effect_ops)
+                    _effect_kg_ops = len(effect_ops) - len(rejections)
+                    if rejections:
+                        logger.debug("effect_kg_rejections", rejections=rejections)
+
+                # Name promotions from ref_entity aliases
+                for promo in promotions:
+                    entity = kg.get_entity(promo.node_id)
+                    if entity and entity.properties.get("named") == "false":
+                        promoted = await kg.promote_entity_name(
+                            promo.node_id, promo.new_name,
+                        )
+                        if promoted:
+                            logger.info(
+                                "entity_name_promoted",
+                                node_id=promo.node_id,
+                                new_name=promo.new_name,
+                            )
+
+                # Sync new/updated entities to ChromaDB
+                if effect_ops:
+                    vs = get_vector_store()
+                    for op in effect_ops:
+                        if isinstance(op, _AddNode):
+                            entity = kg.get_entity(op.entity.node_id)
+                        elif isinstance(op, _UpdateNode):
+                            entity = kg.get_entity(op.node_id)
+                        else:
+                            continue
+                        if entity and entity.properties.get("description"):
+                            vs.add_entity_description(
+                                campaign_id=context.campaign_id,
+                                node_id=entity.node_id,
+                                entity_type=entity.entity_type.value,
+                                name=entity.name,
+                                description=entity.properties["description"],
+                                aliases=entity.aliases,
+                            )
+
+                # Also re-index promoted entities (name changed)
+                for promo in promotions:
+                    entity = kg.get_entity(promo.node_id)
+                    if entity and entity.properties.get("description"):
+                        vs = get_vector_store()
+                        vs.add_entity_description(
+                            campaign_id=context.campaign_id,
+                            node_id=entity.node_id,
+                            entity_type=entity.entity_type.value,
+                            name=entity.name,
+                            description=entity.properties["description"],
+                            aliases=entity.aliases,
+                        )
+            except Exception as e:
+                logger.warning("effect_kg_bridge_failed", error=str(e))
 
         # Step 5: Consume resources/currency AFTER outcome is determined.
         # This ensures we don't deduct ammunition on a cancelled action or
@@ -2742,6 +2820,8 @@ Write your narration directly."""
         This is the core of the "Narrator proposes, Rules validates" pattern.
         Returns True if any effect triggered combat.
         """
+        self._last_executed_effects = []
+
         if not effects:
             return False
 
@@ -2803,6 +2883,7 @@ Write your narration directly."""
 
                 # Sync effect to WorldState (so narrator sees it next turn)
                 self._sync_effect_to_world_state(effect)
+                self._last_executed_effects.append(effect)
 
                 # Check if this effect triggers combat
                 if effect.effect_type == EffectType.START_COMBAT:
