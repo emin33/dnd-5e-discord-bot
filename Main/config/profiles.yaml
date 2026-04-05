@@ -157,7 +157,7 @@ qwen36_local:
     condensed_size: 12
     compaction_threshold: 8
 
-# Haiku narrator + local 27B brain (strong brain, needs dedicated VRAM)
+# Haiku narrator + local 27B brain (strong brain, ~16GB for brain)
 haiku_27b:
   narrator:
     provider: anthropic
@@ -165,6 +165,7 @@ haiku_27b:
   brain:
     provider: ollama
     model: qwen3.5:27b
+    context_size: 16000
     fallback_to_ollama: false
   memory:
     buffer_size: 30
@@ -196,6 +197,7 @@ sonnet_local:
   brain:
     provider: ollama
     model: qwen3.5:27b
+    context_size: 16000
     fallback_to_ollama: false
   memory:
     buffer_size: 40
