@@ -55,7 +55,7 @@ NARRATOR_TOOLS = [
         "type": "function",
         "function": {
             "name": "add_npc",
-            "description": "Introduce a NEW NPC to the scene for the first time.",
+            "description": "Introduce a NEW NPC to the scene for the first time. Every NPC must have a proper name — invent one if needed.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -65,7 +65,7 @@ NARRATOR_TOOLS = [
                     },
                     "name": {
                         "type": "string",
-                        "description": "Display name",
+                        "description": "Proper name for the NPC (e.g. 'Grom', 'Elara Swiftblade', 'Captain Voss'). NEVER use generic roles like 'Merchant' or descriptions like 'Old Woman'.",
                     },
                     "disposition": {
                         "type": "string",
@@ -74,10 +74,10 @@ NARRATOR_TOOLS = [
                     },
                     "description": {
                         "type": "string",
-                        "description": "Brief physical/personality description",
+                        "description": "Physical appearance, role, and personality (e.g. 'A burly dwarven blacksmith with soot-covered arms and a missing left eye')",
                     },
                 },
-                "required": ["npc_id", "name", "disposition"],
+                "required": ["npc_id", "name", "disposition", "description"],
             },
         },
     },
