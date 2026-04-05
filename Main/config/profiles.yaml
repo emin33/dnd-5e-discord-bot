@@ -32,9 +32,11 @@ local_moe:
   narrator:
     provider: ollama
     model: qwen3.5:35b-a3b
+    context_size: 32000
   brain:
     provider: ollama
     model: qwen3.5:35b-a3b
+    context_size: 16000
     fallback_to_ollama: false
   memory:
     buffer_size: 24
