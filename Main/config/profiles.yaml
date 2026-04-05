@@ -73,22 +73,23 @@ local_split:
     compaction_threshold: 6
 
 # Local dense: 27B does everything
-# context_size caps Ollama's KV cache to control VRAM (~17GB at 12k)
+# context_size caps Ollama's KV cache to control VRAM
+# 27B Q4: 65k ctx = 20GB, 86k = 21GB, 131k = 24GB
 local_dense:
   narrator:
     provider: ollama
     model: qwen3.5:27b
-    context_size: 12000
+    context_size: 65000
   brain:
     provider: ollama
     model: qwen3.5:27b
-    context_size: 8000
+    context_size: 32000
     fallback_to_ollama: false
   memory:
-    buffer_size: 16
-    verbatim_size: 6
-    condensed_size: 6
-    compaction_threshold: 4
+    buffer_size: 24
+    verbatim_size: 8
+    condensed_size: 10
+    compaction_threshold: 6
 
 # Groq only: cloud 32b does everything
 groq_full:
