@@ -293,7 +293,7 @@ class NarratorBrain(Brain):
         response = await self.client.chat(
             messages=messages,
             temperature=self.temperature,
-            max_tokens=1000,
+            max_tokens=1500,
             think=False,
         )
 
@@ -335,7 +335,7 @@ class NarratorBrain(Brain):
         response = await self.client.chat_stream(
             messages=messages,
             temperature=self.temperature,
-            max_tokens=1000,
+            max_tokens=1500,
             think=False,
             on_token=on_token,
         )
@@ -395,7 +395,7 @@ class NarratorBrain(Brain):
         response = await self.client.chat(
             messages=messages,
             temperature=self.temperature,
-            max_tokens=1000,
+            max_tokens=1500,
             think=False,  # Disable thinking - causes truncation issues with Qwen3
         )
 
