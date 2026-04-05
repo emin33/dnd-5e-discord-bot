@@ -73,14 +73,16 @@ local_split:
     compaction_threshold: 6
 
 # Local dense: 27B does everything
-# Tight memory window to stay under 16k context (~17GB VRAM)
+# context_size caps Ollama's KV cache to control VRAM (~17GB at 12k)
 local_dense:
   narrator:
     provider: ollama
     model: qwen3.5:27b
+    context_size: 12000
   brain:
     provider: ollama
     model: qwen3.5:27b
+    context_size: 8000
     fallback_to_ollama: false
   memory:
     buffer_size: 16

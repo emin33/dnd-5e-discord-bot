@@ -92,11 +92,13 @@ class OllamaClient:
         model: Optional[str] = None,
         host: Optional[str] = None,
         max_workers: int = 4,
+        num_ctx: Optional[int] = None,
     ):
         settings = get_settings()
         self.model = model or "qwen3.5:35b-a3b"
         self.host = host or settings.ollama_host
         self.timeout = settings.llm_timeout
+        self.num_ctx = num_ctx  # Cap context window to control VRAM
         self._executor = ThreadPoolExecutor(max_workers=max_workers)
         self._client = ollama.Client(host=self.host)
 
@@ -156,6 +158,8 @@ class OllamaClient:
 
         def _sync_chat():
             options = {"temperature": temperature}
+            if self.num_ctx:
+                options["num_ctx"] = self.num_ctx
             if max_tokens:
                 options["num_predict"] = max_tokens
             if frequency_penalty is not None:
@@ -946,7 +950,7 @@ def _reset_clients():
     _narrator_client = None
 
 
-def _create_client(provider: str, model: str, fallback_to_ollama: bool = False):
+def _create_client(provider: str, model: str, fallback_to_ollama: bool = False, context_size: int = 0):
     """Create an LLM client for a given provider and model."""
     settings = get_settings()
 
@@ -959,7 +963,7 @@ def _create_client(provider: str, model: str, fallback_to_ollama: bool = False):
     elif provider == "openrouter":
         return OpenRouterClient(model=model)
     else:  # ollama
-        return OllamaClient(model=model)
+        return OllamaClient(model=model, num_ctx=context_size or None)
 
 
 def get_llm_client():
@@ -968,7 +972,7 @@ def get_llm_client():
     if _client is None:
         profile = get_profile()
         brain = profile.brain
-        _client = _create_client(brain.provider, brain.model, brain.fallback_to_ollama)
+        _client = _create_client(brain.provider, brain.model, brain.fallback_to_ollama, brain.context_size)
         logger.info(
             "brain_client_init",
             provider=brain.provider,
@@ -1000,7 +1004,7 @@ def get_narrator_client():
                 shared_with="brain",
             )
         else:
-            _narrator_client = _create_client(narrator.provider, narrator.model)
+            _narrator_client = _create_client(narrator.provider, narrator.model, context_size=narrator.context_size)
             logger.info(
                 "narrator_client_init",
                 provider=narrator.provider,

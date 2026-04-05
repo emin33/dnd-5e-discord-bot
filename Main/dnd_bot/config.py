@@ -19,6 +19,7 @@ class ProviderConfig:
     provider: str = "ollama"     # ollama | groq | anthropic
     model: str = ""
     fallback_to_ollama: bool = False
+    context_size: int = 0        # Ollama num_ctx cap (0 = model default)
 
 @dataclass
 class MemoryConfig:
@@ -63,11 +64,13 @@ def load_profile(profile_name: str) -> LLMProfile:
             provider=narrator_data.get("provider", "ollama"),
             model=narrator_data.get("model", ""),
             fallback_to_ollama=narrator_data.get("fallback_to_ollama", False),
+            context_size=narrator_data.get("context_size", 0),
         ),
         brain=ProviderConfig(
             provider=brain_data.get("provider", "ollama"),
             model=brain_data.get("model", ""),
             fallback_to_ollama=brain_data.get("fallback_to_ollama", False),
+            context_size=brain_data.get("context_size", 0),
         ),
         memory=MemoryConfig(
             buffer_size=memory_data.get("buffer_size", 20),
