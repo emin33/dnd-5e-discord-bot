@@ -994,9 +994,16 @@ def get_narrator_client():
         narrator = profile.narrator
 
         # If narrator and brain use same provider+model, share the client
+        # Use the larger context_size since num_ctx caps, doesn't pre-allocate
         if (narrator.provider == profile.brain.provider
                 and narrator.model == profile.brain.model):
             _narrator_client = get_llm_client()
+            # Ensure shared client uses the larger context window
+            if hasattr(_narrator_client, 'num_ctx') and narrator.context_size:
+                _narrator_client.num_ctx = max(
+                    _narrator_client.num_ctx or 0,
+                    narrator.context_size,
+                )
             logger.info(
                 "narrator_client_init",
                 provider=narrator.provider,
