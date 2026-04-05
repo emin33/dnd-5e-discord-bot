@@ -51,6 +51,13 @@ remove_entity <entity_id>
     Removes entity from scene.
     Example: remove_entity npc:merchant
 
+ref_entity <entity_id> ["<alias_used>"]
+    Declares which roster entity the narrator referenced in prose.
+    Use for every roster entity mentioned. Include alias if the prose
+    uses a different name than the roster.
+    Example: ref_entity tavern_keeper
+    Example: ref_entity hooded_figure "the cloaked stranger"
+
 set_flag <flag_name> <value>
     Sets a game flag.
     Example: set_flag quest_accepted true
@@ -343,6 +350,7 @@ def _parse_intent_line(line: str) -> Optional[ProposedEffect]:
         "request_roll": _parse_request_roll,
         "start_combat": _parse_start_combat,
         "remove_entity": _parse_remove_entity,
+        "ref_entity": _parse_ref_entity,
         "set_flag": _parse_set_flag,
     }
 
@@ -602,6 +610,21 @@ def _parse_remove_entity(args: list[str], line: str) -> Optional[ProposedEffect]
     return ProposedEffect(
         effect_type=EffectType.REMOVE_ENTITY,
         target=args[0],
+    )
+
+
+def _parse_ref_entity(args: list[str], line: str) -> Optional[ProposedEffect]:
+    """ref_entity <entity_id> ["<alias_used>"]"""
+    if len(args) < 1:
+        raise ValueError("ref_entity requires entity_id")
+
+    entity_id = args[0]
+    alias_used = args[1] if len(args) > 1 else None
+
+    return ProposedEffect(
+        effect_type=EffectType.REF_ENTITY,
+        ref_entity_id=entity_id,
+        ref_alias_used=alias_used,
     )
 
 

@@ -1,5 +1,6 @@
 """Scene Entity Registry - tracks who/what is in the current scene."""
 
+import re
 from datetime import datetime, timedelta
 from typing import Optional
 import structlog
@@ -12,6 +13,19 @@ from ...models.npc import (
     NPC,
 )
 from ...data.repositories.npc_repo import get_npc_repo
+
+
+def _slugify_id(name: str) -> str:
+    """Convert entity name to a stable short ID for narrator references.
+
+    Uses same convention as knowledge graph slugify: lowercase,
+    spaces → hyphens, strip non-alphanumeric.
+    """
+    s = name.lower().strip()
+    s = re.sub(r"[^a-z0-9\s-]", "", s)
+    s = re.sub(r"[\s]+", "-", s)
+    s = re.sub(r"-+", "-", s)
+    return s.strip("-")
 
 logger = structlog.get_logger()
 
@@ -341,25 +355,28 @@ class SceneEntityRegistry:
             return ""
 
         lines = [
-            "## NPC & Entity Roster (AUTHORITATIVE — use these exact names)",
-            "**IMPORTANT: Do NOT reuse any of these names for new characters.**",
+            "## NPC & Entity Roster (AUTHORITATIVE)",
+            "Use ref_entity <id> in INTENTS for every roster entity you mention in prose.",
         ]
 
         if npcs:
             for e in npcs:
+                slug = _slugify_id(e.name)
                 disp = e.disposition.value if e.disposition else "neutral"
                 desc = e.description[:120] if e.description else "No description"
-                lines.append(f"- **{e.name}** ({disp}): {desc}")
+                lines.append(f"- **{e.name}** [id: {slug}] ({disp}): {desc}")
 
         if creatures:
             for e in creatures:
+                slug = _slugify_id(e.name)
                 desc = e.description[:80] if e.description else ""
-                lines.append(f"- **{e.name}** (creature): {desc}")
+                lines.append(f"- **{e.name}** [id: {slug}] (creature): {desc}")
 
         if objects:
             for e in objects:
+                slug = _slugify_id(e.name)
                 desc = e.description[:80] if e.description else ""
-                lines.append(f"- {e.name}: {desc}")
+                lines.append(f"- {e.name} [id: {slug}]: {desc}")
 
         return "\n".join(lines)
 

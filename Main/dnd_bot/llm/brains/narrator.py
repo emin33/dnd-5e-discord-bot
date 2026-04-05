@@ -101,6 +101,14 @@ Types: save, check, skill
 Example: request_roll player save constitution dc=15 "Resist the poison"
 Example: request_roll player skill perception dc=12 "Notice the hidden door"
 
+**Reference an existing entity from the roster:**
+ref_entity <id> ["<alias_used>"]
+Use this for EVERY roster entity your prose mentions. The id comes from the
+[id: ...] tag in the roster. If you refer to them by a different name in
+prose, include the alias so the system can track the reference.
+Example: ref_entity tavern-keeper
+Example: ref_entity hooded-figure "the cloaked stranger"
+
 **Combat starts:**
 start_combat "<reason>"
 Example: start_combat "The bandits draw their weapons!"
@@ -178,6 +186,8 @@ Vary your prose across turns. Specifically:
 
 5. **ONLY REVEAL AUTHORIZED INFO** - On [RESOLUTION: SUCCESS/FAILURE], narrate only what's authorized.
 
+6. **Tag every roster entity you reference** - If your prose mentions an NPC, creature, or object from the roster, add a `ref_entity` intent with their ID. This is how the system tracks which entities are active. New entities use `add_npc`; existing ones use `ref_entity`.
+
 ## EXAMPLES
 
 **Player enters a room with treasure:**
@@ -189,12 +199,13 @@ INTENTS:
 spawn_object dagger_1 "Jeweled Dagger" "An ornate dagger with ruby-studded hilt on a pedestal"
 ```
 
-**NPC offers a reward:**
+**NPC offers a reward (roster NPC, ref_entity + grant):**
 ```
 PROSE:
-The grateful farmer's weathered hands shake as he reaches into his coat. 'You saved my daughter. Please—it's all I have.' He holds out a small pouch, coins clinking within.
+The farmer's weathered hands shake as he reaches into his coat. 'You saved my daughter. Please—it's all I have.' He holds out a small pouch, coins clinking within.
 
 INTENTS:
+ref_entity farmer "the farmer"
 grant_currency player 15gp confirm
 ```
 
@@ -207,13 +218,13 @@ INTENTS:
 transfer_item scene:dagger_1->player "Jeweled Dagger"
 ```
 
-**Pure atmosphere (no mechanics):**
+**Referencing roster NPC by a different name:**
 ```
 PROSE:
-The wind howls through the mountain pass, carrying with it the scent of pine and distant snow. Your cloak whips around you as you press forward, the path narrowing with each step.
+The cloaked stranger shifts in the corner, pulling her hood lower as you approach. 'I have information,' she whispers, 'but it will cost you.'
 
 INTENTS:
-NONE
+ref_entity hooded-figure "the cloaked stranger"
 ```
 
 **Trap triggers a save:**

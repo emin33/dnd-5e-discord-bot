@@ -79,6 +79,7 @@ class StateExtractor:
         narrative_text: str,
         world_state_yaml: str = "",
         current_scene: str = "",
+        referenced_entity_ids: list[str] | None = None,
     ) -> StateDelta:
         """Extract a StateDelta from narrator prose.
 
@@ -86,6 +87,9 @@ class StateExtractor:
             narrative_text: The narrator's output prose
             world_state_yaml: Current world state as YAML (for context)
             current_scene: Current scene description
+            referenced_entity_ids: Entity IDs the narrator explicitly tagged
+                via ref_entity intents. These entities are ALREADY KNOWN —
+                do not create new_npcs entries for them.
 
         Returns:
             Validated StateDelta. Empty delta on parse failure.
@@ -99,6 +103,13 @@ class StateExtractor:
             context_parts.append(f"Current World State:\n{world_state_yaml}")
         elif current_scene:
             context_parts.append(f"Current Scene: {current_scene}")
+
+        # Tell the extractor which entities are already accounted for
+        if referenced_entity_ids:
+            context_parts.append(
+                f"Already referenced entities (do NOT add as new_npcs): "
+                f"{', '.join(referenced_entity_ids)}"
+            )
 
         context = "\n\n".join(context_parts) if context_parts else "Session start"
 

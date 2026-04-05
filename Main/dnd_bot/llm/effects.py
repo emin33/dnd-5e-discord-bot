@@ -42,6 +42,9 @@ class EffectType(str, Enum):
     # DM-initiated mechanics
     REQUEST_ROLL = "request_roll"           # DM requests a roll from the player
 
+    # Entity tracking
+    REF_ENTITY = "ref_entity"              # Narrator referenced an existing roster entity
+
     # Meta effects - game state tracking
     SET_FLAG = "set_flag"                   # Quest progress, discovered facts
     LOG_MEMORY = "log_memory"               # Add fact to memory system
@@ -106,6 +109,10 @@ class ProposedEffect(BaseModel):
     skill: Optional[str] = None             # "perception", "stealth", etc.
     dc: Optional[int] = None                # Difficulty class
     roll_reason: Optional[str] = None       # "to notice the hidden trap", "to resist the poison"
+
+    # For ref_entity — narrator declares which roster entity it referenced
+    ref_entity_id: Optional[str] = None     # Slugified ID from roster (e.g. "tavern-keeper")
+    ref_alias_used: Optional[str] = None    # Alias used in prose if different from canonical name
 
     # Confirmation semantics
     requires_confirmation: bool = False     # If True, player must accept/decline
@@ -445,6 +452,7 @@ class EffectExecutor:
             EffectType.LOG_MEMORY: self._execute_log_memory,
             EffectType.CONSUME_RESOURCE: self._execute_consume_resource,
             EffectType.REQUEST_ROLL: self._execute_request_roll,
+            EffectType.REF_ENTITY: self._execute_ref_entity,
         }
 
         executor = executors.get(effect.effect_type)
@@ -713,6 +721,61 @@ class EffectExecutor:
                 "dc": effect.dc,
                 "reason": effect.roll_reason,
                 "triggers_roll": True,  # Signal to orchestrator
+            },
+        )
+
+    async def _execute_ref_entity(self, effect: ProposedEffect) -> EffectExecutionResult:
+        """Record that the narrator referenced an existing roster entity.
+
+        Lightweight — updates mention tracking on the SceneEntity.
+        If the narrator used an alias, records it for future name promotion.
+        """
+        entity_id = effect.ref_entity_id
+        if not entity_id:
+            return EffectExecutionResult(
+                effect=effect,
+                success=False,
+                error="ref_entity missing entity_id",
+            )
+
+        # Try to find entity in scene registry by slug ID
+        entity = None
+        if self.scene_registry:
+            entity = self.scene_registry.get_by_name(entity_id)
+
+        if entity:
+            # Update mention tracking
+            from datetime import datetime
+            entity.mention_count = getattr(entity, 'mention_count', 0) + 1
+            entity.last_mentioned_at = datetime.utcnow()
+
+            # Record alias if provided and different from canonical
+            alias = effect.ref_alias_used
+            if alias and alias.lower() != entity.name.lower():
+                if not hasattr(entity, 'aliases') or entity.aliases is None:
+                    entity.aliases = []
+                if alias not in entity.aliases:
+                    entity.aliases.append(alias)
+
+            logger.info(
+                "entity_referenced",
+                entity_id=entity_id,
+                entity_name=entity.name,
+                alias_used=alias,
+            )
+        else:
+            logger.debug(
+                "ref_entity_not_in_scene",
+                entity_id=entity_id,
+            )
+
+        return EffectExecutionResult(
+            effect=effect,
+            success=True,
+            details={
+                "entity_id": entity_id,
+                "alias_used": effect.ref_alias_used,
+                "found_in_scene": entity is not None,
             },
         )
 

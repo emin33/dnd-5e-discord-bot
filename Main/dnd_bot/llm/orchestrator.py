@@ -998,6 +998,18 @@ class DMOrchestrator:
         if narrative and self._scene_registry:
             narrative = self._validate_npc_references(narrative)
 
+        # Step 3.5b: Collect ref_entity IDs from narrator intents.
+        # These are entities the narrator explicitly tagged — used to
+        # prevent the state extractor from creating duplicates, and as
+        # additional KG seeds for narrative chunk tagging.
+        _narrator_ref_ids: list[str] = []
+        if proposed_effects:
+            from .effects import EffectType as _ET
+            _narrator_ref_ids = [
+                e.ref_entity_id for e in proposed_effects
+                if e.effect_type == _ET.REF_ENTITY and e.ref_entity_id
+            ]
+
         # Step 3.6: World state extraction — extract StateDelta and apply
         # Uses cheap brain model to identify what changed in the world
         delta = None
@@ -1006,7 +1018,10 @@ class DMOrchestrator:
         pre_delta_location = world_state.current_location if world_state else ""
         if narrative and world_state:
             _turn_record.start_stage("state_extract")
-            delta = await self._extract_and_apply_state_delta(narrative, world_state, context)
+            delta = await self._extract_and_apply_state_delta(
+                narrative, world_state, context,
+                referenced_entity_ids=_narrator_ref_ids,
+            )
             _turn_record.end_stage("state_extract")
 
             # Record state delta to turn log (including parse warnings)
@@ -1073,9 +1088,9 @@ class DMOrchestrator:
                 from ..memory import get_vector_store
                 matcher = EntityNameMatcher(kg)
 
-                # Tag with entities mentioned in the narrative + scene seeds
+                # Tag with entities mentioned in the narrative + scene seeds + narrator refs
                 narrator_entity_ids = matcher.match(narrative)
-                all_tags = list(set(narrator_entity_ids + _kg_seed_ids))
+                all_tags = list(set(narrator_entity_ids + _kg_seed_ids + _narrator_ref_ids))
 
                 if all_tags:
                     vs = get_vector_store()
@@ -2470,12 +2485,19 @@ Narrate this action dramatically. Remember:
         narrative: str,
         world_state: "WorldState",
         context: BrainContext,
+        referenced_entity_ids: list[str] | None = None,
     ) -> Optional["StateDelta"]:
         """Extract a StateDelta from narrator prose and apply to WorldState.
 
         Also syncs NPC changes back to SceneEntityRegistry so the existing
         entity system stays in sync. Returns the delta for downstream use
         (e.g., knowledge graph bridge).
+
+        Args:
+            referenced_entity_ids: Entity IDs the narrator explicitly tagged
+                via ref_entity intents. Passed to the extractor so it knows
+                which entities are already accounted for and avoids creating
+                duplicates.
         """
         from ..game.world_state import WorldState, NPCState
 
@@ -2484,6 +2506,7 @@ Narrate this action dramatically. Remember:
                 narrative_text=narrative,
                 world_state_yaml=context.world_state_yaml,
                 current_scene=context.current_scene,
+                referenced_entity_ids=referenced_entity_ids,
             )
 
             # Apply delta (validates internally, returns rejections)
