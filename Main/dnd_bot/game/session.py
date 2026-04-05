@@ -148,10 +148,19 @@ class GameSessionManager:
     """
 
     def __init__(self):
-        self.orchestrator = get_orchestrator()
         self._sessions: dict[int, GameSession] = {}  # channel_id -> session
         self._memory_managers: dict[str, MemoryManager] = {}  # campaign_id -> memory
         self._processing_lock = asyncio.Lock()
+
+    @property
+    def orchestrator(self):
+        """Always read the current orchestrator singleton.
+
+        Using a property instead of caching at __init__ ensures
+        /profile switches take effect immediately — the old
+        orchestrator (with stale clients) gets dropped.
+        """
+        return get_orchestrator()
 
     def get_session(self, channel_id: int) -> Optional[GameSession]:
         """Get the active session for a channel."""
