@@ -7,6 +7,12 @@ text formatting, especially on smaller local models.
 The tool schemas map 1:1 to existing ProposedEffect types so the
 entire downstream pipeline (validation, execution, world state sync)
 is unchanged.
+
+Two tool sets are exported:
+- NARRATOR_TOOLS: Full set (9 tools) for capable models (Haiku, Sonnet)
+- NARRATOR_TOOLS_CORE: Critical subset (3 tools) for local models
+  that lose track of tools in long conversations. The state extractor
+  and triage system handle the remaining effect types.
 """
 
 from .effects import EffectType, ProposedEffect
@@ -264,6 +270,15 @@ NARRATOR_TOOLS = [
             },
         },
     },
+]
+
+
+# Core subset for local models (Ollama/Qwen) — fewer tools means the
+# model pays more attention to each one in long conversations.
+# The state extractor and triage system handle the remaining types.
+NARRATOR_TOOLS_CORE = [
+    t for t in NARRATOR_TOOLS
+    if t["function"]["name"] in ("ref_entity", "add_npc", "spawn_object")
 ]
 
 

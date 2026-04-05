@@ -19,7 +19,7 @@ from .brains.narrator import NarratorBrain, MechanicalOutcome, get_narrator
 from .brains.adjudicator import EffectsAdjudicator, get_adjudicator
 from .brains.rules import RulesBrain, get_rules_brain
 from .intents import validate_narrator_format, strip_planning_text_fallback
-from .narrator_tools import NARRATOR_TOOLS, tool_calls_to_effects
+from .narrator_tools import NARRATOR_TOOLS, NARRATOR_TOOLS_CORE, tool_calls_to_effects
 from .extractors.entity_extractor import get_entity_extractor, EntityExtractor
 from .extractors.state_extractor import get_state_extractor, StateExtractor
 from .validators.nli_validator import get_nli_validator, NLIValidator
@@ -1861,6 +1861,17 @@ class DMOrchestrator:
                 have=currency.gold,
             )
 
+    def _get_narrator_tools(self) -> list[dict]:
+        """Select tool set based on narrator provider capability.
+
+        Local models (Ollama) get a reduced 3-tool set — fewer tools
+        means better attention in long conversations. Cloud models
+        (Anthropic, Groq, OpenRouter) get the full 9-tool set.
+        """
+        if isinstance(self.narrator.client, OllamaClient):
+            return NARRATOR_TOOLS_CORE
+        return NARRATOR_TOOLS
+
     def _extract_prose_and_effects(
         self,
         response,
@@ -1947,7 +1958,9 @@ Narrate this action dramatically. Remember:
 - Connect to ongoing tension or stakes from the current scene
 - End with something that maintains momentum
 
-Write your narration directly — use the available tools for any mechanical effects."""
+Write your narration directly.
+
+IMPORTANT: You MUST call the appropriate tool for every NPC, object, or entity you mention. Call ref_entity for existing roster entities. Call add_npc for new NPCs. This is not optional."""
 
         if context.world_state_yaml:
             enhanced_context.world_state_yaml = context.world_state_yaml
@@ -1964,7 +1977,7 @@ Write your narration directly — use the available tools for any mechanical eff
                 think=False,
                 frequency_penalty=NARRATOR_FREQUENCY_PENALTY,
                 presence_penalty=NARRATOR_PRESENCE_PENALTY,
-                tools=NARRATOR_TOOLS,
+                tools=self._get_narrator_tools(),
                 tool_choice="auto",
             )
 
@@ -2139,8 +2152,10 @@ Write your narration directly — use the available tools for any mechanical eff
                 "- Show the consequence immediately, don't echo the player's action\n"
                 "- The world reacts — NPCs respond, environment shifts\n"
                 "- End with a bang — something that demands a response\n\n"
-                "Write your narration directly. Use the available tools for any mechanical effects "
-                "(new NPCs, objects, damage, rolls, entity references)."
+                "Write your narration directly.\n\n"
+                "IMPORTANT: You MUST call the appropriate tool for every NPC, object, or "
+                "entity you mention. Call ref_entity for existing roster entities. "
+                "Call add_npc for new NPCs. This is not optional."
             ),
         })
 
@@ -2164,7 +2179,7 @@ Write your narration directly — use the available tools for any mechanical eff
                 think=False,
                 frequency_penalty=NARRATOR_FREQUENCY_PENALTY,
                 presence_penalty=NARRATOR_PRESENCE_PENALTY,
-                tools=NARRATOR_TOOLS,
+                tools=self._get_narrator_tools(),
                 tool_choice="auto",
             )
 
@@ -2251,7 +2266,10 @@ Write your narration directly — use the available tools for any mechanical eff
                 "- Show the world's REACTION to the success or failure\n"
                 "- Connect to ongoing tension or stakes\n"
                 "- End with forward momentum\n\n"
-                "Write your narration directly. Use the available tools for any mechanical effects."
+                "Write your narration directly.\n\n"
+                "IMPORTANT: You MUST call the appropriate tool for every NPC, object, or "
+                "entity you mention. Call ref_entity for existing roster entities. "
+                "Call add_npc for new NPCs. This is not optional."
             ),
         })
 
@@ -2262,7 +2280,7 @@ Write your narration directly — use the available tools for any mechanical eff
             think=False,
             frequency_penalty=NARRATOR_FREQUENCY_PENALTY,
             presence_penalty=NARRATOR_PRESENCE_PENALTY,
-            tools=NARRATOR_TOOLS,
+            tools=self._get_narrator_tools(),
             tool_choice="auto",
         )
 
