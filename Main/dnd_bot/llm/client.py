@@ -500,12 +500,12 @@ class GroqClient:
             kwargs["response_format"] = {"type": "json_object"}
 
         # Thinking/reasoning mode for Qwen3 on Groq
-        # IMPORTANT: Don't use reasoning_format with JSON mode.
+        # IMPORTANT: Don't use reasoning_format with JSON or tool modes.
         # "hidden" still consumes output tokens for internal reasoning,
-        # leaving too few for the actual JSON — causing empty output
-        # and json_validate_failed errors.
-        if json_schema or json_mode:
-            pass  # Skip reasoning_format — let model output JSON directly
+        # leaving too few for actual content — causing empty output,
+        # json_validate_failed errors, and dropped tool calls.
+        if json_schema or json_mode or tools:
+            pass  # Skip reasoning_format — let model output directly
         elif think is False:
             kwargs["reasoning_format"] = "hidden"
         elif think is True:
