@@ -73,6 +73,7 @@ local_split:
     compaction_threshold: 6
 
 # Local dense: 27B does everything
+# Tight memory window to stay under 16k context (~17GB VRAM)
 local_dense:
   narrator:
     provider: ollama
@@ -82,10 +83,10 @@ local_dense:
     model: qwen3.5:27b
     fallback_to_ollama: false
   memory:
-    buffer_size: 24
-    verbatim_size: 8
-    condensed_size: 10
-    compaction_threshold: 6
+    buffer_size: 16
+    verbatim_size: 6
+    condensed_size: 6
+    compaction_threshold: 4
 
 # Groq only: cloud 32b does everything
 groq_full:
