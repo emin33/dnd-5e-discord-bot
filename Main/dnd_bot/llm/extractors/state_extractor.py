@@ -201,6 +201,18 @@ class StateExtractor:
             warnings.append(f"json_parse_failed: {e}")
             return StateDelta(), warnings
 
+        # Coerce bare strings to single-element lists for list fields.
+        # Small models often output "new_connections": "the tavern"
+        # instead of "new_connections": ["the tavern"].
+        _list_fields = (
+            "new_connections", "new_events", "new_facts",
+            "removed_npcs", "on_success", "on_failure",
+        )
+        for field in _list_fields:
+            if field in data and isinstance(data[field], str):
+                data[field] = [data[field]]
+                warnings.append(f"coerced_string_to_list:{field}")
+
         try:
             return StateDelta(**data), warnings
         except ValidationError as e:

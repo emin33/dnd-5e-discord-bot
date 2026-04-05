@@ -1499,6 +1499,14 @@ class DMOrchestrator:
                 "_parse_failed": True,
             }, warnings
 
+        # Coerce bare strings to single-element lists for list fields.
+        # Small models often output "on_success": "description" instead
+        # of "on_success": ["description"].
+        for field in ("on_success", "on_failure", "resources_consumed"):
+            if field in data and isinstance(data[field], str):
+                data[field] = [data[field]]
+                warnings.append(f"coerced_string_to_list:{field}")
+
         # Validate against schema — log any coercion issues but don't reject
         try:
             validated = TriageSchema(**data)
