@@ -2350,17 +2350,39 @@ Write your narration directly."""
 
         phase_line = f"**Phase tone:** {phase_hint}\n\n" if phase_hint else "\n"
 
+        # Intent-based dynamic instruction — different guidance per action type
+        action_type = triage.action_type
+        if action_type == "social":
+            intent_guidance = (
+                "This is a SOCIAL interaction. NPCs should RESPOND with dialogue, "
+                "personality, and their own agenda. They don't just listen — they "
+                "react, counter, question, or reveal something."
+            )
+        elif action_type == "exploration":
+            intent_guidance = (
+                "This is EXPLORATION. Show what the player discovers. Reveal new "
+                "details, paths, or clues. Advance their understanding of the area. "
+                "Don't redescribe what's already established."
+            )
+        elif action_type == "movement":
+            intent_guidance = (
+                "The player is MOVING. Don't stop at the threshold — narrate them "
+                "arriving and what they find in the new location. Describe the "
+                "destination, not the journey."
+            )
+        else:
+            intent_guidance = (
+                "Show the consequence of the action and how the world responds."
+            )
+
         messages.append({
             "role": "system",
             "content": (
                 "###INSTRUCTION###\n"
                 "Narrate the player's action according to the NARRATIVE DIRECTION above.\n\n"
-                f"**Style for this scene:** {style_hint}\n"
+                f"{intent_guidance}\n\n"
+                f"**Style:** {style_hint}\n"
                 f"{phase_line}"
-                "Remember your storytelling principles:\n"
-                "- Show the consequence immediately, don't echo the player's action\n"
-                "- The world reacts — NPCs respond, environment shifts\n"
-                "- End with a bang — something that demands a response\n\n"
                 "Write your narration directly."
             ),
         })
@@ -2461,22 +2483,38 @@ Write your narration directly."""
             messages = self.narrator._build_bookend_messages(enhanced_context)
         else:
             messages = self.narrator._build_messages(enhanced_context)
+        # Build explicit success/failure instruction (inspired by old bot's
+        # "CRITICAL DM RULE" pattern — extremely explicit about outcomes)
+        is_success = resolution.success if resolution else True
+        skill_label = resolution.skill or resolution.ability or "check" if resolution else "action"
+
+        if resolution and not is_success:
+            outcome_instruction = (
+                f"CRITICAL: This {skill_label} roll FAILED (rolled {resolution.total} vs DC {resolution.dc}).\n\n"
+                f"{player_name} DOES NOT achieve their goal. Period.\n"
+                "You MUST narrate a failure with real consequences:\n"
+                "- They find NOTHING useful, miss the clue, botch the attempt\n"
+                "- NPCs react negatively — suspicion, hostility, refusal\n"
+                "- Physical consequences — they slip, break something, alert enemies\n"
+                "Do NOT describe a soft success or 'almost' result disguised as progress.\n"
+                "Show what goes WRONG, then show how the world responds."
+            )
+        elif resolution and is_success:
+            outcome_instruction = (
+                f"This {skill_label} roll SUCCEEDED (rolled {resolution.total} vs DC {resolution.dc}).\n\n"
+                f"{player_name} achieves their goal. Narrate the positive outcome.\n"
+                "Describe what they discover or accomplish — then show how it advances the story."
+            )
+        else:
+            outcome_instruction = "The action proceeds naturally."
+
         messages.append({
             "role": "system",
             "content": (
                 "###INSTRUCTION###\n"
                 f"RESOLUTION: {narrator_context}\n\n"
-                "Narrate this outcome. The RESOLUTION above is BINDING — your narration MUST reflect it:\n"
-                "- SUCCESS: The character accomplishes what they attempted. Describe what they discover/achieve.\n"
-                "- FAILURE: The character FAILS. They miss the clue, botch the climb, fail to persuade. "
-                "Show them struggling, missing, or being wrong. Do NOT describe a soft success.\n"
-                "- The MARGIN tells degree: critical success = exceptional result; narrow failure = almost but not quite; "
-                "critical failure = embarrassing or dangerous consequences.\n\n"
-                "Do NOT invent discoveries beyond what is authorized.\n\n"
-                "Storytelling principles:\n"
-                "- Show the world's REACTION to the success or failure\n"
-                "- Connect to ongoing tension or stakes\n"
-                "- End with forward momentum\n\n"
+                f"{outcome_instruction}\n\n"
+                "AUTHORIZED REVEALS limit what you can describe. Do NOT invent discoveries beyond what is listed.\n\n"
                 "Write your narration directly."
             ),
         })
