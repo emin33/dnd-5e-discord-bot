@@ -1006,10 +1006,13 @@ class DMOrchestrator:
         _narrator_ref_ids: list[str] = []
         if proposed_effects:
             from .effects import EffectType as _ET
-            _narrator_ref_ids = [
-                e.ref_entity_id for e in proposed_effects
-                if e.effect_type == _ET.REF_ENTITY and e.ref_entity_id
-            ]
+            for e in proposed_effects:
+                if e.effect_type == _ET.REF_ENTITY and e.ref_entity_id:
+                    _narrator_ref_ids.append(e.ref_entity_id)
+                elif e.effect_type == _ET.ADD_NPC and e.npc_name:
+                    # Also tell extractor about narrator-declared new NPCs
+                    # so it doesn't create duplicates via new_npcs
+                    _narrator_ref_ids.append(e.npc_name)
 
         # Step 3.6: World state extraction — extract StateDelta and apply
         # Uses cheap brain model to identify what changed in the world
@@ -1862,15 +1865,19 @@ class DMOrchestrator:
             )
 
     def _get_narrator_tools(self) -> list[dict]:
-        """Select tool set based on narrator provider capability.
+        """Select narrator tool set.
 
-        Local models (Ollama) get a reduced 3-tool set — fewer tools
-        means better attention in long conversations. Cloud models
-        (Anthropic, Groq, OpenRouter) get the full 9-tool set.
+        The narrator's unique knowledge is WHO it wrote about and WHAT
+        it introduced. Mechanical effects (rolls, damage, transfers,
+        currency, combat) are handled by triage and the rules brain —
+        having the narrator also declare those creates redundancy.
+
+        Core tools (all providers):
+        - ref_entity: only the narrator knows which entity it referenced
+        - add_npc: only the narrator knows it introduced someone new
+        - spawn_object: only the narrator knows it placed an object
         """
-        if isinstance(self.narrator.client, OllamaClient):
-            return NARRATOR_TOOLS_CORE
-        return NARRATOR_TOOLS
+        return NARRATOR_TOOLS_CORE
 
     def _append_tool_reminder(self, messages: list[dict]) -> None:
         """Append a dedicated tool-use reminder as the final message.
@@ -1891,6 +1898,54 @@ class DMOrchestrator:
                 "in tool calls only, not in the narration the player sees."
             ),
         })
+
+    async def _narrator_tool_followup(
+        self,
+        prose: str,
+        messages: list[dict],
+    ) -> list[ProposedEffect]:
+        """Second pass for local models: force tool calls after narration.
+
+        Qwen MoE writes good prose but inconsistently calls tools in the
+        same turn. This sends the prose back with tool_choice=required
+        so the model MUST declare which entities it referenced.
+
+        Only runs for OllamaClient when the first pass produced no tools.
+        """
+        followup_messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You just wrote the following narration. Now declare which "
+                    "entities from the roster you referenced, and any new NPCs "
+                    "or objects you introduced. Call the appropriate tools.\n\n"
+                    f"Your narration:\n{prose[:2000]}"
+                ),
+            },
+            {"role": "user", "content": "Call ref_entity, add_npc, or spawn_object for every entity in the narration above."},
+        ]
+
+        try:
+            response = await self.narrator.client.chat(
+                messages=followup_messages,
+                temperature=0,
+                max_tokens=500,
+                think=False,
+                tools=NARRATOR_TOOLS_CORE,
+            )
+
+            if response.tool_calls:
+                effects = tool_calls_to_effects(response.tool_calls)
+                logger.info(
+                    "narrator_tool_followup",
+                    tool_count=len(response.tool_calls),
+                    effects_count=len(effects),
+                )
+                return effects
+        except Exception as e:
+            logger.warning("narrator_tool_followup_failed", error=str(e))
+
+        return []
 
     def _extract_prose_and_effects(
         self,
@@ -2010,6 +2065,11 @@ Write your narration directly."""
 
             if not prose:
                 prose = narrative_hint
+
+            # Two-turn followup for local models
+            if not proposed_effects and isinstance(self.narrator.client, OllamaClient):
+                followup_effects = await self._narrator_tool_followup(prose, messages)
+                proposed_effects = followup_effects
 
             return prose, proposed_effects
 
@@ -2214,6 +2274,11 @@ Write your narration directly."""
             logger.warning("narrator_returned_empty_for_action", action=action[:50])
             return f"*{player_name}'s action unfolds...*", []
 
+        # Two-turn followup: if local model didn't call tools, ask again
+        if not proposed_effects and isinstance(self.narrator.client, OllamaClient):
+            followup_effects = await self._narrator_tool_followup(prose, messages)
+            proposed_effects = followup_effects
+
         # If prose seems truncated (ends mid-sentence), add ellipsis
         if prose and prose[-1] not in '.!?"\'':
             prose += "..."
@@ -2312,6 +2377,11 @@ Write your narration directly."""
         if not prose:
             logger.warning("narrator_returned_empty", action=action[:50])
             return f"*{player_name} attempts to {action.lower()}...*", []
+
+        # Two-turn followup for local models
+        if not proposed_effects and isinstance(self.narrator.client, OllamaClient):
+            followup_effects = await self._narrator_tool_followup(prose, messages)
+            proposed_effects = followup_effects
 
         # Fix truncated endings
         if prose and prose[-1] not in '.!?"\'':
