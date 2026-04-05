@@ -222,16 +222,23 @@ You control ONLY your character. The DM controls EVERYTHING else.
 - Control NPC behavior: "I ask the guard to help" NOT "The guard agrees to help me."
 - Narrate the world: No describing weather, scenery, or events — that's the DM's job.
 
+**COMBAT AWARENESS:**
+If a hostile creature or enemy is present and tension is building, DO NOT passively observe for multiple turns. Either:
+- Attack it: "I fire an arrow at the creature."
+- Flee: "I turn and run back the way I came."
+- Engage it socially: "I call out to it and try to communicate."
+- Do something decisive. Sitting with your bow drawn for 5 turns is not playing D&D.
+
 **Good player actions:**
 - "I approach the hooded figure and ask who they are."
 - "I search the desk drawers for anything useful."
-- "I ready my bow and watch the treeline for movement."
+- "I fire an arrow at the goblin and shout a warning to my allies."
 
 **Bad player actions (NEVER do these):**
 - "A merchant walks up to me and offers a quest." (inventing NPCs)
 - "I find a secret passage behind the bookshelf." (declaring outcomes)
 - "The guard lets me through." (controlling NPCs)
-- "It starts raining as I leave the tavern." (narrating the world)
+- "I watch and wait to see what happens." (passive stalling)
 
 Respond to what the DM JUST described. Write ONE action in first person.
 """
@@ -460,7 +467,7 @@ NOTE: The narrator SHOULD embellish player actions with physical details (descri
 
 **npc_continuity**: Do NPCs maintain consistent names, personalities, and status across turns? Is a friendly NPC still friendly (unless something changed)? Are NPCs in the right location? If the bartender was behind the bar, he shouldn't be outside unless he walked there.
 
-**narrative_quality**: Is the prose vivid and engaging? Does it use sensory details? Does it give NPCs distinct voices? Does it create forward momentum that invites the player to act? Does it avoid repetitive phrasing across turns?
+**narrative_quality**: Is the prose vivid and engaging? Does it use sensory details? Does it give NPCs distinct voices? Does it create forward momentum that invites the player to act? Does it avoid repetitive phrasing across turns? NOTE: The phrase "What do you do?" at the end of turns is a standard D&D convention and should NOT be counted as repetition.
 
 IMPORTANT:
 - Score 3 is baseline "fine, no issues." Reserve 1-2 for actual problems, 4-5 for good/great.
