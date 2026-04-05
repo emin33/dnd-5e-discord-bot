@@ -1185,6 +1185,18 @@ class DMOrchestrator:
                 for e in proposed_effects
             ])
 
+        # Token usage stats
+        narr_prompt = getattr(self, '_last_narrator_prompt_tokens', 0)
+        narr_completion = getattr(self, '_last_narrator_completion_tokens', 0)
+        if narr_prompt or narr_completion:
+            narr_time_s = _turn_record.data.get("timings", {}).get("narrate", 0) / 1000
+            tps = narr_completion / narr_time_s if narr_time_s > 0 else 0
+            _turn_record.set("tokens", {
+                "narrator_prompt": narr_prompt,
+                "narrator_completion": narr_completion,
+                "narrator_tps": round(tps, 1),
+            })
+
         self._turn_logger.flush(_turn_record)
 
         return DMResponse(
@@ -1959,6 +1971,10 @@ class DMOrchestrator:
         the content is pure prose. Otherwise, falls back to text-based
         PROSE/INTENTS parsing via the adjudicator.
         """
+        # Capture token stats for turn logging
+        self._last_narrator_prompt_tokens = getattr(response, 'prompt_tokens', 0)
+        self._last_narrator_completion_tokens = getattr(response, 'completion_tokens', 0)
+
         raw_content = response.content.strip() if response.content else ""
 
         # Strip leaked [id: ...] tags from prose — the model sometimes
