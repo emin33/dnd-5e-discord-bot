@@ -118,15 +118,29 @@ qwen36_local:
     condensed_size: 12
     compaction_threshold: 8
 
-# Haiku narrator + local 27B brain (fast + cheap cloud narrator)
-# Haiku handles 200K context
-haiku_local:
+# Haiku narrator + local 27B brain (strong brain, needs dedicated VRAM)
+haiku_27b:
   narrator:
     provider: anthropic
     model: claude-haiku-4-5-20251001
   brain:
     provider: ollama
     model: qwen3.5:27b
+    fallback_to_ollama: false
+  memory:
+    buffer_size: 30
+    verbatim_size: 10
+    condensed_size: 12
+    compaction_threshold: 8
+
+# Haiku narrator + local 9B brain (fast, fits alongside other GPU workloads)
+haiku_local:
+  narrator:
+    provider: anthropic
+    model: claude-haiku-4-5-20251001
+  brain:
+    provider: ollama
+    model: qwen3.5:9b
     fallback_to_ollama: false
   memory:
     buffer_size: 30
