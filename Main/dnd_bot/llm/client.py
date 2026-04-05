@@ -180,8 +180,11 @@ class OllamaClient:
             elif json_mode:
                 kwargs["format"] = "json"
 
-            # Disable Qwen3 thinking mode if specified
-            if think is not None:
+            # Qwen3.5 thinks by default and doesn't support the same
+            # think toggle as Qwen3. Forcing think=False degrades
+            # structured output quality. Only pass think=True when
+            # explicit reasoning is wanted.
+            if think is True:
                 kwargs["think"] = think
 
             return self._client.chat(**kwargs)
