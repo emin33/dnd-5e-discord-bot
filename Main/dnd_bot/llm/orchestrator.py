@@ -19,6 +19,7 @@ from .brains.narrator import NarratorBrain, MechanicalOutcome, get_narrator
 from .brains.adjudicator import EffectsAdjudicator, get_adjudicator
 from .brains.rules import RulesBrain, get_rules_brain
 from .intents import validate_narrator_format, strip_planning_text_fallback
+from .narrator_tools import NARRATOR_TOOLS, tool_calls_to_effects
 from .extractors.entity_extractor import get_entity_extractor, EntityExtractor
 from .extractors.state_extractor import get_state_extractor, StateExtractor
 from .validators.nli_validator import get_nli_validator, NLIValidator
@@ -1860,6 +1861,38 @@ class DMOrchestrator:
                 have=currency.gold,
             )
 
+    def _extract_prose_and_effects(
+        self,
+        response,
+        action: str = "",
+    ) -> tuple[str, list[ProposedEffect]]:
+        """Extract prose and effects from a narrator response.
+
+        If the response has tool_calls, those become ProposedEffects and
+        the content is pure prose. Otherwise, falls back to text-based
+        PROSE/INTENTS parsing via the adjudicator.
+        """
+        raw_content = response.content.strip() if response.content else ""
+
+        # Tool-based path: content is pure prose, tool_calls are effects
+        if response.tool_calls:
+            effects = tool_calls_to_effects(response.tool_calls)
+            logger.debug(
+                "narrator_tools_used",
+                tool_count=len(response.tool_calls),
+                effects_count=len(effects),
+                action=action[:60],
+            )
+            return raw_content, effects
+
+        # Text fallback: parse PROSE/INTENTS blocks
+        if raw_content and validate_narrator_format(raw_content):
+            prose, effects, parse_result = self.adjudicator.parse_narrator_response(raw_content)
+            return prose, effects
+
+        # No format detected — treat entire content as prose, no effects
+        return raw_content, []
+
     async def _narrate_mechanical_result(
         self,
         action: str,
@@ -1903,10 +1936,8 @@ class DMOrchestrator:
             resolution_text = f"[RESULT: FAILURE] {narrative_hint}"
 
         # =====================================================================
-        # Narrator: Output PROSE + INTENTS
-        # Use bookend layout when world state is available
+        # Narrator: Output prose (tools handle intents)
         # =====================================================================
-        fmt = NARRATOR_FORMAT_XML if _is_anthropic_client(self.narrator.client) else NARRATOR_FORMAT_TEXT
         prompt = f"""The player {player_name} attempted: "{action}"
 
 {resolution_text}
@@ -1916,7 +1947,7 @@ Narrate this action dramatically. Remember:
 - Connect to ongoing tension or stakes from the current scene
 - End with something that maintains momentum
 
-{fmt}"""
+Write your narration directly — use the available tools for any mechanical effects."""
 
         if context.world_state_yaml:
             enhanced_context.world_state_yaml = context.world_state_yaml
@@ -1929,73 +1960,18 @@ Narrate this action dramatically. Remember:
             response = await self.narrator.client.chat(
                 messages=messages,
                 temperature=self.narrator.temperature,
-                max_tokens=8000,  # High limit for thinking models - thinking consumes tokens
+                max_tokens=1500,
                 think=False,
                 frequency_penalty=NARRATOR_FREQUENCY_PENALTY,
                 presence_penalty=NARRATOR_PRESENCE_PENALTY,
-            )
-            raw_response = response.content.strip() if response.content else ""
-
-            # Validate format
-            if raw_response and not validate_narrator_format(raw_response):
-                logger.warning(
-                    "narrator_mechanical_format_invalid_reprompting",
-                    action=action[:50],
-                    content_preview=raw_response[:100],
-                )
-
-                # Reprompt once
-                messages.append({
-                    "role": "system",
-                    "content": (
-                        "Your response was malformed. Start with <prose> immediately."
-                        if _is_anthropic_client(self.narrator.client)
-                        else "Your response was malformed. Start with PROSE: on the first line. Respond now:"
-                    ),
-                })
-                response = await self.narrator.client.chat(
-                    messages=messages,
-                    temperature=self.narrator.temperature,
-                    max_tokens=8000,  # High limit for thinking models
-                    think=False,
-                )
-                raw_response = response.content.strip() if response.content else ""
-
-            if not raw_response:
-                return narrative_hint, []
-
-            # Last resort: strip if still invalid
-            if not validate_narrator_format(raw_response):
-                cleaned, did_strip = strip_planning_text_fallback(raw_response)
-                if did_strip:
-                    logger.warning(
-                        "narrator_planning_text_stripped",
-                        action=action[:50],
-                        original_preview=raw_response[:100],
-                    )
-                    raw_response = cleaned
-
-            # =====================================================================
-            # Adjudicator: Parse INTENTS (deterministic, no LLM)
-            # =====================================================================
-            prose, proposed_effects, parse_result = self.adjudicator.parse_narrator_response(
-                raw_response
+                tools=NARRATOR_TOOLS,
+                tool_choice="auto",
             )
 
-            # If no prose extracted, use hint
+            prose, proposed_effects = self._extract_prose_and_effects(response, action)
+
             if not prose:
                 prose = narrative_hint
-
-            logger.debug(
-                "prose_intents_mechanical_parsed",
-                prose_length=len(prose),
-                effects_count=len(proposed_effects),
-            )
-
-            # Optionally append INTENTS for debugging
-            settings = get_settings()
-            if settings.debug_show_intents and parse_result.raw_intents:
-                prose += f"\n\n```\nINTENTS:\n{parse_result.raw_intents}\n```"
 
             return prose, proposed_effects
 
@@ -2152,8 +2128,6 @@ Narrate this action dramatically. Remember:
 
         phase_line = f"**Phase tone:** {phase_hint}\n\n" if phase_hint else "\n"
 
-        fmt = NARRATOR_FORMAT_XML if _is_anthropic_client(self.narrator.client) else NARRATOR_FORMAT_TEXT
-
         messages.append({
             "role": "system",
             "content": (
@@ -2162,20 +2136,21 @@ Narrate this action dramatically. Remember:
                 f"**Style for this scene:** {style_hint}\n"
                 f"{phase_line}"
                 "Remember your storytelling principles:\n"
-                "- Acknowledge the action briefly\n"
-                "- Show the world's REACTION (environment, NPCs, atmosphere)\n"
-                "- Connect to ongoing tension or stakes\n"
-                "- End with forward momentum that invites further action\n\n"
-                f"{fmt}"
+                "- Show the consequence immediately, don't echo the player's action\n"
+                "- The world reacts — NPCs respond, environment shifts\n"
+                "- End with a bang — something that demands a response\n\n"
+                "Write your narration directly. Use the available tools for any mechanical effects "
+                "(new NPCs, objects, damage, rolls, entity references)."
             ),
         })
 
         # Use streaming if callback provided and client supports it
+        # (streaming doesn't support tools, so fall back to non-streaming with tools)
         if self._on_narrative_token and hasattr(self.narrator.client, "chat_stream"):
             response = await self.narrator.client.chat_stream(
                 messages=messages,
                 temperature=self.narrator.temperature,
-                max_tokens=2000,
+                max_tokens=1500,
                 think=False,
                 on_token=self._on_narrative_token,
                 frequency_penalty=NARRATOR_FREQUENCY_PENALTY,
@@ -2185,101 +2160,24 @@ Narrate this action dramatically. Remember:
             response = await self.narrator.client.chat(
                 messages=messages,
                 temperature=self.narrator.temperature,
-                max_tokens=2000,
+                max_tokens=1500,
                 think=False,
                 frequency_penalty=NARRATOR_FREQUENCY_PENALTY,
                 presence_penalty=NARRATOR_PRESENCE_PENALTY,
+                tools=NARRATOR_TOOLS,
+                tool_choice="auto",
             )
 
-        raw_content = response.content.strip() if response.content else ""
+        # Extract prose + effects (tools if available, text fallback otherwise)
+        prose, proposed_effects = self._extract_prose_and_effects(response, action)
 
-        # Log truncation issues
-        if raw_content and len(raw_content) < 50:
-            logger.warning(
-                "narrator_response_possibly_truncated",
-                content_length=len(raw_content),
-                content_preview=raw_content[:100],
-                finish_reason=response.finish_reason,
-            )
-
-        # =====================================================================
-        # Validate format: must start with PROSE:
-        # =====================================================================
-        if not raw_content or not validate_narrator_format(raw_content):
-            # Reprompt once with corrective instruction (no streaming for retries)
-            logger.warning(
-                "narrator_format_invalid_reprompting",
-                action=action[:50],
-                content_preview=raw_content[:100] if raw_content else "(empty)",
-            )
-
-            reprompt_fmt = (
-                "Your response was malformed. Use XML tags:\n"
-                "<prose>\n[your narration]\n</prose>\n\n"
-                "<intents>\n[commands or NONE]\n</intents>\n\n"
-                "Respond now, starting with <prose>:"
-            ) if _is_anthropic_client(self.narrator.client) else (
-                "Your response was malformed. You MUST start with PROSE: on the first line.\n\n"
-                "Correct format:\n"
-                "PROSE:\n[your narration]\n\n"
-                "INTENTS:\n[commands or NONE]\n\n"
-                "Respond now, starting with PROSE:"
-            )
-            messages[-1] = {
-                "role": "system",
-                "content": (
-                    reprompt_fmt
-                ),
-            }
-
-            response = await self.narrator.client.chat(
-                messages=messages,
-                temperature=self.narrator.temperature,
-                max_tokens=8000,  # High limit for thinking models
-                think=False,
-            )
-            raw_content = response.content.strip() if response.content else ""
-
-        # Check again after reprompt
-        if not raw_content:
+        if not prose:
             logger.warning("narrator_returned_empty_for_action", action=action[:50])
             return f"*{player_name}'s action unfolds...*", []
-
-        # Last resort: strip planning text if still invalid format
-        if not validate_narrator_format(raw_content):
-            cleaned, did_strip = strip_planning_text_fallback(raw_content)
-            if did_strip:
-                logger.warning(
-                    "narrator_planning_text_stripped",
-                    action=action[:50],
-                    original_preview=raw_content[:150],
-                    stripped_preview=cleaned[:100] if cleaned else "(empty)",
-                )
-                raw_content = cleaned
-
-        # =====================================================================
-        # Adjudicator: Parse INTENTS (deterministic, no LLM)
-        # =====================================================================
-        prose, proposed_effects, parse_result = self.adjudicator.parse_narrator_response(
-            raw_content
-        )
 
         # If prose seems truncated (ends mid-sentence), add ellipsis
         if prose and prose[-1] not in '.!?"\'':
             prose += "..."
-
-        logger.debug(
-            "prose_intents_parsed",
-            prose_length=len(prose),
-            effects_count=len(proposed_effects),
-            had_none=parse_result.had_none,
-            parse_errors=len(parse_result.errors),
-        )
-
-        # Optionally append INTENTS for debugging
-        settings = get_settings()
-        if settings.debug_show_intents and parse_result.raw_intents:
-            prose += f"\n\n```\nINTENTS:\n{parse_result.raw_intents}\n```"
 
         return prose, proposed_effects
 
@@ -2353,101 +2251,30 @@ Narrate this action dramatically. Remember:
                 "- Show the world's REACTION to the success or failure\n"
                 "- Connect to ongoing tension or stakes\n"
                 "- End with forward momentum\n\n"
-                f"{NARRATOR_FORMAT_XML if _is_anthropic_client(self.narrator.client) else NARRATOR_FORMAT_TEXT}"
+                "Write your narration directly. Use the available tools for any mechanical effects."
             ),
         })
 
         response = await self.narrator.client.chat(
             messages=messages,
             temperature=self.narrator.temperature,
-            max_tokens=2000,
-            think=False,  # Thinking adds 10-50s latency on Groq for minimal quality gain
+            max_tokens=1500,
+            think=False,
             frequency_penalty=NARRATOR_FREQUENCY_PENALTY,
             presence_penalty=NARRATOR_PRESENCE_PENALTY,
+            tools=NARRATOR_TOOLS,
+            tool_choice="auto",
         )
 
-        raw_response = response.content.strip() if response.content else ""
+        prose, proposed_effects = self._extract_prose_and_effects(response, action)
 
-        # =====================================================================
-        # Validate format: must start with PROSE:
-        # =====================================================================
-        if not raw_response or not validate_narrator_format(raw_response):
-            logger.warning(
-                "narrator_outcome_format_invalid_reprompting",
-                action=action[:50],
-                content_preview=raw_response[:100] if raw_response else "(empty)",
-            )
-
-            # Reprompt with corrective instruction
-            if _is_anthropic_client(self.narrator.client):
-                reprompt_content = (
-                    "Your response was malformed. Use XML tags:\n\n"
-                    f"RESOLUTION: {narrator_context}\n\n"
-                    "<prose>\n[your narration]\n</prose>\n\n"
-                    "<intents>\n[commands or NONE]\n</intents>\n\n"
-                    "Respond now, starting with <prose>:"
-                )
-            else:
-                reprompt_content = (
-                    "Your response was malformed. You MUST start with PROSE: on the first line.\n\n"
-                    f"RESOLUTION: {narrator_context}\n\n"
-                    "Correct format:\n"
-                    "PROSE:\n[your narration]\n\n"
-                    "INTENTS:\n[commands or NONE]\n\n"
-                    "Respond now, starting with PROSE:"
-                )
-            messages[-1] = {
-                "role": "system",
-                "content": reprompt_content,
-            }
-
-            response = await self.narrator.client.chat(
-                messages=messages,
-                temperature=self.narrator.temperature,
-                max_tokens=8000,  # High limit for thinking models
-                think=False,
-            )
-            raw_response = response.content.strip() if response.content else ""
-
-        # Check again after reprompt
-        if not raw_response:
+        if not prose:
             logger.warning("narrator_returned_empty", action=action[:50])
             return f"*{player_name} attempts to {action.lower()}...*", []
-
-        # Last resort: strip planning text if still invalid format
-        if not validate_narrator_format(raw_response):
-            cleaned, did_strip = strip_planning_text_fallback(raw_response)
-            if did_strip:
-                logger.warning(
-                    "narrator_planning_text_stripped",
-                    action=action[:50],
-                    original_preview=raw_response[:150],
-                    stripped_preview=cleaned[:100] if cleaned else "(empty)",
-                )
-                raw_response = cleaned
-
-        # =====================================================================
-        # Adjudicator: Parse INTENTS (deterministic, no LLM)
-        # =====================================================================
-        prose, proposed_effects, parse_result = self.adjudicator.parse_narrator_response(
-            raw_response
-        )
 
         # Fix truncated endings
         if prose and prose[-1] not in '.!?"\'':
             prose += "..."
-
-        logger.debug(
-            "prose_intents_outcome_parsed",
-            prose_length=len(prose),
-            effects_count=len(proposed_effects),
-            had_none=parse_result.had_none,
-        )
-
-        # Optionally append INTENTS for debugging
-        settings = get_settings()
-        if settings.debug_show_intents and parse_result.raw_intents:
-            prose += f"\n\n```\nINTENTS:\n{parse_result.raw_intents}\n```"
 
         return prose, proposed_effects
 
