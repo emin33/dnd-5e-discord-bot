@@ -1932,6 +1932,7 @@ class DMOrchestrator:
                 max_tokens=500,
                 think=False,
                 tools=NARRATOR_TOOLS_CORE,
+                tool_choice="required",
             )
 
             if response.tool_calls:
