@@ -1886,7 +1886,9 @@ class DMOrchestrator:
                 "- ref_entity for each roster entity you mentioned\n"
                 "- add_npc for any new NPC you introduced\n"
                 "- spawn_object for any new object you described\n"
-                "Do NOT skip tool calls. Every entity in your prose must be tagged."
+                "Do NOT skip tool calls. Every entity in your prose must be tagged.\n\n"
+                "NEVER write [id: ...] tags in your prose text. Entity IDs belong "
+                "in tool calls only, not in the narration the player sees."
             ),
         })
 
@@ -1902,6 +1904,12 @@ class DMOrchestrator:
         PROSE/INTENTS parsing via the adjudicator.
         """
         raw_content = response.content.strip() if response.content else ""
+
+        # Strip leaked [id: ...] tags from prose — the model sometimes
+        # writes roster IDs inline instead of using tool calls
+        if "[id:" in raw_content:
+            import re
+            raw_content = re.sub(r'\s*\[id:\s*[^\]]+\]', '', raw_content)
 
         # Tool-based path: content is pure prose, tool_calls are effects
         if response.tool_calls:
