@@ -719,6 +719,22 @@ class AnthropicClient:
         if system_parts:
             kwargs["system"] = "\n\n".join(system_parts)
 
+        # Claude uses input_schema instead of parameters for tools
+        if tools:
+            claude_tools = []
+            for t in tools:
+                func = t.get("function", {})
+                claude_tools.append({
+                    "name": func.get("name", ""),
+                    "description": func.get("description", ""),
+                    "input_schema": func.get("parameters", {}),
+                })
+            kwargs["tools"] = claude_tools
+            if tool_choice == "auto":
+                kwargs["tool_choice"] = {"type": "auto"}
+            elif tool_choice == "required":
+                kwargs["tool_choice"] = {"type": "any"}
+
         try:
             import time as _time
             _t0 = _time.monotonic()
@@ -731,11 +747,16 @@ class AnthropicClient:
             _elapsed = _time.monotonic() - _t0
 
             content = ""
+            tool_calls = []
             if response.content:
-                content = "".join(
-                    block.text for block in response.content
-                    if hasattr(block, "text")
-                )
+                for block in response.content:
+                    if hasattr(block, "text"):
+                        content += block.text
+                    elif block.type == "tool_use":
+                        tool_calls.append({
+                            "name": block.name,
+                            "arguments": block.input,
+                        })
 
             _write_debug_log(
                 f"ANTHROPIC_RESPONSE (api={_elapsed:.1f}s)",
@@ -746,12 +767,14 @@ class AnthropicClient:
                 "anthropic_response",
                 content_length=len(content),
                 content_preview=content[:200],
+                tool_calls=len(tool_calls),
                 model=response.model,
             )
 
             usage = response.usage
             return LLMResponse(
                 content=content,
+                tool_calls=tool_calls,
                 model=response.model or self.model,
                 finish_reason=response.stop_reason or "",
                 prompt_tokens=usage.input_tokens if usage else 0,
