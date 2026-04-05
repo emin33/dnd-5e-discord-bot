@@ -2275,7 +2275,7 @@ Write your narration directly."""
             return f"*{player_name}'s action unfolds...*", []
 
         # Two-turn followup: if local model didn't call tools, ask again
-        if not proposed_effects and isinstance(self.narrator.client, OllamaClient):
+        if not proposed_effects and prose:
             followup_effects = await self._narrator_tool_followup(prose, messages)
             proposed_effects = followup_effects
 
@@ -2379,7 +2379,7 @@ Write your narration directly."""
             return f"*{player_name} attempts to {action.lower()}...*", []
 
         # Two-turn followup for local models
-        if not proposed_effects and isinstance(self.narrator.client, OllamaClient):
+        if not proposed_effects and prose:
             followup_effects = await self._narrator_tool_followup(prose, messages)
             proposed_effects = followup_effects
 
