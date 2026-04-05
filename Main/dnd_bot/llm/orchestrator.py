@@ -1166,6 +1166,21 @@ class DMOrchestrator:
         _turn_record.record_world_state(ws_before, ws_after)
         _turn_record.set("combat_triggered", combat_triggered)
         _turn_record.set("effects_count", len(proposed_effects))
+
+        # Record effects detail — especially ref_entity for entity grounding observability
+        if proposed_effects:
+            from .effects import EffectType as _ET
+            _turn_record.set("effects", [
+                {
+                    "type": e.effect_type.value,
+                    **({"ref_id": e.ref_entity_id} if e.effect_type == _ET.REF_ENTITY else {}),
+                    **({"ref_alias": e.ref_alias_used} if e.ref_alias_used else {}),
+                    **({"npc_name": e.npc_name} if e.effect_type == _ET.ADD_NPC else {}),
+                    **({"item": e.item_name or e.object_name} if e.item_name or e.object_name else {}),
+                }
+                for e in proposed_effects
+            ])
+
         self._turn_logger.flush(_turn_record)
 
         return DMResponse(
