@@ -1872,6 +1872,35 @@ class DMOrchestrator:
             return NARRATOR_TOOLS_CORE
         return NARRATOR_TOOLS
 
+    def _inject_tool_example(self, messages: list[dict]) -> list[dict]:
+        """Inject a synthetic tool-call example into the conversation history.
+
+        Qwen MoE follows patterns from prior assistant turns. If the history
+        has no tool calls, the model writes prose-only. Inserting one example
+        of prose + tool_call primes the model to continue the pattern.
+
+        Inserted after the system prompt and before conversation history.
+        """
+        if not isinstance(self.narrator.client, OllamaClient):
+            return messages  # Cloud models don't need priming
+
+        # Find the insertion point: after system messages, before history
+        insert_at = 0
+        for i, m in enumerate(messages):
+            if m["role"] == "system":
+                insert_at = i + 1
+            else:
+                break
+
+        example = [
+            {"role": "user", "content": "[Example Player]: I look around the tavern."},
+            {"role": "assistant", "content": "The tavern is dim and smoky. A barkeep wipes the counter, eyeing you.",
+             "tool_calls": [{"function": {"name": "ref_entity", "arguments": {"entity_id": "barkeep"}}}]},
+            {"role": "tool", "content": "ok"},
+        ]
+
+        return messages[:insert_at] + example + messages[insert_at:]
+
     def _extract_prose_and_effects(
         self,
         response,
@@ -1968,6 +1997,7 @@ IMPORTANT: You MUST call the appropriate tool for every NPC, object, or entity y
         else:
             messages = self.narrator._build_messages(enhanced_context)
         messages.append({"role": "user", "content": prompt})
+        messages = self._inject_tool_example(messages)
 
         try:
             response = await self.narrator.client.chat(
@@ -2159,6 +2189,9 @@ IMPORTANT: You MUST call the appropriate tool for every NPC, object, or entity y
             ),
         })
 
+        # Inject tool-call example to prime local models
+        messages = self._inject_tool_example(messages)
+
         # Use streaming if callback provided and client supports it
         # (streaming doesn't support tools, so fall back to non-streaming with tools)
         if self._on_narrative_token and hasattr(self.narrator.client, "chat_stream"):
@@ -2272,6 +2305,8 @@ IMPORTANT: You MUST call the appropriate tool for every NPC, object, or entity y
                 "Call add_npc for new NPCs. This is not optional."
             ),
         })
+
+        messages = self._inject_tool_example(messages)
 
         response = await self.narrator.client.chat(
             messages=messages,
