@@ -2588,6 +2588,15 @@ Write your narration directly."""
             resource = effect.resource_name or effect.item_name or "a resource"
             world_state.record_transfer(f"Consumed {effect.quantity}x {resource}")
 
+        elif etype == EffectType.SET_FLAG:
+            if effect.flag_name:
+                world_state.global_flags[effect.flag_name] = effect.flag_value
+
+        elif etype == EffectType.REMOVE_ENTITY:
+            # Remove from scene items if present
+            if effect.target:
+                world_state.remove_item(effect.target)
+
     def _sync_npcs_to_registry(
         self,
         delta: "StateDelta",

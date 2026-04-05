@@ -104,10 +104,11 @@ class StateExtractor:
         elif current_scene:
             context_parts.append(f"Current Scene: {current_scene}")
 
-        # Tell the extractor which entities are already accounted for
+        # Tell the extractor which NPCs are already accounted for
         if referenced_entity_ids:
             context_parts.append(
-                f"Already referenced entities (do NOT add as new_npcs): "
+                f"These NPCs are already tracked — skip them in new_npcs "
+                f"(but still extract location, events, facts, and other changes): "
                 f"{', '.join(referenced_entity_ids)}"
             )
 
