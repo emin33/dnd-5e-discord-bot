@@ -730,6 +730,9 @@ class EffectExecutor:
         Lightweight — updates mention tracking on the SceneEntity.
         If the narrator used an alias, records it for future name promotion.
         """
+        import structlog
+        _logger = structlog.get_logger()
+
         entity_id = effect.ref_entity_id
         if not entity_id:
             return EffectExecutionResult(
@@ -757,14 +760,14 @@ class EffectExecutor:
                 if alias not in entity.aliases:
                     entity.aliases.append(alias)
 
-            logger.info(
+            _logger.info(
                 "entity_referenced",
                 entity_id=entity_id,
                 entity_name=entity.name,
                 alias_used=alias,
             )
         else:
-            logger.debug(
+            _logger.debug(
                 "ref_entity_not_in_scene",
                 entity_id=entity_id,
             )
