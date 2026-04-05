@@ -1872,34 +1872,23 @@ class DMOrchestrator:
             return NARRATOR_TOOLS_CORE
         return NARRATOR_TOOLS
 
-    def _inject_tool_example(self, messages: list[dict]) -> list[dict]:
-        """Inject a synthetic tool-call example into the conversation history.
+    def _append_tool_reminder(self, messages: list[dict]) -> None:
+        """Append a dedicated tool-use reminder as the final message.
 
-        Qwen MoE follows patterns from prior assistant turns. If the history
-        has no tool calls, the model writes prose-only. Inserting one example
-        of prose + tool_call primes the model to continue the pattern.
-
-        Inserted after the system prompt and before conversation history.
+        Placed last so it's the freshest instruction in the model's
+        attention window. Separate from the prose instructions so it
+        doesn't get buried in storytelling guidance.
         """
-        if not isinstance(self.narrator.client, OllamaClient):
-            return messages  # Cloud models don't need priming
-
-        # Find the insertion point: after system messages, before history
-        insert_at = 0
-        for i, m in enumerate(messages):
-            if m["role"] == "system":
-                insert_at = i + 1
-            else:
-                break
-
-        example = [
-            {"role": "user", "content": "[Example Player]: I look around the tavern."},
-            {"role": "assistant", "content": "The tavern is dim and smoky. A barkeep wipes the counter, eyeing you.",
-             "tool_calls": [{"function": {"name": "ref_entity", "arguments": {"entity_id": "barkeep"}}}]},
-            {"role": "tool", "content": "ok"},
-        ]
-
-        return messages[:insert_at] + example + messages[insert_at:]
+        messages.append({
+            "role": "system",
+            "content": (
+                "AFTER writing your prose, you MUST call tools:\n"
+                "- ref_entity for each roster entity you mentioned\n"
+                "- add_npc for any new NPC you introduced\n"
+                "- spawn_object for any new object you described\n"
+                "Do NOT skip tool calls. Every entity in your prose must be tagged."
+            ),
+        })
 
     def _extract_prose_and_effects(
         self,
@@ -1987,9 +1976,7 @@ Narrate this action dramatically. Remember:
 - Connect to ongoing tension or stakes from the current scene
 - End with something that maintains momentum
 
-Write your narration directly.
-
-IMPORTANT: You MUST call the appropriate tool for every NPC, object, or entity you mention. Call ref_entity for existing roster entities. Call add_npc for new NPCs. This is not optional."""
+Write your narration directly."""
 
         if context.world_state_yaml:
             enhanced_context.world_state_yaml = context.world_state_yaml
@@ -1997,7 +1984,7 @@ IMPORTANT: You MUST call the appropriate tool for every NPC, object, or entity y
         else:
             messages = self.narrator._build_messages(enhanced_context)
         messages.append({"role": "user", "content": prompt})
-        messages = self._inject_tool_example(messages)
+        self._append_tool_reminder(messages)
 
         try:
             response = await self.narrator.client.chat(
@@ -2182,15 +2169,11 @@ IMPORTANT: You MUST call the appropriate tool for every NPC, object, or entity y
                 "- Show the consequence immediately, don't echo the player's action\n"
                 "- The world reacts — NPCs respond, environment shifts\n"
                 "- End with a bang — something that demands a response\n\n"
-                "Write your narration directly.\n\n"
-                "IMPORTANT: You MUST call the appropriate tool for every NPC, object, or "
-                "entity you mention. Call ref_entity for existing roster entities. "
-                "Call add_npc for new NPCs. This is not optional."
+                "Write your narration directly."
             ),
         })
 
-        # Inject tool-call example to prime local models
-        messages = self._inject_tool_example(messages)
+        self._append_tool_reminder(messages)
 
         # Use streaming if callback provided and client supports it
         # (streaming doesn't support tools, so fall back to non-streaming with tools)
@@ -2299,14 +2282,11 @@ IMPORTANT: You MUST call the appropriate tool for every NPC, object, or entity y
                 "- Show the world's REACTION to the success or failure\n"
                 "- Connect to ongoing tension or stakes\n"
                 "- End with forward momentum\n\n"
-                "Write your narration directly.\n\n"
-                "IMPORTANT: You MUST call the appropriate tool for every NPC, object, or "
-                "entity you mention. Call ref_entity for existing roster entities. "
-                "Call add_npc for new NPCs. This is not optional."
+                "Write your narration directly."
             ),
         })
 
-        messages = self._inject_tool_example(messages)
+        self._append_tool_reminder(messages)
 
         response = await self.narrator.client.chat(
             messages=messages,
