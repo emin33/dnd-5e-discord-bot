@@ -1474,26 +1474,48 @@ class CombatTurnCoordinator:
 
 # ==================== Factory ====================
 
-_coordinators: dict[int, CombatTurnCoordinator] = {}
+_coordinators: dict[str, CombatTurnCoordinator] = {}
+
+
+def _coord_key(channel_id: int) -> str:
+    """Convert a Discord channel_id to a session key."""
+    return f"discord:{channel_id}"
 
 
 def get_coordinator(manager: CombatManager, session: Optional["GameSession"] = None) -> CombatTurnCoordinator:
     """Get or create a coordinator for a combat encounter."""
-    channel_id = manager.combat.channel_id
+    # Use session_key if session provides one, else fall back to channel_id
+    if session and hasattr(session, "session_key") and session.session_key:
+        key = session.session_key
+    else:
+        key = _coord_key(manager.combat.channel_id)
 
-    if channel_id not in _coordinators:
-        _coordinators[channel_id] = CombatTurnCoordinator(manager, session)
+    if key not in _coordinators:
+        _coordinators[key] = CombatTurnCoordinator(manager, session)
 
-    return _coordinators[channel_id]
+    return _coordinators[key]
 
 
 def get_coordinator_for_channel(channel_id: int) -> Optional[CombatTurnCoordinator]:
     """Get existing coordinator for a channel."""
-    return _coordinators.get(channel_id)
+    return _coordinators.get(_coord_key(channel_id))
+
+
+def get_coordinator_by_key(session_key: str) -> Optional[CombatTurnCoordinator]:
+    """Get existing coordinator by generic session key."""
+    return _coordinators.get(session_key)
 
 
 def clear_coordinator(channel_id: int) -> None:
     """Clear coordinator for a channel (combat ended)."""
-    if channel_id in _coordinators:
-        _coordinators[channel_id].zone_tracker.on_combat_end()
-        del _coordinators[channel_id]
+    key = _coord_key(channel_id)
+    if key in _coordinators:
+        _coordinators[key].zone_tracker.on_combat_end()
+        del _coordinators[key]
+
+
+def clear_coordinator_by_key(session_key: str) -> None:
+    """Clear coordinator by generic session key (combat ended)."""
+    if session_key in _coordinators:
+        _coordinators[session_key].zone_tracker.on_combat_end()
+        del _coordinators[session_key]

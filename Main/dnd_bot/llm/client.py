@@ -805,6 +805,232 @@ class AnthropicClient:
         pass
 
 
+class GeminiClient:
+    """Async client for Google Gemini API (narrator-only)."""
+
+    def __init__(
+        self,
+        model: Optional[str] = None,
+        api_key: Optional[str] = None,
+    ):
+        try:
+            import google.generativeai as genai
+        except ImportError:
+            raise ImportError(
+                "google-generativeai package required. Install with: pip install google-generativeai"
+            )
+
+        settings = get_settings()
+        self.model = model or "gemini-2.5-flash"
+        self.timeout = settings.llm_timeout
+        key = api_key or settings.gemini_api_key
+        if not key:
+            # Fallback: read directly from .env (system env may shadow with empty string)
+            from dotenv import dotenv_values
+            env = dotenv_values()
+            key = env.get("GEMINI_API_KEY", "")
+        if not key:
+            raise ValueError("GEMINI_API_KEY must be set when using Gemini provider")
+        self._genai = genai
+        genai.configure(api_key=key)
+
+    def _convert_tools(self, tools: list[dict]) -> Optional[list]:
+        """Convert OpenAI-format tools to Gemini function_declarations."""
+        if not tools:
+            return None
+        protos = self._genai.protos
+        declarations = []
+        for t in tools:
+            func = t.get("function", {})
+            params = func.get("parameters")
+            declarations.append(
+                protos.FunctionDeclaration(
+                    name=func.get("name", ""),
+                    description=func.get("description", ""),
+                    parameters=self._convert_schema(params) if params else None,
+                )
+            )
+        return [protos.Tool(function_declarations=declarations)]
+
+    def _convert_schema(self, schema: dict):
+        """Convert JSON Schema dict to Gemini Schema proto (recursive)."""
+        protos = self._genai.protos
+        type_map = {
+            "object": protos.Type.OBJECT,
+            "string": protos.Type.STRING,
+            "number": protos.Type.NUMBER,
+            "integer": protos.Type.INTEGER,
+            "boolean": protos.Type.BOOLEAN,
+            "array": protos.Type.ARRAY,
+        }
+        schema_type = type_map.get(schema.get("type", ""), protos.Type.OBJECT)
+        kwargs: dict[str, Any] = {"type": schema_type}
+        if "description" in schema:
+            kwargs["description"] = schema["description"]
+        if "enum" in schema:
+            kwargs["enum"] = schema["enum"]
+        if "properties" in schema:
+            kwargs["properties"] = {
+                k: self._convert_schema(v)
+                for k, v in schema["properties"].items()
+            }
+        if "required" in schema:
+            kwargs["required"] = schema["required"]
+        if "items" in schema:
+            kwargs["items"] = self._convert_schema(schema["items"])
+        return protos.Schema(**kwargs)
+
+    async def chat(
+        self,
+        messages: list[dict],
+        temperature: float = 0.7,
+        tools: Optional[list[dict]] = None,
+        max_tokens: Optional[int] = None,
+        json_mode: bool = False,
+        json_schema: Optional[dict] = None,
+        think: Optional[bool] = None,
+        tool_choice: Optional[str] = None,
+        frequency_penalty: Optional[float] = None,
+        presence_penalty: Optional[float] = None,
+    ) -> LLMResponse:
+        """Send a chat request to Gemini API. Same interface as other clients.
+
+        Note: Gemini does not support frequency/presence penalties. These
+        params are accepted for interface compatibility but ignored.
+        """
+        # Separate system instructions from chat messages
+        system_parts = []
+        chat_messages = []
+        for msg in messages:
+            if msg["role"] == "system":
+                system_parts.append(msg["content"])
+            else:
+                chat_messages.append(msg)
+
+        # Convert to Gemini format: "assistant" → "model"
+        contents = []
+        for msg in chat_messages:
+            role = "model" if msg["role"] == "assistant" else msg["role"]
+            contents.append({"role": role, "parts": [{"text": msg["content"]}]})
+
+        # Ensure first message is from user (Gemini requires it)
+        if not contents or contents[0]["role"] != "user":
+            contents.insert(0, {"role": "user", "parts": [{"text": "Begin."}]})
+
+        # Merge consecutive same-role messages
+        merged = []
+        for msg in contents:
+            if merged and merged[-1]["role"] == msg["role"]:
+                merged[-1]["parts"].extend(msg["parts"])
+            else:
+                merged.append({"role": msg["role"], "parts": list(msg["parts"])})
+
+        # Build model kwargs — system_instruction and tools are set per-model
+        model_kwargs: dict[str, Any] = {"model_name": self.model}
+        if system_parts:
+            model_kwargs["system_instruction"] = "\n\n".join(system_parts)
+
+        gemini_tools = self._convert_tools(tools)
+        if gemini_tools:
+            model_kwargs["tools"] = gemini_tools
+
+        model = self._genai.GenerativeModel(**model_kwargs)
+
+        # Generation config
+        gen_config = self._genai.GenerationConfig(
+            temperature=temperature,
+            max_output_tokens=max_tokens or 2000,
+        )
+
+        call_kwargs: dict[str, Any] = {
+            "contents": merged,
+            "generation_config": gen_config,
+        }
+
+        # Tool choice → Gemini function_calling_config
+        if tools and tool_choice:
+            mode_map = {"auto": "AUTO", "required": "ANY", "none": "NONE"}
+            mode = mode_map.get(tool_choice, "AUTO")
+            call_kwargs["tool_config"] = {
+                "function_calling_config": {"mode": mode}
+            }
+
+        try:
+            import time as _time
+            _t0 = _time.monotonic()
+
+            response = await asyncio.wait_for(
+                model.generate_content_async(**call_kwargs),
+                timeout=self.timeout,
+            )
+
+            _elapsed = _time.monotonic() - _t0
+
+            content = ""
+            tool_calls = []
+
+            if not response.candidates:
+                logger.warning(
+                    "gemini_no_candidates",
+                    model=self.model,
+                    prompt_feedback=str(getattr(response, "prompt_feedback", "")),
+                )
+                return LLMResponse(content="", model=self.model, finish_reason="SAFETY")
+
+            for part in response.candidates[0].content.parts:
+                if hasattr(part, "text") and part.text:
+                    content += part.text
+                elif hasattr(part, "function_call") and part.function_call:
+                    fc = part.function_call
+                    tool_calls.append({
+                        "name": fc.name,
+                        "arguments": dict(fc.args) if fc.args else {},
+                    })
+
+            _write_debug_log(
+                f"GEMINI_RESPONSE (api={_elapsed:.1f}s)",
+                content or "(empty)",
+            )
+
+            logger.info(
+                "gemini_response",
+                content_length=len(content),
+                content_preview=content[:200],
+                tool_calls=len(tool_calls),
+                model=self.model,
+            )
+
+            usage = response.usage_metadata
+            finish = ""
+            if response.candidates:
+                fr = response.candidates[0].finish_reason
+                finish = fr.name if hasattr(fr, "name") else str(fr)
+
+            return LLMResponse(
+                content=content,
+                tool_calls=tool_calls,
+                model=self.model,
+                finish_reason=finish,
+                prompt_tokens=getattr(usage, "prompt_token_count", 0) if usage else 0,
+                completion_tokens=getattr(usage, "candidates_token_count", 0) if usage else 0,
+            )
+
+        except asyncio.TimeoutError:
+            logger.error("gemini_chat_timeout", timeout=self.timeout, model=self.model)
+            raise TimeoutError(f"Gemini API call timed out after {self.timeout}s.")
+        except Exception as e:
+            logger.error("gemini_chat_error", error=str(e))
+            raise
+
+    async def is_available(self) -> bool:
+        """Check if Gemini API is reachable."""
+        return True  # If constructor didn't raise, key is set
+
+    def close(self):
+        """No-op — async client cleans up automatically."""
+        pass
+
+
 class OpenRouterClient:
     """Async client for OpenRouter API (OpenAI-compatible)."""
 
@@ -962,6 +1188,8 @@ def _create_client(provider: str, model: str, fallback_to_ollama: bool = False, 
         return AnthropicClient(model=model)
     elif provider == "openrouter":
         return OpenRouterClient(model=model)
+    elif provider == "gemini":
+        return GeminiClient(model=model)
     else:  # ollama
         return OllamaClient(model=model, num_ctx=context_size or None)
 

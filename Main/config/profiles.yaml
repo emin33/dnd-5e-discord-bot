@@ -188,6 +188,39 @@ haiku_local:
     condensed_size: 12
     compaction_threshold: 8
 
+# Gemini 2.5 Pro narrator + local 27B brain
+# Gemini Pro handles 1M context — can use a large message window
+gemini_pro:
+  narrator:
+    provider: gemini
+    model: gemini-2.5-pro
+  brain:
+    provider: ollama
+    model: qwen3.5:27b
+    context_size: 16000
+    fallback_to_ollama: false
+  memory:
+    buffer_size: 40
+    verbatim_size: 12
+    condensed_size: 16
+    compaction_threshold: 10
+
+# Gemini 2.5 Flash narrator + local 9B brain
+# Flash is fast and cheap, good for testing and lighter sessions
+gemini_flash:
+  narrator:
+    provider: gemini
+    model: gemini-2.5-flash
+  brain:
+    provider: ollama
+    model: qwen3.5:9b
+    fallback_to_ollama: false
+  memory:
+    buffer_size: 30
+    verbatim_size: 10
+    condensed_size: 12
+    compaction_threshold: 8
+
 # Sonnet narrator + local 27B brain
 # Sonnet handles 200K context
 sonnet_local:
@@ -204,3 +237,147 @@ sonnet_local:
     verbatim_size: 12
     condensed_size: 16
     compaction_threshold: 10
+
+# Haiku narrator + Gemma 4 26B MoE brain (best structured output available locally)
+# Haiku is cheap/fast, Gemma 26B is the strongest local brain at ~15-17GB
+haiku_gemma:
+  narrator:
+    provider: anthropic
+    model: claude-haiku-4-5-20251001
+  brain:
+    provider: ollama
+    model: gemma4:26b
+    context_size: 16000
+    fallback_to_ollama: false
+  memory:
+    buffer_size: 30
+    verbatim_size: 10
+    condensed_size: 12
+    compaction_threshold: 8
+
+# ===== Gemma 4 profiles =====
+
+# Local split: Qwen MoE narrates, Gemma E4B brain
+# 23GB + 9.6GB = 32.6GB — tight on 32GB GPU. Ollama swaps models if needed.
+# If simultaneous fit fails, reduce context_size or let Ollama auto-swap.
+moe_gemma:
+  narrator:
+    provider: ollama
+    model: qwen3.5:35b-a3b
+    context_size: 16000
+  brain:
+    provider: ollama
+    model: gemma4:e4b
+    context_size: 4000
+    fallback_to_ollama: false
+  memory:
+    buffer_size: 20
+    verbatim_size: 6
+    condensed_size: 8
+    compaction_threshold: 5
+
+# ===== Gemma 4 cloud narrator profiles (max local brain for cloud narrator) =====
+
+# Sonnet narrator + Gemma 4 26B MoE brain (~15GB)
+# Best structured output brain available locally. 32GB GPU: ~15GB brain + ~17GB for context
+sonnet_gemma:
+  narrator:
+    provider: anthropic
+    model: claude-sonnet-4-6
+  brain:
+    provider: ollama
+    model: gemma4:26b
+    context_size: 32000
+    fallback_to_ollama: false
+  memory:
+    buffer_size: 40
+    verbatim_size: 12
+    condensed_size: 16
+    compaction_threshold: 10
+
+# Groq Qwen narrator + Gemma 4 26B MoE brain
+# Free/cheap cloud narration, strong local brain
+groq_gemma:
+  narrator:
+    provider: groq
+    model: qwen/qwen3-32b
+  brain:
+    provider: ollama
+    model: gemma4:26b
+    context_size: 32000
+    fallback_to_ollama: false
+  memory:
+    buffer_size: 30
+    verbatim_size: 10
+    condensed_size: 12
+    compaction_threshold: 8
+
+# Gemma 4 26B doing both narrator and brain (test profile)
+# MoE may be formulaic for narration but worth testing
+gemma_full:
+  narrator:
+    provider: ollama
+    model: gemma4:26b
+    context_size: 32000
+  brain:
+    provider: ollama
+    model: gemma4:26b
+    context_size: 16000
+    fallback_to_ollama: false
+  memory:
+    buffer_size: 24
+    verbatim_size: 8
+    condensed_size: 10
+    compaction_threshold: 6
+
+# ===== Voice profiles (Riva ASR+TTS uses ~25GB VRAM) =====
+
+# Voice production: cloud narrator + cloud brain, zero local VRAM for LLM
+# Use alongside Riva containers on any GPU
+voice_production:
+  narrator:
+    provider: anthropic
+    model: claude-sonnet-4-6
+  brain:
+    provider: groq
+    model: qwen/qwen3-32b
+    fallback_to_ollama: false
+  memory:
+    buffer_size: 30
+    verbatim_size: 10
+    condensed_size: 12
+    compaction_threshold: 8
+
+# Voice hybrid: cloud narrator + local 9B brain (~7GB for brain)
+# Fits alongside Riva on 32GB GPU (~25GB Riva + ~7GB brain)
+voice_hybrid:
+  narrator:
+    provider: anthropic
+    model: claude-sonnet-4-6
+  brain:
+    provider: ollama
+    model: qwen3.5:9b
+    context_size: 8000
+    fallback_to_ollama: false
+  memory:
+    buffer_size: 24
+    verbatim_size: 8
+    condensed_size: 10
+    compaction_threshold: 6
+
+# Voice Gemma: cloud narrator + Gemma E4B brain (~5-8GB)
+# E4B is tiny but has 128K context. Test if triage JSON works at this size.
+voice_gemma:
+  narrator:
+    provider: anthropic
+    model: claude-sonnet-4-6
+  brain:
+    provider: ollama
+    model: gemma4:e4b
+    context_size: 8000
+    fallback_to_ollama: false
+  memory:
+    buffer_size: 24
+    verbatim_size: 8
+    condensed_size: 10
+    compaction_threshold: 6
