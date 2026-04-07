@@ -365,6 +365,16 @@ class CharacterCreator:
         ac = self.calculate_armor_class(abilities, class_index)
         speed = self.get_speed(race_index)
 
+        # Initialize spell slots for level 1 (full casters get 2 L1 slots, etc.)
+        from .leveling import get_spell_slots_for_level
+        initial_slots = get_spell_slots_for_level(class_index, 1)
+        spell_slots = SpellSlots()
+        for i, max_slots in enumerate(initial_slots):
+            if max_slots > 0:
+                spell_slots.set_slots(i + 1, max_slots)
+                # set_slots sets current but we need to set max too
+                setattr(spell_slots, f"level_{i + 1}", (max_slots, max_slots))
+
         return Character(
             id=str(uuid.uuid4()),
             discord_user_id=state.user_id,
@@ -384,7 +394,7 @@ class CharacterCreator:
             hit_dice=HitDice(die_type=hit_die, total=1, remaining=1),
             death_saves=DeathSaves(),
             spellcasting_ability=spellcasting_ability,
-            spell_slots=SpellSlots(),  # Will be populated based on class
+            spell_slots=spell_slots,
             saving_throw_proficiencies=saving_throw_profs,
             skill_proficiencies=state.skill_choices,
         )

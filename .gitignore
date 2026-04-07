@@ -57,3 +57,11 @@ Main/data/test_run.log
 Main/data/test_combat_flow.txt
 Main/data/test_tavern.txt
 Main/data/llm_debug.log
+
+# Runtime data (local state, not source)
+Main/data/chroma/
+Main/data/turn_logs/
+Main/data/eval_logs/
+Main/data/benchmark_logs/
+*.db-shm
+*.db-wal

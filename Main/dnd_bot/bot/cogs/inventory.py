@@ -8,6 +8,7 @@ from ...models import InventoryItem
 from ...data.repositories import get_character_repo, get_inventory_repo
 from ...data.srd import get_srd
 from ...game.session import get_session_manager
+from ...game.combat.manager import get_combat_for_channel
 
 logger = structlog.get_logger()
 
@@ -322,6 +323,11 @@ class InventoryCog(commands.Cog):
         # Recalculate AC if armor/shield equipped
         await self._recalculate_ac(character, inv_repo)
 
+        # Sync AC to active combat if in combat
+        combat = get_combat_for_channel(ctx.channel_id)
+        if combat:
+            combat.sync_from_character(character)
+
         await ctx.respond(f":crossed_swords: Equipped **{item.item_name}**.")
 
     @inventory.command(name="unequip", description="Unequip an item")
@@ -358,6 +364,11 @@ class InventoryCog(commands.Cog):
 
         # Recalculate AC after unequip
         await self._recalculate_ac(character, inv_repo)
+
+        # Sync AC to active combat if in combat
+        combat = get_combat_for_channel(ctx.channel_id)
+        if combat:
+            combat.sync_from_character(character)
 
         if item.attuned:
             await inv_repo.unattune_item(item.id)

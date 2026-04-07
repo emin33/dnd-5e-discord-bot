@@ -709,6 +709,34 @@ class CombatManager:
             hp=f"{character.hp.current}/{character.hp.maximum}",
         )
 
+    def sync_from_character(self, character: Character) -> bool:
+        """
+        Sync character changes INTO the active combatant.
+
+        Call this when equipment or other character state changes mid-combat
+        (e.g., AC recalculation after equipping armor).
+
+        Returns True if a matching combatant was found and updated.
+        """
+        combatant = next(
+            (c for c in self.combat.combatants
+             if c.is_player and c.character_id == character.id),
+            None,
+        )
+        if not combatant:
+            return False
+
+        old_ac = combatant.armor_class
+        combatant.armor_class = character.armor_class
+        combatant.hp_max = character.hp.maximum
+
+        logger.info(
+            "combatant_synced_from_character",
+            combatant=combatant.name,
+            ac=f"{old_ac}->{character.armor_class}",
+        )
+        return True
+
     def get_player_combatants(self) -> list[Combatant]:
         """Get all player combatants (for syncing)."""
         return [c for c in self.combat.combatants if c.is_player and c.character_id]
@@ -961,7 +989,8 @@ class CombatManager:
                 # Check for save to reduce
                 if effect.save_ability and effect.save_dc and effect.damage_save_for_half:
                     save_ability = AbilityScore[effect.save_ability.upper()]
-                    save_roll = self.roller.roll_save(modifier=0)  # TODO: Get actual modifier
+                    save_mod = combatant.get_save_modifier(save_ability.value)
+                    save_roll = self.roller.roll_save(modifier=save_mod)
                     result.save_required = True
                     result.save_roll = save_roll.total
                     result.save_dc = effect.save_dc
@@ -1014,7 +1043,8 @@ class CombatManager:
             # Process repeating saves
             if effect.save_ability and effect.save_dc and effect.save_at_end_of_turn:
                 save_ability = AbilityScore[effect.save_ability.upper()]
-                save_roll = self.roller.roll_save(modifier=0)  # TODO: Get actual modifier
+                save_mod = combatant.get_save_modifier(save_ability.value)
+                save_roll = self.roller.roll_save(modifier=save_mod)
                 result.save_required = True
                 result.save_roll = save_roll.total
                 result.save_dc = effect.save_dc
@@ -1179,30 +1209,52 @@ class CombatManager:
         return combatant.get_available_recharge_abilities()
 
 
-# Active combat managers by channel
-_active_combats: dict[int, CombatManager] = {}
+# Active combat managers by session key (str).
+# Discord callers pass channel_id (int) which is auto-converted.
+_active_combats: dict[str, CombatManager] = {}
+
+
+def _combat_key(channel_id: int) -> str:
+    """Convert a Discord channel_id to a session key."""
+    return f"discord:{channel_id}"
 
 
 def get_combat_for_channel(channel_id: int) -> Optional[CombatManager]:
     """Get the active combat for a channel."""
-    return _active_combats.get(channel_id)
+    return _active_combats.get(_combat_key(channel_id))
+
+
+def get_combat_by_key(session_key: str) -> Optional[CombatManager]:
+    """Get the active combat by generic session key."""
+    return _active_combats.get(session_key)
 
 
 def set_combat_for_channel(channel_id: int, combat: CombatManager) -> None:
     """Set the active combat for a channel."""
-    _active_combats[channel_id] = combat
+    _active_combats[_combat_key(channel_id)] = combat
+
+
+def set_combat_by_key(session_key: str, combat: CombatManager) -> None:
+    """Set the active combat by generic session key."""
+    _active_combats[session_key] = combat
 
 
 def try_set_combat_for_channel(channel_id: int, combat: CombatManager) -> bool:
     """Atomically set combat only if none is active. Returns True if set."""
     from ...models import CombatState
-    existing = _active_combats.get(channel_id)
+    key = _combat_key(channel_id)
+    existing = _active_combats.get(key)
     if existing and existing.combat.state != CombatState.COMBAT_END:
         return False
-    _active_combats[channel_id] = combat
+    _active_combats[key] = combat
     return True
 
 
 def clear_combat_for_channel(channel_id: int) -> None:
     """Clear the active combat for a channel."""
-    _active_combats.pop(channel_id, None)
+    _active_combats.pop(_combat_key(channel_id), None)
+
+
+def clear_combat_by_key(session_key: str) -> None:
+    """Clear the active combat by generic session key."""
+    _active_combats.pop(session_key, None)

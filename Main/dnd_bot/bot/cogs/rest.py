@@ -6,6 +6,7 @@ import structlog
 
 from ...data.repositories import get_character_repo
 from ...game.mechanics.rest import get_rest_manager
+from ...game.combat.manager import get_combat_for_channel
 
 logger = structlog.get_logger()
 
@@ -43,6 +44,16 @@ class RestCog(commands.Cog):
     ):
         """Take a short rest to recover resources."""
         await ctx.defer()
+
+        # Block rest during active combat
+        combat = get_combat_for_channel(ctx.channel_id)
+        if combat and combat.combat.state.value in ("active", "setup"):
+            await ctx.respond(
+                "You can't rest during combat!",
+                ephemeral=True,
+            )
+            return
+
         repo = await get_character_repo()
         character = await repo.get_by_user_and_campaign(ctx.author.id, campaign_id)
 
@@ -135,6 +146,16 @@ class RestCog(commands.Cog):
     ):
         """Take a long rest to fully recover."""
         await ctx.defer()
+
+        # Block rest during active combat
+        combat = get_combat_for_channel(ctx.channel_id)
+        if combat and combat.combat.state.value in ("active", "setup"):
+            await ctx.respond(
+                "You can't rest during combat!",
+                ephemeral=True,
+            )
+            return
+
         repo = await get_character_repo()
         character = await repo.get_by_user_and_campaign(ctx.author.id, campaign_id)
 
