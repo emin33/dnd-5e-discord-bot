@@ -3,8 +3,11 @@
 from .manager import (
     CombatManager,
     get_combat_for_channel,
+    get_combat_by_key,
     set_combat_for_channel,
+    set_combat_by_key,
     clear_combat_for_channel,
+    clear_combat_by_key,
 )
 
 from .actions import (
@@ -24,7 +27,9 @@ from .coordinator import (
     CombatTurnCoordinator,
     get_coordinator,
     get_coordinator_for_channel,
+    get_coordinator_by_key,
     clear_coordinator,
+    clear_coordinator_by_key,
 )
 
 from .npc_brain import (
@@ -37,8 +42,11 @@ __all__ = [
     # Manager
     "CombatManager",
     "get_combat_for_channel",
+    "get_combat_by_key",
     "set_combat_for_channel",
+    "set_combat_by_key",
     "clear_combat_for_channel",
+    "clear_combat_by_key",
     # Actions
     "CombatAction",
     "CombatActionType",
@@ -52,7 +60,9 @@ __all__ = [
     "CombatTurnCoordinator",
     "get_coordinator",
     "get_coordinator_for_channel",
+    "get_coordinator_by_key",
     "clear_coordinator",
+    "clear_coordinator_by_key",
     # NPC AI
     "NPCCombatBrain",
     "CreatureBehavior",

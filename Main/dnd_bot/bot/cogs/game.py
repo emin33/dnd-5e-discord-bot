@@ -13,6 +13,7 @@ from ...game.combat.actions import CombatActionType
 from ..embeds.combat_embed import build_combat_tracker_embed, build_combat_start_embed
 from ..views.campaign_lobby import get_active_campaign_id
 from ..views.combat_actions import CombatActionView, ActionResultEmbed, NPCTurnView
+from ..frontends.discord_text import DiscordTextFrontend
 
 logger = structlog.get_logger()
 
@@ -767,65 +768,18 @@ class GameCog(commands.Cog):
         # Show typing indicator while processing
         async with message.channel.typing():
             try:
-                # Callback to send mechanics (rolls/checks) immediately
-                mechanics_sent = False
-
-                async def send_mechanics(mechanical_result, dice_rolls):
-                    nonlocal mechanics_sent
-                    mech_embed = _build_mechanics_embed(mechanical_result, dice_rolls)
-                    if mech_embed:
-                        await message.channel.send(embed=mech_embed)
-                        mechanics_sent = True
-
-                # Streaming narrator callback: edit a Discord message progressively
-                import time as _time
-                _stream_msg = None
-                _stream_buf = []
-                _last_edit = 0.0
-                _EDIT_INTERVAL = 0.8  # Seconds between Discord edits (rate limit safe)
-
-                async def on_narrative_token(token: str):
-                    nonlocal _stream_msg, _stream_buf, _last_edit
-                    _stream_buf.append(token)
-                    now = _time.monotonic()
-                    # Throttle edits to avoid Discord rate limits
-                    if now - _last_edit < _EDIT_INTERVAL:
-                        return
-                    _last_edit = now
-                    text = "".join(_stream_buf).strip()
-                    if not text:
-                        return
-                    # Truncate to Discord embed limit
-                    display = text[:4000] + "..." if len(text) > 4000 else text
-                    try:
-                        if _stream_msg is None:
-                            _stream_msg = await message.channel.send(f"*{display}*")
-                        else:
-                            await _stream_msg.edit(content=f"*{display}*")
-                    except Exception:
-                        pass  # Best effort streaming
+                # Create frontend for this channel (handles all Discord presentation)
+                frontend = DiscordTextFrontend(message.channel)
 
                 response = await self.session_manager.process_message(
                     channel_id=message.channel.id,
                     user_id=message.author.id,
                     user_name=message.author.display_name,
                     content=message.content,
-                    on_mechanics_ready=send_mechanics,
-                    on_narrative_token=on_narrative_token,
+                    frontend=frontend,
                 )
 
                 if response:
-                    # If we streamed, delete the streaming message and send final embed
-                    if _stream_msg:
-                        try:
-                            await _stream_msg.delete()
-                        except Exception:
-                            pass
-
-                    embeds = format_dm_response(response, skip_mechanics=mechanics_sent)
-                    for embed in embeds:
-                        await message.channel.send(embed=embed)
-
                     # Check if combat was triggered - show combat UI
                     if response.combat_triggered:
                         await self._show_combat_ui(message.channel)

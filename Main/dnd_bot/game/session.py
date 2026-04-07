@@ -11,10 +11,11 @@ from ..models import Character, GameState, Combat
 from ..memory import MemoryManager, get_memory_manager_sync
 from ..llm.orchestrator import DMOrchestrator, get_orchestrator, DMResponse
 from ..llm.brains.base import BrainContext
+from .frontend import GameFrontend, GameEvent
 from ..data.repositories import get_character_repo, get_session_repo
 from ..data.repositories.npc_repo import get_npc_repo
 from ..models.npc import EntityType, Disposition, SceneEntity
-from .combat.manager import CombatManager, get_combat_for_channel
+from .combat.manager import CombatManager, get_combat_for_channel, get_combat_by_key
 from .scene.registry import get_scene_registry, clear_scene_registry
 from .world_state import WorldState
 
@@ -43,19 +44,25 @@ class PlayerInfo:
 @dataclass
 class GameSession:
     """
-    An active game session in a Discord channel.
+    An active game session.
 
     This is the central coordinator for:
     - Player management
     - Message routing through the LLM
     - Combat state
     - Memory/context management
+
+    Works with any frontend (Discord text, voice, web) via session_key.
     """
 
     id: str
     channel_id: int
     guild_id: int
     campaign_id: str
+
+    # Generic session identifier. Defaults to f"discord:{channel_id}" in __post_init__.
+    # Voice/web frontends use their own keys (e.g., "voice:{room_id}").
+    session_key: str = ""
 
     # State
     state: SessionState = SessionState.STARTING
@@ -76,6 +83,10 @@ class GameSession:
 
     # Knowledge graph (persistent entity relationships)
     knowledge_graph: Optional[Any] = None  # KnowledgeGraph, Optional to avoid circular import
+
+    def __post_init__(self):
+        if not self.session_key:
+            self.session_key = f"discord:{self.channel_id}"
 
     def add_player(self, user_id: int, user_name: str, character: Character) -> PlayerInfo:
         """Add a player to the session."""
@@ -148,7 +159,7 @@ class GameSessionManager:
     """
 
     def __init__(self):
-        self._sessions: dict[int, GameSession] = {}  # channel_id -> session
+        self._sessions: dict[str, GameSession] = {}  # session_key -> session
         self._memory_managers: dict[str, MemoryManager] = {}  # campaign_id -> memory
         self._processing_lock = asyncio.Lock()
 
@@ -162,13 +173,17 @@ class GameSessionManager:
         """
         return get_orchestrator()
 
+    def get_session_by_key(self, session_key: str) -> Optional[GameSession]:
+        """Get a session by its generic session key."""
+        return self._sessions.get(session_key)
+
     def get_session(self, channel_id: int) -> Optional[GameSession]:
-        """Get the active session for a channel."""
-        return self._sessions.get(channel_id)
+        """Get the active session for a Discord channel."""
+        return self._sessions.get(f"discord:{channel_id}")
 
     def has_active_session(self, channel_id: int) -> bool:
         """Check if channel has an active session."""
-        session = self._sessions.get(channel_id)
+        session = self.get_session(channel_id)
         return session is not None and session.state in (SessionState.ACTIVE, SessionState.COMBAT)
 
     async def start_session(
@@ -182,7 +197,7 @@ class GameSessionManager:
         import uuid
 
         # End any existing session
-        if channel_id in self._sessions:
+        if self.get_session(channel_id):
             await self.end_session(channel_id)
 
         # Get session number for this campaign
@@ -235,7 +250,7 @@ class GameSessionManager:
             logger.warning("knowledge_graph_load_failed", error=str(e))
             session.knowledge_graph = None
 
-        self._sessions[channel_id] = session
+        self._sessions[session.session_key] = session
 
         # Initialize memory manager for this campaign
         if campaign_id not in self._memory_managers:
@@ -282,7 +297,7 @@ class GameSessionManager:
 
     async def end_session(self, channel_id: int) -> Optional[GameSession]:
         """End a game session."""
-        session = self._sessions.pop(channel_id, None)
+        session = self._sessions.pop(f"discord:{channel_id}", None)
         if session:
             session.state = SessionState.ENDED
 
@@ -393,7 +408,7 @@ class GameSessionManager:
                         character=char,
                     )
 
-                self._sessions[session_data["channel_id"]] = session
+                self._sessions[session.session_key] = session
 
                 # Initialize memory manager
                 if session_data["campaign_id"] not in self._memory_managers:
@@ -473,11 +488,17 @@ class GameSessionManager:
         content: str,
         on_mechanics_ready: Optional[Callable] = None,
         on_narrative_token: Optional[Callable] = None,
+        frontend: Optional[GameFrontend] = None,
     ) -> Optional[DMResponse]:
         """
         Process a player message through the LLM DM.
 
         This is the core game loop entry point.
+
+        Args:
+            frontend: If provided, events are emitted via frontend.on_event()
+                instead of using the raw callbacks. The callbacks are kept for
+                backward compatibility but frontend takes precedence.
         """
         session = self.get_session(channel_id)
         if not session or session.state not in (SessionState.ACTIVE, SessionState.COMBAT):
@@ -543,13 +564,32 @@ class GameSessionManager:
                 self.orchestrator.set_session(session)
                 self.orchestrator.set_scene_registry(scene_registry)
 
+                # If frontend provided, bridge events to callbacks for orchestrator
+                eff_mechanics_cb = on_mechanics_ready
+                eff_narrative_cb = on_narrative_token
+                if frontend is not None:
+                    async def _fe_mechanics(mechanical_result, dice_rolls):
+                        await frontend.on_event(
+                            GameEvent.mechanics_ready(mechanical_result, dice_rolls)
+                        )
+                    async def _fe_narrative(token: str):
+                        await frontend.on_event(GameEvent.narrative_token(token))
+                    eff_mechanics_cb = _fe_mechanics
+                    eff_narrative_cb = _fe_narrative
+
                 response = await self.orchestrator.process_action(
                     action=content,
                     player_name=player.character.name if player.character else user_name,
                     context=context,
-                    on_mechanics_ready=on_mechanics_ready,
-                    on_narrative_token=on_narrative_token,
+                    on_mechanics_ready=eff_mechanics_cb,
+                    on_narrative_token=eff_narrative_cb,
                 )
+
+                # Emit narrative complete event to frontend
+                if frontend is not None:
+                    await frontend.on_event(
+                        GameEvent.narrative_complete(response.narrative)
+                    )
 
                 # Add response to memory
                 await memory.add_dm_response(
@@ -636,7 +676,7 @@ class GameSessionManager:
         combat_context = ""
         is_in_combat = session.state == SessionState.COMBAT
         if is_in_combat:
-            combat = get_combat_for_channel(session.channel_id)
+            combat = get_combat_by_key(session.session_key)
             if combat:
                 current = combat.combat.get_current_combatant()
                 combatant_lines = []
