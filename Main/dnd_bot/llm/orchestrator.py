@@ -34,6 +34,7 @@ from .effects import (
     build_effect_idempotency_key,
 )
 from ..game.mechanics.dice import get_roller, DiceRoll
+from ..game.mechanics.validation import validate_action, ValidationResult
 from ..game.scene.registry import SceneEntityRegistry
 from ..data.repositories import get_character_repo, get_transaction_repo, generate_transaction_key
 from ..data.repositories.inventory_repo import get_inventory_repo
@@ -880,13 +881,13 @@ class DMOrchestrator:
             # TODO: Integrate with combat coordinator for in-combat attacks
 
         elif triage.action_type == "cast_spell":
-            # Spell casting — validate slot availability and provide context to narrator.
+            # Spell casting — slot validation handled by PGI layer below.
             # Full spell resolution (attack rolls, saves, AoE) is handled by the
             # combat coordinator when in combat; this path handles exploration/social casting.
             resolved = self._resolve_character_by_name(player_name)
             if resolved:
                 char_id, character = resolved
-                # Build spell context for the narrator
+                # Build spell context for the narrator (enrichment only, not rule enforcement)
                 slot_info = []
                 for level in range(1, 10):
                     current, max_slots = character.spell_slots.get_slots(level)
@@ -896,11 +897,83 @@ class DMOrchestrator:
 
                 if not triage.narrative_direction:
                     triage.narrative_direction = (
-                        f"The player attempts to cast a spell. "
-                        f"Their available spell slots: {spell_context}. "
-                        f"Narrate the spell's effect based on the game context. "
-                        f"If the spell requires a slot they don't have, describe the failure."
+                        f"The player casts a spell. "
+                        f"Available spell slots: {spell_context}. "
+                        f"Narrate the spell's dramatic effect."
                     )
+
+        # ── PGI Validation: deterministic rule checks before narrator fires ──
+        pgi_result: Optional[ValidationResult] = None
+        pgi_resolved = self._resolve_character_by_name(player_name)
+        if pgi_resolved:
+            _pgi_char_id, pgi_character = pgi_resolved
+
+            # Pre-fetch inventory/currency only when the action type needs them
+            pgi_items = None
+            pgi_currency = None
+            needs_inventory = (
+                triage.action_type in ("inventory",)
+                or triage.resources_consumed
+            )
+            needs_currency = (
+                triage.action_type == "purchase"
+                and triage.item_cost is not None
+            )
+
+            if needs_inventory or needs_currency:
+                try:
+                    inv_repo = await get_inventory_repo()
+                    if needs_inventory:
+                        pgi_items = await inv_repo.get_all_items(_pgi_char_id)
+                    if needs_currency:
+                        pgi_currency = await inv_repo.get_currency(_pgi_char_id)
+                except Exception as e:
+                    logger.warning("pgi_prefetch_failed", error=str(e))
+
+            pgi_result = await validate_action(
+                action_type=triage.action_type,
+                character=pgi_character,
+                action_text=action,
+                items=pgi_items,
+                currency=pgi_currency,
+                resources_consumed=triage.resources_consumed or None,
+                item_name=triage.item_name,
+                cost_gold=float(triage.item_cost) if triage.item_cost else 0,
+            )
+
+            # Record PGI results for observability
+            _turn_record.set("pgi", {
+                "passed": pgi_result.passed,
+                "failures": [
+                    {"code": f.code, "severity": f.severity.value, "priority": f.priority}
+                    for f in pgi_result.failures
+                ],
+            })
+
+            if pgi_result.has_hard_fail:
+                # Hard fail: return immediately — no narrator, no resources consumed
+                logger.info(
+                    "pgi_hard_fail_intercept",
+                    player=player_name,
+                    action_type=triage.action_type,
+                    codes=[f.code for f in pgi_result.hard_failures],
+                )
+                _turn_record.set("pgi_blocked", True)
+                self._turn_logger.flush(_turn_record)
+                return DMResponse(
+                    narrative=pgi_result.player_feedback(),
+                    mechanical_result={"pgi_blocked": True, "failures": [
+                        {"code": f.code, "message": f.message} for f in pgi_result.hard_failures
+                    ]},
+                )
+
+            if pgi_result.has_soft_fail:
+                # Soft fail: narrator gets modified payload with game-state-unchanged directive
+                soft_context = " ".join(f.message for f in pgi_result.soft_failures)
+                triage.narrative_direction = (
+                    f"[GAME STATE UNCHANGED] {soft_context}\n"
+                    f"{triage.narrative_direction or ''}"
+                ).strip()
 
         # Step 2.5: Send mechanics to Discord immediately (before narration LLM call)
         if on_mechanics_ready and (mechanical_result or dice_rolls):
@@ -1284,6 +1357,19 @@ class DMOrchestrator:
             dice_rolls=dice_rolls,
             combat_triggered=combat_triggered,
         )
+
+    async def triage_action(
+        self,
+        action: str,
+        player_name: str,
+        context: BrainContext,
+    ) -> TriageResult:
+        """Public: classify a player action without executing it.
+
+        Used by voice frontend to parse spoken combat commands into
+        structured actions via the existing triage system.
+        """
+        return await self._triage_action(action, player_name, context)
 
     async def _triage_action(
         self,
