@@ -448,10 +448,16 @@ Write your narration directly. Use tools (add_npc, spawn_object, ref_entity) for
         content = response.content.strip() if response.content else ""
 
         # Strip any leaked structural blocks
-        # (INTENTS:, ENTITIES:, --- separators, PROSE: headers)
+        # (INTENTS, ENTITIES, --- separators, PROSE headers, markdown headings)
         import re
-        content = re.split(r'\n---\n|\nINTENTS:\n|\nENTITIES:\n|\nPROSE:\n', content)[0].strip()
-        if content.startswith("PROSE:"):
+        # Split on any structural separator the model might use
+        content = re.split(
+            r'\n---\n|\n#{1,3}\s*INTENTS|\nINTENTS:|\n#{1,3}\s*ENTITIES|\nENTITIES:',
+            content, flags=re.IGNORECASE
+        )[0].strip()
+        # Strip leading headers (# OPENING SCENE, PROSE:, etc.)
+        content = re.sub(r'^#{1,3}\s+.*?\n', '', content).strip()
+        if content.upper().startswith("PROSE:"):
             content = content[6:].strip()
 
         # Strip leaked [id:] tags
