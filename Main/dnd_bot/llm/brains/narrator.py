@@ -431,42 +431,28 @@ Write 2-3 FULL paragraphs (each 3-5 sentences):
 - Paragraph 2: The disruption unfolds - tension escalates, stakes become felt
 - Paragraph 3: The fork crystallizes - present the choice clearly, end with "What do you do?"
 
-Output ONLY the PROSE and INTENTS blocks. No commentary, no planning, no explanations.""",
+Write your narration directly. Use tools (add_npc, spawn_object, ref_entity) for any NPCs or objects you introduce. No commentary, no planning, no format headers.""",
             },
         ]
+
+        from ..narrator_tools import NARRATOR_TOOLS_CORE
 
         response = await self.client.chat(
             messages=messages,
             temperature=self.temperature,
             max_tokens=2000,
-            think=False,
+            tools=NARRATOR_TOOLS_CORE,
+            tool_choice="auto",
         )
 
         content = response.content.strip() if response.content else ""
 
-        # Parse PROSE/INTENTS - for openings we only care about the prose
-        from ..intents import extract_intents_block, validate_narrator_format
-
-        # Validate format - should start with PROSE:
-        if content and not validate_narrator_format(content):
-            logger.warning(
-                "opening_format_invalid_reprompting",
-                content_preview=content[:100] if content else "(empty)",
-            )
-            # Reprompt once
-            messages.append({
-                "role": "system",
-                "content": "Your response was malformed. Start with PROSE: immediately, then your narration. No planning or commentary.",
-            })
-            response = await self.client.chat(
-                messages=messages,
-                temperature=self.temperature,
-                max_tokens=2000,
-                think=False,
-            )
-            content = response.content.strip() if response.content else ""
-
-        prose, _ = extract_intents_block(content or "")
+        # Strip any leaked structural blocks
+        # (INTENTS:, ENTITIES:, --- separators, PROSE: headers)
+        import re
+        content = re.split(r'\n---\n|\nINTENTS:\n|\nENTITIES:\n|\nPROSE:\n', content)[0].strip()
+        if content.startswith("PROSE:"):
+            content = content[6:].strip()
 
         # Validate non-empty response
         if not prose or not prose.strip():
