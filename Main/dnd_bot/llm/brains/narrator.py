@@ -454,6 +454,12 @@ Write your narration directly. Use tools (add_npc, spawn_object, ref_entity) for
         if content.startswith("PROSE:"):
             content = content[6:].strip()
 
+        # Strip leaked [id:] tags
+        if "[id:" in content:
+            content = re.sub(r'\s*\[id:\s*[^\]]+\]', '', content)
+
+        prose = content
+
         # Validate non-empty response
         if not prose or not prose.strip():
             prose = (
