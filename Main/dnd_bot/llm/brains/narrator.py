@@ -64,9 +64,12 @@ Level 1-2 party (1-2 players): 1-3 weak enemies max. No bosses. No armies as dir
 ## TOOLS
 
 Call tools alongside your prose for mechanical effects:
-- **ref_entity** — for every roster entity you mention
-- **add_npc** — for new NPCs (give them proper names)
+- **ref_entity** — for every roster entity you mention. If the entity SPEAKS quoted dialogue, set `dialogue_indices` to which quotes they say (1-indexed). Set `dialogue_emotions` to the delivery tone for each line (e.g. "desperate", "angry", "whispering", "calm").
+- **add_npc** — for new NPCs (give them proper names). Same dialogue_indices/dialogue_emotions fields if the NPC speaks.
 - **spawn_object** — for new objects in the scene
+
+Example: If your prose has 3 quoted lines and NPC "Greta" says quotes 2 and 3:
+  ref_entity(entity_id="greta", dialogue_indices=[2, 3], dialogue_emotions=["angry", "whispering"])
 
 Write prose directly. No format headers needed."""
 
@@ -356,7 +359,7 @@ class NarratorBrain(Brain):
         campaign_name: str,
         world_setting: str,
         characters: list,
-    ) -> str:
+    ) -> tuple[str, list]:
         """Generate an opening narrative to start the adventure."""
         # Build character descriptions
         char_descriptions = []
@@ -437,12 +440,14 @@ Write your narration directly. Use tools (add_npc, spawn_object, ref_entity) for
 
         from ..narrator_tools import NARRATOR_TOOLS_CORE
 
+        # Don't set tool_choice — Claude may produce ONLY tool calls with
+        # zero prose when tool_choice="auto". Tools are available but prose
+        # is the priority for the opening.
         response = await self.client.chat(
             messages=messages,
             temperature=self.temperature,
             max_tokens=2000,
             tools=NARRATOR_TOOLS_CORE,
-            tool_choice="auto",
         )
 
         content = response.content.strip() if response.content else ""
@@ -466,6 +471,12 @@ Write your narration directly. Use tools (add_npc, spawn_object, ref_entity) for
 
         prose = content
 
+        # Extract tool calls for NPC/entity registration
+        tool_calls = []
+        if hasattr(response, 'tool_calls') and response.tool_calls:
+            from ..narrator_tools import tool_calls_to_effects
+            tool_calls = tool_calls_to_effects(response.tool_calls)
+
         # Validate non-empty response
         if not prose or not prose.strip():
             prose = (
@@ -478,7 +489,7 @@ Write your narration directly. Use tools (add_npc, spawn_object, ref_entity) for
             # Models often ignore this instruction, so we enforce it
             prose = self._ensure_handoff(prose)
 
-        return prose
+        return prose, tool_calls
 
     def _ensure_handoff(self, prose: str) -> str:
         """Ensure prose ends with an open-ended question for player agency.
