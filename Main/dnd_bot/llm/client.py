@@ -54,9 +54,23 @@ class LLMResponse:
     prompt_tokens: int = 0
     completion_tokens: int = 0
 
+    # Prompt caching telemetry (audit #21). Providers that support caching
+    # populate one or both. Anthropic distinguishes read (cheap) from
+    # creation (more expensive than non-cached the first time). DeepSeek
+    # reports cache_hit_tokens as cache_read_tokens; misses are just regular
+    # prompt_tokens. OpenAI's auto-cache also fills cache_read_tokens.
+    cache_read_tokens: int = 0   # input tokens served from cache (savings)
+    cache_write_tokens: int = 0  # input tokens written to cache (this turn)
+
     @property
     def has_tool_calls(self) -> bool:
         return len(self.tool_calls) > 0
+
+    @property
+    def cache_hit_ratio(self) -> float:
+        """Fraction of prompt tokens served from cache. 0.0 if no caching."""
+        total = self.prompt_tokens + self.cache_read_tokens
+        return self.cache_read_tokens / total if total > 0 else 0.0
 
 
 @dataclass
@@ -69,7 +83,13 @@ class ToolCall:
 
 
 def _clean_llm_content(content: str) -> str:
-    """Strip Qwen3 thinking tags and leaked CJK characters from LLM output."""
+    """Strip leaked thinking tags and CJK characters from LLM output.
+
+    Actively needed: Groq only offers Qwen 3 32B, which leaks <think>
+    tags even with think=False. Also catches Qwen fine-tunes on Ollama
+    that exhibit the same bug. Qwen 3.5+ on Ollama should be clean but
+    the check is near-zero cost.
+    """
     if "</think>" in content:
         think_end = content.find("</think>")
         content = content[think_end + len("</think>"):].strip()
@@ -85,7 +105,16 @@ def _clean_llm_content(content: str) -> str:
 
 
 class OllamaClient:
-    """Async wrapper around Ollama client."""
+    """Async wrapper around Ollama client.
+
+    Tool-calling requests are routed through Ollama's OpenAI-compatible
+    endpoint (``/v1/chat/completions``) instead of the native ``/api/chat``
+    path. The native path has a known bug (ollama#14601) where tool
+    definitions are rendered as Go-struct strings rather than valid JSON,
+    causing models to silently ignore the tools. The compat endpoint uses
+    OpenAI's serializer and works correctly. Non-tool requests continue
+    to use the native client (json_schema / json_mode / think).
+    """
 
     def __init__(
         self,
@@ -101,6 +130,10 @@ class OllamaClient:
         self.num_ctx = num_ctx  # Cap context window to control VRAM
         self._executor = ThreadPoolExecutor(max_workers=max_workers)
         self._client = ollama.Client(host=self.host)
+        # Lazy-init OpenAI-compat client for tool-bearing requests.
+        # Uses Ollama's /v1/chat/completions endpoint to bypass the
+        # broken native tool serializer.
+        self._openai_compat_client = None
 
     async def chat(
         self,
@@ -114,6 +147,9 @@ class OllamaClient:
         tool_choice: Optional[str] = None,
         frequency_penalty: Optional[float] = None,
         presence_penalty: Optional[float] = None,
+        top_p: Optional[float] = None,
+        top_k: Optional[int] = None,
+        min_p: Optional[float] = None,
     ) -> LLMResponse:
         """
         Send a chat request to Ollama.
@@ -133,10 +169,31 @@ class OllamaClient:
                 Maps to Ollama's repeat_penalty (offset by 1.0).
             presence_penalty: Penalize any token that has appeared at all (0.0-2.0).
                 Maps to Ollama's presence_penalty option.
+            top_p: Nucleus sampling threshold (Qwen3 recommends 0.8).
+            top_k: Top-K sampling cutoff (Qwen3 recommends 20).
+            min_p: Min-probability cutoff (Qwen3 recommends 0).
 
         Returns:
             LLMResponse with content and any tool calls
         """
+        # Route tool-bearing requests through Ollama's OpenAI-compat
+        # endpoint to avoid the broken native tool serializer
+        # (ollama#14601). Non-tool calls keep the native path because it
+        # supports json_schema / json_mode / think correctly.
+        if tools:
+            return await self._chat_via_openai_compat(
+                messages=messages,
+                temperature=temperature,
+                tools=tools,
+                tool_choice=tool_choice,
+                max_tokens=max_tokens,
+                frequency_penalty=frequency_penalty,
+                presence_penalty=presence_penalty,
+                top_p=top_p,
+                top_k=top_k,
+                min_p=min_p,
+            )
+
         loop = asyncio.get_event_loop()
 
         # If tool_choice is set and Ollama doesn't support it natively,
@@ -266,6 +323,311 @@ class OllamaClient:
             )
         except Exception as e:
             logger.error("ollama_chat_error", error=str(e))
+            raise
+
+    @staticmethod
+    def _build_hermes_tools_block(tools: list[dict]) -> str:
+        """Build a Hermes-format <tools> system-prompt block.
+
+        Empirically required for Qwen3.6 on ollama: while the research
+        suggested ollama's Qwen3 chat template auto-injects from the
+        ``tools=`` arg, in practice on this build (ollama 0.x +
+        qwen3.6:latest) the auto-injection is missing/broken and the
+        model emits zero tool calls without an explicit Hermes block.
+        Keep this injection — pair with ``num_ctx`` override so context
+        bloat doesn't truncate prose.
+        """
+        tools_json = "\n".join(json.dumps(t) for t in tools)
+        return (
+            "# Tools\n\n"
+            "You may call one or more functions to assist with the user query.\n\n"
+            "You are provided with function signatures within "
+            "<tools></tools> XML tags:\n"
+            "<tools>\n"
+            f"{tools_json}\n"
+            "</tools>\n\n"
+            "For each function call, return a json object with function "
+            "name and arguments within <tool_call></tool_call> XML tags:\n"
+            "<tool_call>\n"
+            '{"name": "<function-name>", "arguments": <args-json-object>}\n'
+            "</tool_call>"
+        )
+
+    # Models with Ollama's native tool RENDERER/PARSER directive
+    # (verify with `ollama show <model> --modelfile`). For these, Ollama
+    # wraps `tools=[...]` with the model-family's hard token boundaries
+    # (Gemma 4: `<|tool|>`, `<|tool_call|>`, `<|tool_result|>`). Injecting
+    # a Hermes XML `<tools>` block alongside that is at best dead context
+    # bloat, at worst confuses the model into emitting Hermes XML instead
+    # of the native special tokens — defeating determinism (audit #95).
+    _NATIVE_TOOL_MODEL_PREFIXES: tuple[str, ...] = ("gemma4",)
+
+    @classmethod
+    def _build_compat_messages(
+        cls,
+        model: str,
+        messages: list[dict],
+        tools: list[dict],
+    ) -> tuple[list[dict], bool]:
+        """Build the message list for the OpenAI-compat chat path.
+
+        Returns ``(messages, uses_native_tool_renderer)``. For models in
+        the native-tool allowlist, returns the messages unchanged so
+        Ollama's renderer can do its job. For everything else (e.g.
+        Qwen3), prepends a Hermes-format `<tools>` system block before
+        the first user message so the model knows what to call.
+
+        Extracted from ``_chat_via_openai_compat`` for testability.
+        """
+        uses_native = any(model.startswith(p) for p in cls._NATIVE_TOOL_MODEL_PREFIXES)
+        if uses_native:
+            return list(messages), True
+        hermes_block = cls._build_hermes_tools_block(tools)
+        injected = list(messages)
+        first_user_idx = next(
+            (i for i, m in enumerate(injected) if m.get("role") == "user"),
+            len(injected),
+        )
+        injected.insert(first_user_idx, {"role": "system", "content": hermes_block})
+        return injected, False
+
+    @staticmethod
+    def _parse_hermes_tool_calls(content: str) -> tuple[str, list[dict]]:
+        """Extract <tool_call>...</tool_call> blocks from model content.
+
+        Returns (clean_content, tool_calls). When ollama's compat layer
+        already parses tool calls into the structured ``tool_calls``
+        field, this returns an empty list and the original content. We
+        keep this as a fallback in case the model emits inline blocks
+        without the SDK auto-parsing them.
+        """
+        if "<tool_call>" not in content:
+            return content, []
+
+        tool_calls: list[dict] = []
+        pattern = re.compile(
+            r"<tool_call>\s*(.*?)\s*</tool_call>",
+            re.DOTALL,
+        )
+        for m in pattern.finditer(content):
+            block = m.group(1).strip()
+            try:
+                parsed = json.loads(block)
+            except json.JSONDecodeError:
+                logger.warning(
+                    "hermes_tool_call_parse_failed",
+                    block_preview=block[:120],
+                )
+                continue
+            name = parsed.get("name", "")
+            args = parsed.get("arguments", {}) or {}
+            if isinstance(args, str):
+                try:
+                    args = json.loads(args)
+                except json.JSONDecodeError:
+                    args = {}
+            if name:
+                tool_calls.append({"name": name, "arguments": args})
+
+        clean = pattern.sub("", content).strip()
+        return clean, tool_calls
+
+    def _get_openai_compat_client(self):
+        """Lazily build an AsyncOpenAI client pointed at Ollama's
+        OpenAI-compatible endpoint. Used for tool-bearing requests because
+        the native /api/chat path mangles tool definitions (ollama#14601).
+        """
+        if self._openai_compat_client is None:
+            try:
+                from openai import AsyncOpenAI
+            except ImportError:
+                raise ImportError(
+                    "openai package required for Ollama tool calling. "
+                    "Install with: pip install openai"
+                )
+            # Ollama's OpenAI-compat endpoint lives at <host>/v1.
+            # The host setting is e.g. "http://localhost:11434".
+            base_url = self.host.rstrip("/") + "/v1"
+            self._openai_compat_client = AsyncOpenAI(
+                api_key="ollama",  # Required by the SDK; ignored by ollama
+                base_url=base_url,
+            )
+        return self._openai_compat_client
+
+    async def _chat_via_openai_compat(
+        self,
+        messages: list[dict],
+        temperature: float,
+        tools: list[dict],
+        tool_choice: Optional[str],
+        max_tokens: Optional[int],
+        frequency_penalty: Optional[float],
+        presence_penalty: Optional[float],
+        top_p: Optional[float] = None,
+        top_k: Optional[int] = None,
+        min_p: Optional[float] = None,
+    ) -> LLMResponse:
+        """Tool-bearing chat path via Ollama's OpenAI-compat endpoint.
+
+        Per agent research (ollama#10698, #14958, #11759):
+
+        - **Pass ``tools`` natively**: ollama's Qwen3 chat template injects
+          a Hermes-format <tools> block from the ``tools=`` arg correctly.
+          Manually injecting our own duplicate bloats context AND confuses
+          the model into picking the in-prompt format over the structured
+          path, costing prose generation.
+        - **Set ``num_ctx`` via ``extra_body``**: the compat endpoint
+          silently defaults ctx to 2048 unless overridden. With our 9-tool
+          schema + roster + system prompt, that truncates the prompt and
+          drops the model's prose, leaving only the tool call. Threading
+          our profile's ``context_size`` through here is critical.
+        - **Omit ``tool_choice`` unless explicitly set**: ollama treats
+          absent and "auto" identically; ``"required"`` makes the prose
+          drop worse.
+        - **Sampling params** (frequency/presence_penalty) are honored on
+          this path; the native /api/chat path silently drops them for
+          Qwen3.x.
+        """
+        client = self._get_openai_compat_client()
+
+        injected_messages, uses_native_tool_renderer = self._build_compat_messages(
+            self.model, messages, tools,
+        )
+
+        kwargs: dict[str, Any] = {
+            "model": self.model,
+            "messages": injected_messages,
+            "temperature": temperature,
+            "tools": tools,
+        }
+        if max_tokens:
+            kwargs["max_tokens"] = max_tokens
+        if frequency_penalty is not None:
+            kwargs["frequency_penalty"] = frequency_penalty
+        if presence_penalty is not None:
+            kwargs["presence_penalty"] = presence_penalty
+        if top_p is not None:
+            kwargs["top_p"] = top_p
+        # Only forward tool_choice when explicitly requested; default
+        # behavior matches OpenAI/ollama "auto" without the param.
+        if tool_choice and tool_choice != "auto":
+            if tool_choice in ("required", "none"):
+                kwargs["tool_choice"] = tool_choice
+            else:
+                kwargs["tool_choice"] = {
+                    "type": "function",
+                    "function": {"name": tool_choice},
+                }
+
+        # Thread Ollama's num_ctx through extra_body — the OpenAI SDK
+        # doesn't have a native field for this. Without it, ollama
+        # silently truncates at 2048 tokens, which drops prose alongside
+        # tool calls. top_k and min_p are also Ollama-specific and live
+        # under options.
+        ctx_size = self.num_ctx or 32768
+        extra_body = {
+            "options": {
+                "num_ctx": ctx_size,
+            }
+        }
+        if max_tokens:
+            extra_body["options"]["num_predict"] = max_tokens
+        if top_k is not None:
+            extra_body["options"]["top_k"] = top_k
+        if min_p is not None:
+            extra_body["options"]["min_p"] = min_p
+        kwargs["extra_body"] = extra_body
+
+        try:
+            import time as _time
+            _t0 = _time.monotonic()
+
+            response = await asyncio.wait_for(
+                client.chat.completions.create(**kwargs),
+                timeout=self.timeout,
+            )
+
+            _elapsed = _time.monotonic() - _t0
+
+            choice = response.choices[0] if response.choices else None
+            message = choice.message if choice else None
+            raw_content = (message.content if message else "") or ""
+
+            # Source 1: SDK-parsed tool_calls (when ollama's Qwen3
+            # template auto-parses inline <tool_call> XML into structured
+            # output, this populates).
+            sdk_tool_calls: list[dict] = []
+            if message and getattr(message, "tool_calls", None):
+                for tc in message.tool_calls:
+                    args = tc.function.arguments
+                    if isinstance(args, str):
+                        try:
+                            args = json.loads(args)
+                        except json.JSONDecodeError:
+                            args = {}
+                    sdk_tool_calls.append({
+                        "name": tc.function.name,
+                        "arguments": args,
+                    })
+
+            # Source 2: parse <tool_call> blocks from content. Triggers
+            # when the SDK's auto-parser missed inline emissions.
+            stripped_content, hermes_tool_calls = self._parse_hermes_tool_calls(raw_content)
+
+            tool_calls = sdk_tool_calls or hermes_tool_calls
+            content_for_cleanup = stripped_content if hermes_tool_calls else raw_content
+            content = _clean_llm_content(content_for_cleanup)
+
+            usage = getattr(response, "usage", None)
+            prompt_tokens = getattr(usage, "prompt_tokens", 0) if usage else 0
+
+            logger.info(
+                "ollama_compat_response",
+                model=self.model,
+                elapsed_s=round(_elapsed, 2),
+                content_length=len(content),
+                tool_call_count=len(tool_calls),
+                sdk_tool_calls=len(sdk_tool_calls),
+                hermes_tool_calls=len(hermes_tool_calls),
+                # Audit #95 verification: for gemma4 models we expect
+                # sdk_tool_calls > 0 and hermes_tool_calls == 0 (i.e. the
+                # native renderer is doing its job). If hermes_tool_calls
+                # ever fires for a native-tool model, something is off.
+                tool_path=("native" if uses_native_tool_renderer else "hermes"),
+                prompt_tokens=prompt_tokens,
+                num_ctx=ctx_size,
+                tools_offered=[t["function"]["name"] for t in tools],
+                content_preview=content[:200],
+            )
+            _write_debug_log(
+                f"OLLAMA_COMPAT_RESPONSE (api={_elapsed:.1f}s, tools={len(tool_calls)})",
+                content or "(empty)",
+            )
+
+            return LLMResponse(
+                content=content,
+                tool_calls=tool_calls,
+                model=getattr(response, "model", self.model) or self.model,
+                finish_reason=choice.finish_reason if choice else "",
+                prompt_tokens=prompt_tokens,
+                completion_tokens=getattr(usage, "completion_tokens", 0) if usage else 0,
+            )
+
+        except asyncio.TimeoutError:
+            logger.error(
+                "ollama_compat_timeout",
+                timeout=self.timeout,
+                model=self.model,
+            )
+            raise TimeoutError(
+                f"Ollama OpenAI-compat call timed out after {self.timeout}s."
+            )
+        except Exception as e:
+            logger.error(
+                "ollama_compat_chat_error",
+                error=str(e),
+                model=self.model,
+            )
             raise
 
     async def chat_stream(
@@ -720,8 +1082,36 @@ class AnthropicClient:
             "temperature": temperature,
         }
 
+        # Enforce JSON output when json_schema or json_mode is requested.
+        # Claude doesn't have native json_mode, so we inject a system hint.
+        if json_schema or json_mode:
+            system_parts.append(
+                "IMPORTANT: Respond with ONLY a valid JSON object. "
+                "No prose, no markdown fences, no explanation."
+            )
+
         if system_parts:
-            kwargs["system"] = "\n\n".join(system_parts)
+            # Audit #21: use Anthropic's ephemeral prompt caching. The first
+            # system_part is typically the long static narrator template
+            # (~2K tokens) — putting cache_control on it caches everything
+            # up to and including that block. Subsequent system_parts
+            # (per-turn instructions) stay outside the cache breakpoint so
+            # the cache key stays stable across turns.
+            #
+            # Anthropic's minimum cacheable size is 1024 tokens (~4000 chars).
+            # If the first part is shorter than that, fall back to joining as
+            # one string (Anthropic ignores cache_control on too-short blocks).
+            MIN_CACHEABLE_CHARS = 4000
+            if len(system_parts[0]) >= MIN_CACHEABLE_CHARS:
+                blocks: list[dict] = []
+                for i, part in enumerate(system_parts):
+                    block: dict = {"type": "text", "text": part}
+                    if i == 0:
+                        block["cache_control"] = {"type": "ephemeral"}
+                    blocks.append(block)
+                kwargs["system"] = blocks
+            else:
+                kwargs["system"] = "\n\n".join(system_parts)
 
         # Claude uses input_schema instead of parameters for tools
         if tools:
@@ -776,6 +1166,15 @@ class AnthropicClient:
             )
 
             usage = response.usage
+            cache_read = getattr(usage, "cache_read_input_tokens", 0) if usage else 0
+            cache_write = getattr(usage, "cache_creation_input_tokens", 0) if usage else 0
+            if cache_read or cache_write:
+                logger.info(
+                    "anthropic_cache_telemetry",
+                    cache_read_tokens=cache_read,
+                    cache_write_tokens=cache_write,
+                    uncached_input_tokens=usage.input_tokens if usage else 0,
+                )
             return LLMResponse(
                 content=content,
                 tool_calls=tool_calls,
@@ -783,6 +1182,8 @@ class AnthropicClient:
                 finish_reason=response.stop_reason or "",
                 prompt_tokens=usage.input_tokens if usage else 0,
                 completion_tokens=usage.output_tokens if usage else 0,
+                cache_read_tokens=cache_read,
+                cache_write_tokens=cache_write,
             )
 
         except asyncio.TimeoutError:
@@ -937,10 +1338,16 @@ class GeminiClient:
         model = self._genai.GenerativeModel(**model_kwargs)
 
         # Generation config
-        gen_config = self._genai.GenerationConfig(
-            temperature=temperature,
-            max_output_tokens=max_tokens or 2000,
-        )
+        gen_kwargs: dict[str, Any] = {
+            "temperature": temperature,
+            "max_output_tokens": max_tokens or 2000,
+        }
+
+        # Enforce JSON output when json_schema or json_mode is requested
+        if json_schema or json_mode:
+            gen_kwargs["response_mime_type"] = "application/json"
+
+        gen_config = self._genai.GenerationConfig(**gen_kwargs)
 
         call_kwargs: dict[str, Any] = {
             "contents": merged,
@@ -1164,16 +1571,201 @@ class OpenRouterClient:
         pass
 
 
+class DeepSeekClient:
+    """Async client for DeepSeek API (OpenAI-compatible).
+
+    Supports DeepSeek V4 Pro / V4 Flash. Direct integration enables their
+    automatic prefix-based prompt caching (cached input tokens reported in
+    usage as prompt_cache_hit_tokens vs prompt_cache_miss_tokens).
+
+    Thinking mode (default ENABLED on DeepSeek) is disabled by default here
+    because we want narrator prose without CoT leakage AND because thinking
+    mode silently disables temperature, top_p, frequency_penalty, and
+    presence_penalty — losing the variety controls the narrator depends on.
+    Pass think=True explicitly to re-enable for reasoning-heavy tasks.
+    """
+
+    def __init__(
+        self,
+        model: Optional[str] = None,
+        api_key: Optional[str] = None,
+    ):
+        try:
+            from openai import AsyncOpenAI
+        except ImportError:
+            raise ImportError(
+                "openai package required for DeepSeek. Install with: pip install openai"
+            )
+
+        settings = get_settings()
+        self.model = model or "deepseek-v4-flash"
+        self.timeout = settings.llm_timeout
+        key = api_key or settings.deepseek_api_key
+        if not key:
+            raise ValueError("DEEPSEEK_API_KEY must be set when using DeepSeek provider")
+        self._client = AsyncOpenAI(
+            api_key=key,
+            base_url="https://api.deepseek.com/v1",
+        )
+
+    async def chat(
+        self,
+        messages: list[dict],
+        temperature: float = 0.7,
+        tools: Optional[list[dict]] = None,
+        max_tokens: Optional[int] = None,
+        json_mode: bool = False,
+        json_schema: Optional[dict] = None,
+        think: Optional[bool] = None,
+        tool_choice: Optional[str] = None,
+        frequency_penalty: Optional[float] = None,
+        presence_penalty: Optional[float] = None,
+    ) -> LLMResponse:
+        """Send a chat request to DeepSeek. Same interface as other clients.
+
+        Note: DeepSeek's thinking mode silently ignores temperature, top_p,
+        frequency_penalty, and presence_penalty when enabled. We default to
+        thinking=disabled to preserve those controls; pass think=True to opt
+        back in (and accept those params being dropped).
+        """
+        kwargs: dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": temperature,
+        }
+
+        # Thinking mode: default OFF to preserve sampling params and avoid
+        # CoT leakage in narrator prose. think=True opts into thinking.
+        thinking_enabled = think is True
+        extra_body = {
+            "thinking": {"type": "enabled" if thinking_enabled else "disabled"},
+        }
+
+        # Sampling params are silently ignored when thinking is on — only
+        # forward them when thinking is off so behavior is predictable.
+        if not thinking_enabled:
+            if frequency_penalty is not None:
+                kwargs["frequency_penalty"] = frequency_penalty
+            if presence_penalty is not None:
+                kwargs["presence_penalty"] = presence_penalty
+
+        if max_tokens:
+            kwargs["max_tokens"] = max_tokens
+
+        if tools:
+            kwargs["tools"] = tools
+            if tool_choice:
+                if tool_choice in ("auto", "required", "none"):
+                    kwargs["tool_choice"] = tool_choice
+                else:
+                    kwargs["tool_choice"] = {
+                        "type": "function",
+                        "function": {"name": tool_choice},
+                    }
+
+        if json_schema or json_mode:
+            kwargs["response_format"] = {"type": "json_object"}
+
+        kwargs["extra_body"] = extra_body
+
+        try:
+            import time as _time
+            _t0 = _time.monotonic()
+
+            response = await asyncio.wait_for(
+                self._client.chat.completions.create(**kwargs),
+                timeout=self.timeout,
+            )
+
+            _elapsed = _time.monotonic() - _t0
+
+            choice = response.choices[0] if response.choices else None
+            message = choice.message if choice else None
+            raw_content = message.content if message else ""
+
+            # Capture reasoning_content if thinking was enabled (separate field)
+            reasoning_content = ""
+            if message and hasattr(message, "reasoning_content"):
+                reasoning_content = getattr(message, "reasoning_content", "") or ""
+
+            _write_debug_log(
+                f"DEEPSEEK_RESPONSE (api={_elapsed:.1f}s)",
+                raw_content or "(empty)",
+            )
+
+            # Cache hit/miss telemetry — DeepSeek-specific in usage object
+            usage = response.usage
+            cache_hit = getattr(usage, "prompt_cache_hit_tokens", 0) if usage else 0
+            cache_miss = getattr(usage, "prompt_cache_miss_tokens", 0) if usage else 0
+
+            logger.info(
+                "deepseek_response",
+                content_length=len(raw_content) if raw_content else 0,
+                content_preview=(raw_content or "")[:200],
+                model=getattr(response, "model", self.model),
+                thinking=thinking_enabled,
+                reasoning_length=len(reasoning_content),
+                cache_hit_tokens=cache_hit,
+                cache_miss_tokens=cache_miss,
+                cache_hit_ratio=(cache_hit / (cache_hit + cache_miss)) if (cache_hit + cache_miss) else 0,
+            )
+
+            # Extract tool calls (standard OpenAI shape)
+            tool_calls = []
+            if message and message.tool_calls:
+                for tc in message.tool_calls:
+                    args = tc.function.arguments
+                    if isinstance(args, str):
+                        try:
+                            args = json.loads(args)
+                        except json.JSONDecodeError:
+                            args = {}
+                    tool_calls.append({
+                        "name": tc.function.name,
+                        "arguments": args,
+                    })
+
+            return LLMResponse(
+                content=raw_content or "",
+                tool_calls=tool_calls,
+                model=getattr(response, "model", self.model) or self.model,
+                finish_reason=choice.finish_reason if choice else "",
+                prompt_tokens=usage.prompt_tokens if usage else 0,
+                completion_tokens=usage.completion_tokens if usage else 0,
+                # DeepSeek auto-caches prefixes; surface hits as cache_read_tokens
+                # so observability matches Anthropic. There's no explicit "write"
+                # cost — misses are just regular input billing.
+                cache_read_tokens=cache_hit,
+            )
+
+        except asyncio.TimeoutError:
+            logger.error("deepseek_chat_timeout", timeout=self.timeout, model=self.model)
+            raise TimeoutError(f"DeepSeek API call timed out after {self.timeout}s.")
+        except Exception as e:
+            logger.error("deepseek_chat_error", error=str(e))
+            raise
+
+    async def is_available(self) -> bool:
+        return True
+
+    def close(self):
+        pass
+
+
 # Global client instances
 _client = None
-_narrator_client = None
+_narrator_client = None  # Backwards-compatible standard-tier narrator
+_narrator_clients_by_tier: dict = {}  # tier -> client (with fallback applied)
+_clients_by_provider_model: dict = {}  # (provider, model) -> shared client instance
 
 
 def _reset_clients():
     """Clear cached client instances so they recreate from the active profile."""
-    global _client, _narrator_client
+    global _client, _narrator_client, _narrator_clients_by_tier, _clients_by_provider_model
     _client = None
     _narrator_client = None
+    _narrator_clients_by_tier = {}
+    _clients_by_provider_model = {}
 
 
 def _create_client(provider: str, model: str, fallback_to_ollama: bool = False, context_size: int = 0):
@@ -1188,6 +1780,8 @@ def _create_client(provider: str, model: str, fallback_to_ollama: bool = False, 
         return AnthropicClient(model=model)
     elif provider == "openrouter":
         return OpenRouterClient(model=model)
+    elif provider == "deepseek":
+        return DeepSeekClient(model=model)
     elif provider == "gemini":
         return GeminiClient(model=model)
     else:  # ollama
@@ -1210,42 +1804,103 @@ def get_llm_client():
     return _client
 
 
-def get_narrator_client():
-    """Get the narrator LLM client based on active profile.
+def _resolve_narrator_tier_config(profile, tier: str):
+    """Resolve a tier name to its ProviderConfig, applying fallback rules.
 
-    Supports independent routing from the brain client — different
-    provider, different model, different everything.
+    Fallback chain:
+        opening  -> narrator_opening or premium fallback
+        premium  -> narrator_premium or standard fallback
+        standard -> narrator (always present)
+
+    Returns ``(resolved_tier_name, ProviderConfig)``. The resolved tier name
+    reflects what was actually picked after fallback (useful for logging).
+    """
+    if tier == "opening":
+        if profile.narrator_opening is not None:
+            return "opening", profile.narrator_opening
+        if profile.narrator_premium is not None:
+            return "premium", profile.narrator_premium
+        return "standard", profile.narrator
+
+    if tier == "premium":
+        if profile.narrator_premium is not None:
+            return "premium", profile.narrator_premium
+        return "standard", profile.narrator
+
+    return "standard", profile.narrator
+
+
+def get_narrator_client_for(tier: str = "standard"):
+    """Get the narrator LLM client for a given tier.
+
+    Tiers (with silent fallback to ``standard`` when unconfigured):
+    - ``"opening"``: session opener (falls back to ``"premium"`` then ``"standard"``)
+    - ``"premium"``: high-significance turns (falls back to ``"standard"``)
+    - ``"standard"``: default daily driver
+
+    Clients are cached by ``(provider, model)`` so two tiers pointing at the
+    same model share an instance. The brain client is also reused if its
+    ``(provider, model)`` matches a narrator tier.
+    """
+    global _narrator_clients_by_tier, _clients_by_provider_model
+
+    if tier in _narrator_clients_by_tier:
+        return _narrator_clients_by_tier[tier]
+
+    profile = get_profile()
+    resolved_tier, cfg = _resolve_narrator_tier_config(profile, tier)
+    key = (cfg.provider, cfg.model)
+
+    # Try (provider, model) shared cache first — covers both cross-tier sharing
+    # and brain↔narrator sharing.
+    client = _clients_by_provider_model.get(key)
+
+    if client is None:
+        # Also check the brain client; reuse if (provider, model) matches.
+        brain = profile.brain
+        if (cfg.provider == brain.provider and cfg.model == brain.model
+                and _client is not None):
+            client = _client
+            # Bump context window if narrator needs more headroom
+            if hasattr(client, "num_ctx") and cfg.context_size:
+                client.num_ctx = max(client.num_ctx or 0, cfg.context_size)
+        else:
+            client = _create_client(
+                cfg.provider, cfg.model, context_size=cfg.context_size,
+            )
+
+        _clients_by_provider_model[key] = client
+        logger.info(
+            "narrator_client_init",
+            provider=cfg.provider,
+            model=cfg.model,
+            requested_tier=tier,
+            resolved_tier=resolved_tier,
+            profile=profile.name,
+            cache_hit=False,
+        )
+    else:
+        logger.debug(
+            "narrator_client_cache_hit",
+            provider=cfg.provider,
+            model=cfg.model,
+            requested_tier=tier,
+            resolved_tier=resolved_tier,
+        )
+
+    _narrator_clients_by_tier[tier] = client
+    return client
+
+
+def get_narrator_client():
+    """Backwards-compatible accessor: returns the standard-tier narrator client.
+
+    Prefer ``get_narrator_client_for(tier=...)`` for new call sites that need
+    to route by narrative significance.
     """
     global _narrator_client
     if _narrator_client is None:
-        profile = get_profile()
-        narrator = profile.narrator
-
-        # If narrator and brain use same provider+model, share the client
-        # Use the larger context_size since num_ctx caps, doesn't pre-allocate
-        if (narrator.provider == profile.brain.provider
-                and narrator.model == profile.brain.model):
-            _narrator_client = get_llm_client()
-            # Ensure shared client uses the larger context window
-            if hasattr(_narrator_client, 'num_ctx') and narrator.context_size:
-                _narrator_client.num_ctx = max(
-                    _narrator_client.num_ctx or 0,
-                    narrator.context_size,
-                )
-            logger.info(
-                "narrator_client_init",
-                provider=narrator.provider,
-                model=narrator.model,
-                shared_with="brain",
-            )
-        else:
-            _narrator_client = _create_client(narrator.provider, narrator.model, context_size=narrator.context_size)
-            logger.info(
-                "narrator_client_init",
-                provider=narrator.provider,
-                model=narrator.model,
-                profile=profile.name,
-            )
+        _narrator_client = get_narrator_client_for("standard")
     return _narrator_client
 
 

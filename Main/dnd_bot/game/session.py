@@ -84,6 +84,9 @@ class GameSession:
     # Knowledge graph (persistent entity relationships)
     knowledge_graph: Optional[Any] = None  # KnowledgeGraph, Optional to avoid circular import
 
+    # Last narrative text (for /imagine command)
+    last_narrative: Optional[str] = None
+
     def __post_init__(self):
         if not self.session_key:
             self.session_key = f"discord:{self.channel_id}"
@@ -265,8 +268,10 @@ class GameSessionManager:
             state=self._state_to_db(session.state),
         )
 
-        # Pre-load known NPCs from database into scene registry
-        scene_registry = get_scene_registry(campaign_id, channel_id)
+        # Pre-load known NPCs from database into scene registry. Key by
+        # `session.session_key` (audit #8) so concurrent voice/web sessions
+        # — which all set `channel_id=0` — don't collide on one shared registry.
+        scene_registry = get_scene_registry(campaign_id, session.session_key)
         try:
             npc_repo = await get_npc_repo()
             campaign_npcs = await npc_repo.get_alive_by_campaign(campaign_id)
@@ -278,6 +283,7 @@ class GameSessionManager:
                     description=npc.description or "",
                     monster_index=npc.monster_index,
                     disposition=npc.base_disposition if isinstance(npc.base_disposition, Disposition) else Disposition.NEUTRAL,
+                    voice_id=npc.voice_id,
                 )
                 scene_registry.register_entity(entity)
             if campaign_npcs:
@@ -306,9 +312,9 @@ class GameSessionManager:
 
             # Sync NPCs to repository and clear scene registry
             try:
-                scene_registry = get_scene_registry(session.campaign_id, channel_id)
+                scene_registry = get_scene_registry(session.campaign_id, session.session_key)
                 await scene_registry.sync_to_npc_repo()
-                clear_scene_registry(channel_id)
+                clear_scene_registry(session.session_key)
             except Exception as e:
                 logger.error(
                     "scene_registry_cleanup_failed",
@@ -335,23 +341,46 @@ class GameSessionManager:
         return session
 
     async def _sync_session_characters(self, session: GameSession) -> None:
-        """Sync all character states from session to database."""
+        """Reconcile character state at session end.
+
+        DF-1 guard: `player.character` is the live object loaded at join and
+        never refreshed, while per-action paths (narrated update_player, combat
+        sync, the /character cog) persist FRESHLY-FETCHED Character objects. The
+        old code wrote this stale object back, so a graceful end_session
+        overwrote the DB with join-time HP/slots/conditions — silently undoing
+        every mid-session change (ironically a crash preserved them). The DB is
+        already authoritative from the per-action writes, so we re-fetch and
+        refresh the in-memory object rather than clobber. Only persist if the
+        character somehow isn't in the DB yet.
+
+        NOTE: this stops the end-of-session clobber only. Mid-turn staleness in
+        the world_state party snapshot (DF-11, same root) and the true fix —
+        one session-owned Character instance — are the Option-B / #6-7 refactor.
+        """
         char_repo = await get_character_repo()
         for player in session.players.values():
-            if player.character:
-                try:
+            if not player.character:
+                continue
+            try:
+                fresh = await char_repo.get_by_id(player.character.id)
+                if fresh is not None:
+                    # DB holds the authoritative per-action state; refresh the
+                    # in-memory ref, do NOT write the stale object back.
+                    player.character = fresh
+                else:
+                    # Not yet persisted (edge case) — write what we have.
                     await char_repo.update(player.character)
-                    logger.debug(
-                        "character_synced",
-                        character=player.character.name,
-                        session_id=session.id,
-                    )
-                except Exception as e:
-                    logger.error(
-                        "character_sync_failed",
-                        character=player.character.name,
-                        error=str(e),
-                    )
+                logger.debug(
+                    "character_reconciled",
+                    character=player.character.name,
+                    session_id=session.id,
+                )
+            except Exception as e:
+                logger.error(
+                    "character_sync_failed",
+                    character=player.character.name,
+                    error=str(e),
+                )
 
     def _state_to_db(self, state: SessionState) -> str:
         """Convert SessionState enum to database string."""
@@ -447,9 +476,18 @@ class GameSessionManager:
         user_id: int,
         user_name: str,
         character: Character,
+        session_key: Optional[str] = None,
     ) -> Optional[PlayerInfo]:
-        """Add a player to an active session."""
-        session = self.get_session(channel_id)
+        """Add a player to an active session.
+
+        Args:
+            session_key: If provided, look up session by key instead of channel_id.
+                Used by voice/web frontends where sessions aren't keyed by Discord channel.
+        """
+        if session_key:
+            session = self.get_session_by_key(session_key)
+        else:
+            session = self.get_session(channel_id)
         if not session or session.state == SessionState.ENDED:
             return None
 
@@ -489,6 +527,7 @@ class GameSessionManager:
         on_mechanics_ready: Optional[Callable] = None,
         on_narrative_token: Optional[Callable] = None,
         frontend: Optional[GameFrontend] = None,
+        session_key: Optional[str] = None,
     ) -> Optional[DMResponse]:
         """
         Process a player message through the LLM DM.
@@ -499,8 +538,13 @@ class GameSessionManager:
             frontend: If provided, events are emitted via frontend.on_event()
                 instead of using the raw callbacks. The callbacks are kept for
                 backward compatibility but frontend takes precedence.
+            session_key: If provided, look up session by key instead of channel_id.
+                Used by voice/web frontends.
         """
-        session = self.get_session(channel_id)
+        if session_key:
+            session = self.get_session_by_key(session_key)
+        else:
+            session = self.get_session(channel_id)
         if not session or session.state not in (SessionState.ACTIVE, SessionState.COMBAT):
             return None
 
@@ -554,8 +598,8 @@ class GameSessionManager:
             player_character=player.character,
         )
 
-        # Get or create scene registry for entity tracking
-        scene_registry = get_scene_registry(session.campaign_id, channel_id)
+        # Get or create scene registry for entity tracking (per-session keying).
+        scene_registry = get_scene_registry(session.campaign_id, session.session_key)
 
         # Process through orchestrator
         async with self._processing_lock:
@@ -585,10 +629,23 @@ class GameSessionManager:
                     on_narrative_token=eff_narrative_cb,
                 )
 
-                # Emit narrative complete event to frontend
+                # Store last narrative for /imagine command
+                session.last_narrative = response.narrative
+
+                # Emit narrative complete event to frontend (with immersion data)
                 if frontend is not None:
+                    # Gather context for immersion pipelines (TTS + images)
+                    _player_chars = [
+                        p.character for p in session.players.values()
+                        if p.character
+                    ]
                     await frontend.on_event(
-                        GameEvent.narrative_complete(response.narrative)
+                        GameEvent.narrative_complete(
+                            narrative=response.narrative,
+                            proposed_effects=getattr(response, 'proposed_effects', []),
+                            scene_entities=scene_registry.get_all() if scene_registry else [],
+                            player_characters=_player_chars,
+                        )
                     )
 
                 # Add response to memory
@@ -696,7 +753,7 @@ class GameSessionManager:
 
         # Get scene entities (NPCs, creatures, objects) from registry
         scene_context = memory.core.get_block("scene").content if memory.core.get_block("scene") else ""
-        scene_registry = get_scene_registry(session.campaign_id, session.channel_id)
+        scene_registry = get_scene_registry(session.campaign_id, session.session_key)
         if scene_registry and scene_registry.has_entities():
             entity_context = scene_registry.get_triage_context()
             if entity_context:

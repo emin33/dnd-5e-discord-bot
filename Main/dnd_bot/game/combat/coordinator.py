@@ -840,9 +840,18 @@ class CombatTurnCoordinator:
                 error=reason,
             )
 
-        # Expend spell slot (if not cantrip)
+        # Expend spell slot (if not cantrip) and PERSIST immediately. Combat
+        # mutates this cached Character; _sync_player_characters persists a
+        # separately-fetched Character that never saw the expenditure, so
+        # without this targeted write slots refill on reload (audit #3).
         if spell.level > 0:
             character.spell_slots.expend_slot(slot_level)
+            try:
+                repo = await get_character_repo()
+                new_current = character.spell_slots.get_slots(slot_level)[0]
+                await repo.update_spell_slot(character.id, slot_level, new_current)
+            except Exception as e:
+                logger.warning("combat_slot_persist_failed", error=str(e), character_id=character.id)
 
         result = ActionResult(
             action=action,
@@ -1003,6 +1012,13 @@ class CombatTurnCoordinator:
             character.concentration_spell_id = spell_index
             result.zone_changes.append(f"Concentrating on {spell.name}")
 
+            # Persist concentration alongside the slot (audit #3).
+            try:
+                repo = await get_character_repo()
+                await repo.update_concentration(character.id, character.concentration_spell_id)
+            except Exception as e:
+                logger.warning("combat_concentration_persist_failed", error=str(e), character_id=character.id)
+
         # Use action resource
         if not action.uses_bonus_action:
             caster.turn_resources.action = False
@@ -1107,7 +1123,21 @@ class CombatTurnCoordinator:
     # ==================== Helper Methods ====================
 
     async def _get_character(self, character_id: str) -> Optional[Character]:
-        """Get character from cache or repository."""
+        """Get the character for a combatant.
+
+        Single-authority refactor (Stage A.2): for PLAYER characters, return
+        the session's own live Character instance — the same object N1 mutates,
+        sync_player reads, and end_session reconciles. Combat slot/concentration
+        expenditure then lands on the canonical object instead of a private
+        cached copy that diverges (the old behavior, ROOT-1 / DF-3/DF-11).
+        NPCs/monsters aren't in session.players, so they fall through to the
+        per-coordinator cache / repo as before.
+        """
+        if self.session:
+            for p in self.session.players.values():
+                if p.character and p.character.id == character_id:
+                    return p.character
+
         if character_id in self._character_cache:
             return self._character_cache[character_id]
 

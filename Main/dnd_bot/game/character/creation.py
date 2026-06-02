@@ -148,6 +148,9 @@ class CharacterCreationState:
     # Equipment choices (indices into equipment options)
     equipment_choices: list[int] = field(default_factory=list)
 
+    # Appearance (immersion features)
+    description: str = ""
+
     def reset(self):
         """Reset the creation state."""
         self.step = 0

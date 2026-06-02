@@ -4,11 +4,14 @@ import discord
 from discord.ext import commands
 import structlog
 
+from typing import Optional
+
 from ...models import InventoryItem
 from ...data.repositories import get_character_repo, get_inventory_repo
 from ...data.srd import get_srd
 from ...game.session import get_session_manager
 from ...game.combat.manager import get_combat_for_channel
+from ..views.campaign_lobby import get_active_campaign_id
 
 logger = structlog.get_logger()
 
@@ -26,12 +29,15 @@ class InventoryCog(commands.Cog):
         self.srd = get_srd()
         self.session_manager = get_session_manager()
 
-    def _get_campaign_id(self, ctx: discord.ApplicationContext) -> str:
-        """Get campaign ID from active session, or fall back to 'default'."""
+    def _get_campaign_id(self, ctx: discord.ApplicationContext) -> Optional[str]:
+        """Resolve the campaign: active session first, then the guild's active
+        campaign. Returns None if neither — never the bogus "default" sentinel,
+        which can't match any real (UUID) campaign id (audit #52 consistency).
+        """
         session = self.session_manager.get_session(ctx.channel_id)
         if session:
             return session.campaign_id
-        return "default"
+        return get_active_campaign_id(ctx.guild_id)
 
     async def _get_character(self, ctx: discord.ApplicationContext, campaign_id: str | None = None):
         """Get the user's character for the active session's campaign."""

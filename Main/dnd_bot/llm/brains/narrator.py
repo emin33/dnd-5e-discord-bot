@@ -64,12 +64,9 @@ Level 1-2 party (1-2 players): 1-3 weak enemies max. No bosses. No armies as dir
 ## TOOLS
 
 Call tools alongside your prose for mechanical effects:
-- **ref_entity** — for every roster entity you mention. If the entity SPEAKS quoted dialogue, set `dialogue_indices` to which quotes they say (1-indexed). Set `dialogue_emotions` to the delivery tone for each line (e.g. "desperate", "angry", "whispering", "calm").
-- **add_npc** — for new NPCs (give them proper names). Same dialogue_indices/dialogue_emotions fields if the NPC speaks.
+- **ref_entity** — for every roster entity you mention. ONLY set `dialogue_indices` and `dialogue_emotions` if the entity actually speaks quoted dialogue. If they are merely mentioned or described but do not speak, leave those fields empty.
+- **add_npc** — for new NPCs (give them proper names). Same rule: only set dialogue fields if they speak.
 - **spawn_object** — for new objects in the scene
-
-Example: If your prose has 3 quoted lines and NPC "Greta" says quotes 2 and 3:
-  ref_entity(entity_id="greta", dialogue_indices=[2, 3], dialogue_emotions=["angry", "whispering"])
 
 Write prose directly. No format headers needed."""
 
@@ -434,7 +431,12 @@ Write 2-3 FULL paragraphs (each 3-5 sentences):
 - Paragraph 2: The disruption unfolds - tension escalates, stakes become felt
 - Paragraph 3: The fork crystallizes - present the choice clearly, end with "What do you do?"
 
-Write your narration directly. Use tools (add_npc, spawn_object, ref_entity) for any NPCs or objects you introduce. No commentary, no planning, no format headers.""",
+Write your narration directly. Use tools for any NPCs or objects you introduce:
+- add_npc: for each new NPC. Set dialogue_emotions if they speak (e.g. ["desperate", "pleading"]).
+- ref_entity: for existing roster NPCs.
+- spawn_object: for objects.
+
+No commentary, no planning, no format headers.""",
             },
         ]
 

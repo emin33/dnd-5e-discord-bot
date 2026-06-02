@@ -99,37 +99,52 @@ class TestStateDelta:
         assert "Invalid time" in rejections[0]
 
     def test_apply_new_npc(self):
+        """NPCs are stored keyed by stable UUID (NPCState.id), not by name.
+        ``find_npc(name)`` resolves through the name → alias → id chain."""
         ws = WorldState(current_location="tavern")
-        delta = StateDelta(
-            new_npcs=[NPCState(name="Grimjaw", disposition="unfriendly", description="A scarred dwarf")]
-        )
+        npc = NPCState(name="Grimjaw", disposition="unfriendly", description="A scarred dwarf")
+        delta = StateDelta(new_npcs=[npc])
         rejections = ws.apply_delta(delta)
         assert rejections == []
-        assert "Grimjaw" in ws.npcs
-        assert ws.npcs["Grimjaw"].location == "tavern"  # Defaults to current location
-        assert ws.npcs["Grimjaw"].disposition == "unfriendly"
+        # Stored under the auto-generated UUID
+        assert npc.id in ws.npcs
+        # Resolvable by name
+        found = ws._find_npc("Grimjaw")
+        assert found is not None
+        assert found.location == "tavern"  # defaults to current location
+        assert found.disposition == "unfriendly"
 
-    def test_reject_duplicate_npc(self):
+    def test_apply_two_new_npcs_with_same_name_NOT_rejected(self):
+        """Name uniqueness is no longer enforced at the data-model layer.
+        Dedup is now the brain judge's job (orchestrator-side), so the
+        underlying store accepts both. Each gets a distinct UUID. This
+        test pins the new behavior so a regression that re-adds name
+        uniqueness here is caught."""
         ws = WorldState()
-        ws.npcs["Grimjaw"] = NPCState(name="Grimjaw", disposition="neutral")
+        first = NPCState(name="Grimjaw", disposition="neutral")
+        ws.npcs[first.id] = first
         delta = StateDelta(
             new_npcs=[NPCState(name="Grimjaw", disposition="hostile")]
         )
         rejections = ws.apply_delta(delta)
-        assert len(rejections) == 1
-        assert "already exists" in rejections[0]
+        assert rejections == []  # data layer doesn't reject same-name NPCs
+        assert len(ws.npcs) == 2
 
     def test_apply_npc_update(self):
+        """Update resolves the target by name → id chain."""
         ws = WorldState()
-        ws.npcs["Grimjaw"] = NPCState(name="Grimjaw", location="tavern", disposition="neutral")
+        npc = NPCState(name="Grimjaw", location="tavern", disposition="neutral")
+        ws.npcs[npc.id] = npc
         delta = StateDelta(
             npc_updates=[NPCUpdate(name="Grimjaw", disposition="friendly", notes="Helped the party")]
         )
         rejections = ws.apply_delta(delta)
         assert rejections == []
-        assert ws.npcs["Grimjaw"].disposition == "friendly"
-        assert ws.npcs["Grimjaw"].notes == "Helped the party"
-        assert ws.npcs["Grimjaw"].location == "tavern"  # Unchanged
+        found = ws._find_npc("Grimjaw")
+        assert found is not None
+        assert found.disposition == "friendly"
+        assert found.notes == "Helped the party"
+        assert found.location == "tavern"
 
     def test_reject_update_nonexistent_npc(self):
         ws = WorldState()
@@ -142,7 +157,8 @@ class TestStateDelta:
 
     def test_reject_dead_npc_action(self):
         ws = WorldState()
-        ws.npcs["Grimjaw"] = NPCState(name="Grimjaw", alive=False)
+        npc = NPCState(name="Grimjaw", alive=False)
+        ws.npcs[npc.id] = npc
         delta = StateDelta(
             npc_updates=[NPCUpdate(name="Grimjaw", disposition="hostile")]
         )
@@ -152,13 +168,14 @@ class TestStateDelta:
 
     def test_revive_dead_npc(self):
         ws = WorldState()
-        ws.npcs["Grimjaw"] = NPCState(name="Grimjaw", alive=False)
+        npc = NPCState(name="Grimjaw", alive=False)
+        ws.npcs[npc.id] = npc
         delta = StateDelta(
             npc_updates=[NPCUpdate(name="Grimjaw", alive=True, disposition="neutral")]
         )
         rejections = ws.apply_delta(delta)
         assert rejections == []
-        assert ws.npcs["Grimjaw"].alive is True
+        assert ws._find_npc("Grimjaw").alive is True
 
     def test_remove_npc_clears_location(self):
         ws = WorldState()
@@ -283,9 +300,15 @@ class TestWorldStateYAML:
         assert "npcs_here" in data
         assert any(n["name"] == "Barkeep" for n in data["npcs_here"])
 
-        # King should be in key_npcs_elsewhere (important, not at current location)
+        # King should be in key_npcs_elsewhere (important, not at current location).
+        # The format changed from one-line strings to dicts so paraphrase
+        # resolution against id+description+aliases works regardless of
+        # whether the entity is in the current scene.
         assert "key_npcs_elsewhere" in data
-        assert any("King Aldric" in line for line in data["key_npcs_elsewhere"])
+        assert any(
+            isinstance(entry, dict) and entry.get("name") == "King Aldric"
+            for entry in data["key_npcs_elsewhere"]
+        )
 
         # Random Guard should NOT appear in YAML at all
         yml_str = yml

@@ -16,10 +16,16 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 @dataclass
 class ProviderConfig:
     """Configuration for a single LLM provider role."""
-    provider: str = "ollama"     # ollama | groq | anthropic
+    provider: str = "ollama"     # ollama | groq | anthropic | deepseek | gemini | openrouter
     model: str = ""
     fallback_to_ollama: bool = False
     context_size: int = 0        # Ollama num_ctx cap (0 = model default)
+
+    # Narrator tool tier — only consulted for the narrator role.
+    # See dnd_bot.llm.narrator_tools.NARRATOR_TOOL_TIERS for the available
+    # tiers ("core" / "core_plus" / "full"). Default "core" is safest.
+    # Brain/triage roles ignore this field; they don't use narrator tools.
+    tools: str = "core"
 
 @dataclass
 class MemoryConfig:
@@ -30,12 +36,51 @@ class MemoryConfig:
     compaction_threshold: int = 6   # Tier 3: overflow before batch compaction
 
 @dataclass
+class TTSConfig:
+    """Configuration for text-to-speech provider."""
+    provider: str = "browser"  # browser | riva | openai | elevenlabs | kokoro
+    model: str = ""            # e.g. "tts-1" for OpenAI
+    voice: str = ""            # Voice name/ID (provider-specific)
+
+@dataclass
+class ASRConfig:
+    """Configuration for speech recognition provider."""
+    provider: str = "browser"  # browser | riva | openai
+    model: str = ""            # e.g. "whisper-1" for OpenAI
+
+@dataclass
+class ImmersionConfig:
+    """Configuration for immersion features (TTS voices + image generation)."""
+    tts_enabled: bool = False
+    image_enabled: bool = False
+    image_frequency: str = "on_demand"  # every, scene_change, on_demand
+    narrator_tts_provider: str = "kokoro"
+    narrator_tts_voice: str = "af_heart"
+    character_tts_provider: str = ""  # empty = use voice catalog provider
+    image_provider: str = "fal"  # fal, openai, local
+    image_model: str = ""  # HuggingFace model ID for local, or fal model path. Empty = use settings default.
+    image_steps: int = 0  # Inference steps (0 = use settings default)
+    image_guidance: float = 0.0  # Guidance scale (0 = use settings default)
+
+@dataclass
 class LLMProfile:
-    """A named LLM configuration profile."""
+    """A named LLM configuration profile.
+
+    Narrator tier slots (all optional; unset → fall back to ``narrator``):
+    - ``narrator_premium``: used for high-significance turns (scene changes,
+      new NPC introductions, combat starts/ends).
+    - ``narrator_opening``: used for the session opener (``_generate_opening``).
+      Falls back to ``narrator_premium`` if set, else ``narrator``.
+    """
     name: str = "default"
     narrator: ProviderConfig = field(default_factory=ProviderConfig)
+    narrator_premium: Optional[ProviderConfig] = None
+    narrator_opening: Optional[ProviderConfig] = None
     brain: ProviderConfig = field(default_factory=ProviderConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
+    tts: TTSConfig = field(default_factory=TTSConfig)
+    asr: ASRConfig = field(default_factory=ASRConfig)
+    immersion: ImmersionConfig = field(default_factory=ImmersionConfig)
 
 
 def load_profile(profile_name: str) -> LLMProfile:
@@ -48,6 +93,7 @@ def load_profile(profile_name: str) -> LLMProfile:
     with open(profiles_path, "r", encoding="utf-8") as f:
         profiles = yaml.safe_load(f)
 
+    profile_name = profile_name.strip()
     if profile_name not in profiles:
         available = ", ".join(profiles.keys())
         raise ValueError(f"Unknown profile '{profile_name}'. Available: {available}")
@@ -55,8 +101,24 @@ def load_profile(profile_name: str) -> LLMProfile:
     data = profiles[profile_name]
 
     narrator_data = data.get("narrator", {})
+    narrator_premium_data = data.get("narrator_premium")
+    narrator_opening_data = data.get("narrator_opening")
     brain_data = data.get("brain", {})
     memory_data = data.get("memory", {})
+    tts_data = data.get("tts", {})
+    asr_data = data.get("asr", {})
+    immersion_data = data.get("immersion", {})
+
+    def _provider_config_or_none(d):
+        if not d:
+            return None
+        return ProviderConfig(
+            provider=d.get("provider", "ollama"),
+            model=d.get("model", ""),
+            fallback_to_ollama=d.get("fallback_to_ollama", False),
+            context_size=d.get("context_size", 0),
+            tools=d.get("tools", "core"),
+        )
 
     return LLMProfile(
         name=profile_name,
@@ -65,7 +127,10 @@ def load_profile(profile_name: str) -> LLMProfile:
             model=narrator_data.get("model", ""),
             fallback_to_ollama=narrator_data.get("fallback_to_ollama", False),
             context_size=narrator_data.get("context_size", 0),
+            tools=narrator_data.get("tools", "core"),
         ),
+        narrator_premium=_provider_config_or_none(narrator_premium_data),
+        narrator_opening=_provider_config_or_none(narrator_opening_data),
         brain=ProviderConfig(
             provider=brain_data.get("provider", "ollama"),
             model=brain_data.get("model", ""),
@@ -77,6 +142,27 @@ def load_profile(profile_name: str) -> LLMProfile:
             verbatim_size=memory_data.get("verbatim_size", 8),
             condensed_size=memory_data.get("condensed_size", 12),
             compaction_threshold=memory_data.get("compaction_threshold", 6),
+        ),
+        tts=TTSConfig(
+            provider=tts_data.get("provider", "browser"),
+            model=tts_data.get("model", ""),
+            voice=tts_data.get("voice", ""),
+        ),
+        asr=ASRConfig(
+            provider=asr_data.get("provider", "browser"),
+            model=asr_data.get("model", ""),
+        ),
+        immersion=ImmersionConfig(
+            tts_enabled=immersion_data.get("tts_enabled", False),
+            image_enabled=immersion_data.get("image_enabled", False),
+            image_frequency=immersion_data.get("image_frequency", "on_demand"),
+            narrator_tts_provider=immersion_data.get("narrator_tts_provider", "kokoro"),
+            narrator_tts_voice=immersion_data.get("narrator_tts_voice", "af_heart"),
+            character_tts_provider=immersion_data.get("character_tts_provider", ""),
+            image_provider=immersion_data.get("image_provider", "fal"),
+            image_model=immersion_data.get("image_model", ""),
+            image_steps=immersion_data.get("image_steps", 0),
+            image_guidance=immersion_data.get("image_guidance", 0.0),
         ),
     )
 
@@ -127,6 +213,19 @@ def switch_profile(profile_name: str) -> LLMProfile:
     from .llm.orchestrator import _reset_orchestrator
     _reset_orchestrator()
 
+    # Reset voice provider singletons
+    try:
+        from .voice.tts_factory import _reset_tts
+        _reset_tts()
+    except ImportError:
+        pass
+
+    try:
+        from .voice.asr_factory import _reset_asr
+        _reset_asr()
+    except ImportError:
+        pass
+
     import structlog
     logger = structlog.get_logger()
     logger.info(
@@ -134,6 +233,8 @@ def switch_profile(profile_name: str) -> LLMProfile:
         profile=profile.name,
         narrator=f"{profile.narrator.provider}/{profile.narrator.model}",
         brain=f"{profile.brain.provider}/{profile.brain.model}",
+        tts=profile.tts.provider,
+        asr=profile.asr.provider,
     )
 
     return profile
@@ -180,7 +281,10 @@ class Settings(BaseSettings):
     groq_max_retries: int = 3
     anthropic_api_key: str = ""
     openrouter_api_key: str = ""
+    deepseek_api_key: str = ""
     gemini_api_key: str = ""
+    elevenlabs_api_key: str = ""
+    deepgram_api_key: str = ""
 
     # LLM Temperature
     narrator_temperature: float = 0.75
@@ -204,6 +308,33 @@ class Settings(BaseSettings):
     # Debug
     debug_show_intents: bool = False
     debug_log_llm_output: bool = False
+
+    # Image generation (optional, for immersion features)
+    image_provider: str = "fal"  # fal, openai, comfyui
+    fal_key: str = ""  # From https://fal.ai/dashboard/keys (env: FAL_KEY)
+    fal_model: str = "fal-ai/flux/dev"  # fal-ai/flux/dev (~$0.025) or fal-ai/flux-2-pro (~$0.03)
+    openai_image_api_key: str = ""  # Direct OpenAI key for DALL-E (not OpenRouter)
+    local_image_model: str = "black-forest-labs/FLUX.1-dev"  # HuggingFace model ID
+    local_image_steps: int = 20
+    local_image_guidance: float = 3.5
+
+    # Inworld TTS (narrator voice)
+    inworld_api_key: str = ""  # Base64-encoded key from studio.inworld.ai
+    inworld_tts_model: str = "inworld-tts-1.5-mini"  # tts-1.5-mini (fast) or tts-1.5-max (quality)
+    inworld_tts_voice: str = "Sarah"
+
+    # Fish Speech (local TTS alternative to Riva)
+    fish_speech_url: str = "http://localhost:8080"
+    fish_speech_instances: int = 1  # Number of parallel Fish Speech servers on sequential ports from fish_speech_url
+
+    # Voice / Riva / LiveKit (optional, only needed for voice mode)
+    ngc_api_key: str = ""
+    riva_asr_url: str = "localhost:50051"
+    riva_tts_url: str = "localhost:50052"
+    tts_voice: str = "Magpie-Multilingual.EN-US.Aria"
+    livekit_url: str = "ws://localhost:7880"
+    livekit_api_key: str = "devkey"
+    livekit_api_secret: str = "secret"
 
     @property
     def database_url(self) -> str:

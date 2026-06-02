@@ -7,6 +7,7 @@ import structlog
 from ...models import AbilityScore, Skill, SKILL_ABILITIES
 from ...data.repositories.character_repo import get_character_repo
 from ...game.mechanics.dice import get_roller, DiceRoll
+from ..views.campaign_lobby import get_active_campaign_id
 
 logger = structlog.get_logger()
 
@@ -165,15 +166,18 @@ class ActionsCog(commands.Cog):
             required=False,
             default=False,
         ),
-        campaign_id: discord.Option(
-            str,
-            "Campaign ID",
-            required=False,
-            default="default",
-        ),
     ):
         """Make a skill check using your character's modifiers."""
         # Get character
+        # Resolve the active campaign from the guild's lobby state (audit #52).
+        campaign_id = get_active_campaign_id(ctx.guild_id)
+        if not campaign_id:
+            await ctx.respond(
+                "No active campaign in this guild. Use `/campaign create` first.",
+                ephemeral=True,
+            )
+            return
+
         repo = await get_character_repo()
         character = await repo.get_by_user_and_campaign(ctx.author.id, campaign_id)
 
@@ -268,15 +272,18 @@ class ActionsCog(commands.Cog):
             required=False,
             default=False,
         ),
-        campaign_id: discord.Option(
-            str,
-            "Campaign ID",
-            required=False,
-            default="default",
-        ),
     ):
         """Make a saving throw using your character's modifiers."""
         # Get character
+        # Resolve the active campaign from the guild's lobby state (audit #52).
+        campaign_id = get_active_campaign_id(ctx.guild_id)
+        if not campaign_id:
+            await ctx.respond(
+                "No active campaign in this guild. Use `/campaign create` first.",
+                ephemeral=True,
+            )
+            return
+
         repo = await get_character_repo()
         character = await repo.get_by_user_and_campaign(ctx.author.id, campaign_id)
 
@@ -437,22 +444,17 @@ class ActionsCog(commands.Cog):
             "Initiative modifier (uses DEX mod if not specified)",
             required=False,
         ),
-        campaign_id: discord.Option(
-            str,
-            "Campaign ID",
-            required=False,
-            default="default",
-        ),
     ):
         """Roll initiative."""
         # Try to get character for modifier
         if modifier is None:
-            repo = await get_character_repo()
-            character = await repo.get_by_user_and_campaign(ctx.author.id, campaign_id)
-            if character:
-                modifier = character.initiative_bonus
-            else:
-                modifier = 0
+            modifier = 0
+            campaign_id = get_active_campaign_id(ctx.guild_id)
+            if campaign_id:
+                repo = await get_character_repo()
+                character = await repo.get_by_user_and_campaign(ctx.author.id, campaign_id)
+                if character:
+                    modifier = character.initiative_bonus
 
         roll = self.roller.roll_initiative(modifier=modifier)
 

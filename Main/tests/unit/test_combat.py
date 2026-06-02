@@ -287,3 +287,149 @@ class TestCombatManager:
         assert actual == 15
         assert combatant.hp_current == 45
         assert not was_revived
+
+
+class TestConditionCrossingCombatBoundary:
+    """Audit #9: conditions must round-trip through add_player / sync_to_character.
+
+    Pre-fix, `add_player` never copied `character.conditions` to combatant
+    effects, and `sync_to_character` never rebuilt them on exit — so a
+    poisoned/frightened PC entered combat clean, and in-combat conditions
+    vanished when combat ended.
+    """
+
+    @pytest.fixture
+    def manager(self):
+        return CombatManager.create_encounter(
+            session_id="test-session",
+            channel_id=1,
+            name="Test",
+        )
+
+    @pytest.fixture
+    def character(self, mock_character):
+        return mock_character
+
+    def test_pre_combat_condition_carries_into_combat(self, manager, character):
+        from dnd_bot.models import CharacterCondition
+        from dnd_bot.models.common import Condition
+
+        character.conditions = [
+            CharacterCondition(condition=Condition.POISONED, source="bad-mushroom"),
+        ]
+        combatant = manager.add_player(character)
+
+        assert len(combatant.effects) == 1
+        effect = combatant.effects[0]
+        assert effect.condition == Condition.POISONED
+        assert effect.effect_type == "condition"
+        assert effect.source_spell_index == "bad-mushroom"
+
+    def test_in_combat_condition_persists_on_sync(self, manager, character):
+        """Hold Person frightens PC in combat → sync_to_character carries it out."""
+        from dnd_bot.models import CombatEffect
+        from dnd_bot.models.common import Condition
+
+        combatant = manager.add_player(character)
+        combatant.effects.append(CombatEffect(
+            name="frightened",
+            effect_type="condition",
+            condition=Condition.FRIGHTENED,
+            rounds_remaining=3,
+            source_spell_index="hold-person",
+        ))
+
+        manager.sync_to_character(combatant, character)
+        assert len(character.conditions) == 1
+        assert character.conditions[0].condition == Condition.FRIGHTENED
+        assert character.conditions[0].source == "hold-person"
+
+    def test_exhaustion_stacks_round_trip(self, manager, character):
+        """Exhaustion is the one stacking condition (1-6); stacks must survive entry+exit."""
+        from dnd_bot.models import CharacterCondition
+        from dnd_bot.models.common import Condition
+
+        character.conditions = [
+            CharacterCondition(condition=Condition.EXHAUSTION, source="forced-march", stacks=3),
+        ]
+        combatant = manager.add_player(character)
+        # Implementation explodes stacks into one effect per stack.
+        exhaustion_effects = [e for e in combatant.effects if e.condition == Condition.EXHAUSTION]
+        assert len(exhaustion_effects) == 3
+
+        # Round-trip should aggregate them back into a single 3-stack condition.
+        manager.sync_to_character(combatant, character)
+        exhaustion = [c for c in character.conditions if c.condition == Condition.EXHAUSTION]
+        assert len(exhaustion) == 1
+        assert exhaustion[0].stacks == 3
+
+    def test_non_condition_effects_dont_pollute_conditions(self, manager, character):
+        """A buff like Bless (no `condition` field) must NOT become a CharacterCondition."""
+        from dnd_bot.models import CombatEffect
+
+        combatant = manager.add_player(character)
+        combatant.effects.append(CombatEffect(
+            name="bless",
+            effect_type="buff",
+            condition=None,  # not a status condition
+            bonus_dice="1d4",
+            source_spell_index="bless",
+        ))
+
+        manager.sync_to_character(combatant, character)
+        assert character.conditions == []
+
+    def test_expired_round_condition_skipped_on_entry(self, manager, character):
+        """A condition whose expires_round is in the past must not carry into a fresh combat."""
+        from dnd_bot.models import CharacterCondition
+        from dnd_bot.models.common import Condition
+
+        manager.combat.current_round = 5
+        character.conditions = [
+            CharacterCondition(
+                condition=Condition.STUNNED,
+                source="prior-combat",
+                expires_round=3,  # already passed
+            ),
+        ]
+        combatant = manager.add_player(character)
+        assert combatant.effects == []
+
+    def test_temp_hp_carries_into_combat(self, manager, character):
+        """Audit #9 (entry side): pre-combat temp HP must survive entering combat.
+
+        Original #9 fix handled conditions only; temp HP defaulted to 0 on the
+        combatant, silently stripping e.g. Aid / False Life before a fight.
+        """
+        character.hp.temporary = 12
+        combatant = manager.add_player(character)
+        assert combatant.hp_temp == 12
+
+    def test_death_save_progress_carries_into_combat(self, manager, character):
+        """Audit #9 (entry side): a PC already dying when combat starts keeps progress."""
+        character.hp.current = 0
+        character.death_saves.successes = 2
+        character.death_saves.failures = 1
+        combatant = manager.add_player(character)
+        assert combatant.death_saves.successes == 2
+        assert combatant.death_saves.failures == 1
+
+    def test_temp_hp_and_death_saves_round_trip(self, manager, character):
+        """Entry + exit symmetry: carry in, then sync_to_character carries back."""
+        character.hp.temporary = 8
+        character.death_saves.failures = 1
+        combatant = manager.add_player(character)
+        # Simulate combat ending; sync back onto a fresh character object.
+        from dnd_bot.models import Character, AbilityScores, HitPoints, HitDice
+        fresh = Character(
+            discord_user_id=character.discord_user_id,
+            campaign_id=character.campaign_id,
+            name=character.name,
+            race_index="human", class_index="fighter",
+            abilities=AbilityScores(),
+            hp=HitPoints(maximum=character.hp.maximum, current=character.hp.current),
+            hit_dice=HitDice(die_type=10, total=1, remaining=1),
+        )
+        manager.sync_to_character(combatant, fresh)
+        assert fresh.hp.temporary == 8
+        assert fresh.death_saves.failures == 1

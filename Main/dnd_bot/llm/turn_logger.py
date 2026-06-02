@@ -170,9 +170,21 @@ class TurnRecord:
         narrative_chunk_stored: bool = False,
         vector_matches: int = 0,
         narrative_chunks_recalled: int = 0,
+        # New (telemetry-audit Phase A): actual content surfaced
+        context_yaml: str | None = None,
+        narrative_chunks: list[dict] | None = None,
+        text_match_seeds: list[str] | None = None,
+        scene_seeds: list[str] | None = None,
+        vector_match_seeds: list[str] | None = None,
     ) -> None:
-        """Record knowledge graph activity for this turn."""
-        self.data["knowledge_graph"] = {
+        """Record knowledge graph activity for this turn.
+
+        ``context_yaml``, ``narrative_chunks``, and the per-tier seed
+        lists let downstream tooling (assertion API, long-horizon test)
+        verify exactly which facts and prose were surfaced — not just
+        counts.
+        """
+        record: dict = {
             "nodes_total": nodes_total,
             "edges_total": edges_total,
             "seed_entities": seed_entities,
@@ -182,6 +194,54 @@ class TurnRecord:
             "narrative_chunk_stored": narrative_chunk_stored,
             "vector_matches": vector_matches,
             "narrative_chunks_recalled": narrative_chunks_recalled,
+        }
+        if context_yaml is not None:
+            # Cap at ~4k chars to keep logs reasonable
+            record["context_yaml"] = (
+                context_yaml if len(context_yaml) <= 4000
+                else context_yaml[:4000] + "...(truncated)"
+            )
+        if narrative_chunks is not None:
+            # Each chunk: {chunk_id, content_preview (200 chars), entity_ids, turn, score?}
+            record["narrative_chunks"] = [
+                {
+                    "chunk_id": c.get("chunk_id") or c.get("id"),
+                    "preview": (c.get("content") or "")[:300],
+                    "entity_ids": c.get("entity_ids", []),
+                    "turn": c.get("turn"),
+                    "score": c.get("score") or c.get("distance"),
+                }
+                for c in narrative_chunks
+            ]
+        if text_match_seeds is not None:
+            record["text_match_seeds"] = text_match_seeds
+        if scene_seeds is not None:
+            record["scene_seeds"] = scene_seeds
+        if vector_match_seeds is not None:
+            record["vector_match_seeds"] = vector_match_seeds
+        self.data["knowledge_graph"] = record
+
+    def record_narrator_routing(
+        self,
+        tier: str,
+        provider: str,
+        model: str,
+        significance: str | None = None,
+        phase_b_veto: bool = False,
+    ) -> None:
+        """Record which narrator client was selected for this turn.
+
+        ``tier`` is one of standard / premium / opening. ``significance``
+        is the brain's narrative-significance classification when known.
+        ``phase_b_veto`` indicates whether the deterministic Phase B
+        layer overrode the brain's promotion to standard.
+        """
+        self.data["narrator_routing"] = {
+            "tier": tier,
+            "provider": provider,
+            "model": model,
+            "significance": significance,
+            "phase_b_veto": phase_b_veto,
         }
 
     def record_error(self, stage: str, error: str) -> None:

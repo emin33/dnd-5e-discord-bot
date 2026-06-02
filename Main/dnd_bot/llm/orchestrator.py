@@ -13,13 +13,17 @@ import uuid
 from pydantic import BaseModel
 import structlog
 
-from .client import get_llm_client, OllamaClient, _write_debug_log
+from .client import get_llm_client, get_narrator_client_for, OllamaClient, AnthropicClient, _write_debug_log
+from .narrative_signals import select_narrator_tier
 from .brains.base import BrainContext, BrainResult
 from .brains.narrator import NarratorBrain, MechanicalOutcome, get_narrator
 from .brains.adjudicator import EffectsAdjudicator, get_adjudicator
 from .brains.rules import RulesBrain, get_rules_brain
 from .intents import validate_narrator_format, strip_planning_text_fallback
-from .narrator_tools import NARRATOR_TOOLS, NARRATOR_TOOLS_CORE, tool_calls_to_effects
+from .narrator_tools import (
+    get_narrator_tools_for_tier,
+    tool_calls_to_effects,
+)
 from .extractors.entity_extractor import get_entity_extractor, EntityExtractor
 from .extractors.state_extractor import get_state_extractor, StateExtractor
 from .validators.nli_validator import get_nli_validator, NLIValidator
@@ -67,169 +71,132 @@ def get_style_hint(turn: int) -> str:
     return NARRATOR_STYLES[turn % len(NARRATOR_STYLES)]
 
 
-# Format instructions — XML for Claude, text markers for others
-NARRATOR_FORMAT_XML = (
-    "Output your response in these two XML blocks:\n"
-    "<prose>\n[2-4 paragraphs - your narration]\n</prose>\n\n"
-    "<intents>\n[intent commands, or NONE]\n</intents>\n\n"
-    "Start with <prose> immediately."
-)
-
-NARRATOR_FORMAT_TEXT = (
-    "Output ONLY these two blocks:\n"
-    "PROSE:\n[2-4 paragraphs]\n\n"
-    "INTENTS:\n[intent commands, or NONE]\n\n"
-    "Start with PROSE: immediately."
-)
-
-
-def _is_anthropic_client(client) -> bool:
-    """Check if the narrator client is Anthropic (Claude)."""
-    return type(client).__name__ == "AnthropicClient"
+def _get_client_provider(client) -> str:
+    """Get the provider name for a client instance (for logging)."""
+    if isinstance(client, AnthropicClient):
+        return "anthropic"
+    if isinstance(client, OllamaClient):
+        return "ollama"
+    return type(client).__name__.replace("Client", "").lower()
 
 
 # =============================================================================
 # TRIAGE PROMPT - Rules Brain decides if mechanics are needed
 # =============================================================================
 
-TRIAGE_SYSTEM_PROMPT = """You are the action classifier for a D&D 5e game. Your job is to identify WHAT the player is trying to do and whether it requires a dice roll.
+TRIAGE_SYSTEM_PROMPT = """You are the action classifier for a D&D 5e game. You make TWO independent judgments per turn:
 
-## CORE PRINCIPLE: THE 4 QUESTIONS
+1. **Narrative significance** — how weighty is the SCENE (about scene context, not action mechanic).
+2. **Mechanical classification** — what is the player doing and does it need a roll (about action mechanic).
 
-Before deciding needs_roll, ask these questions:
+These judgments are independent. A mundane action in a heavy scene is mechanically routine but narratively weighty. A dramatic action in an empty scene is mechanically routine and narratively routine. Decide narrative significance FIRST, before mechanical classification, because mechanical reasoning will bias scene judgment if you do it the other way.
 
-**1. Is the outcome uncertain?**
-   - Could a competent adventurer reasonably FAIL at this right now?
-   - Looking for hidden things? → Uncertain (might miss them)
-   - Climbing a sheer cliff? → Uncertain (might fall)
-   - Opening an unlocked door? → NOT uncertain (auto-success)
+## NARRATIVE SIGNIFICANCE (decide first)
 
-**2. Is there a meaningful consequence for failure?**
-   - If failure just means "try again until you succeed," DON'T roll
-   - Searching a room with no time pressure → No roll (they'll eventually find it)
-   - Searching while guards approach → Roll (failure = caught)
-   - Missing a hidden trap → Roll (failure = trigger trap)
+Tag each turn's narrative weight as `routine`, `notable`, or `climactic`. This decides whether the prose goes to a fast/cheap narrator or a premium narrator that takes its time.
 
-**3. Is there time pressure, danger, or opposition?**
-   - Combat, chase, ambush, hostile territory, ticking clock
-   - Scanning for danger in unknown territory → Roll (there might BE danger)
-   - Looking around a safe tavern → No roll
+The tag is about the SCENE'S weight, not the action's mechanical complexity. A mundane action ("look up at the sky") in a heavy scene (a bruised omen visible above the village) is weighty. A dramatic action ("draw blade theatrically") in an empty scene (haggling for fun in a market) is mundane.
 
-**4. Does success reveal SPECIALIZED KNOWLEDGE?** ← CRITICAL
-   - Would identifying/understanding this require expertise or training?
-   - Seeing markings → FREE (anyone can see them)
-   - Recognizing markings as elven sigils → ROLL (Investigation/History/Arcana)
-   - Understanding what a mechanism does → ROLL (Investigation)
-   - Identifying a creature's weaknesses → ROLL (Nature/Arcana)
-   - Reading magical runes → ROLL (Arcana)
-   - This applies EVEN IN SAFE ENVIRONMENTS with no time pressure!
+Judge the scene by signals, not vibes. Check each signal:
 
-**If YES to Question 4** → needs_roll = true (knowledge check)
-**If YES to Questions 1-3** → needs_roll = true (physical/social check)
-**If NO to all** → needs_roll = false, narrate the outcome
+- **Stakes:** is failure or success here irreversible, or recoverable?
+- **Setup payoff:** does this turn close out something the campaign has been building toward, or is it self-contained?
+- **Introduction:** is the turn introducing a person, place, or revelation that will matter to the players going forward?
+- **Emotional register:** is the scene's tone quiet/transactional, or weighted (grief, dread, awe, betrayal, awe-of-scale)?
 
-## COMMON ROLL TRIGGERS
+Tier rules based on signals:
 
-| Action | Typical Check | When to Roll |
-|--------|---------------|--------------|
-| Scanning for danger | Perception | Unknown/hostile territory, something might be hidden |
-| Searching for items | Investigation | Hidden compartments, time pressure |
-| Sneaking past guards | Stealth | Guards present, consequences for detection |
-| Climbing a wall | Athletics | Difficult surface, fall damage possible |
-| Persuading NPC | Persuasion | NPC is resistant or has reason to refuse |
-| Recalling lore | History/Arcana/Religion | Obscure knowledge, not common facts |
-| Examining symbols/markings | Investigation/History | Meaning, origin, or intent is non-obvious |
-| Identifying magical effects | Arcana | Always (magical knowledge is specialized) |
-| Understanding mechanisms | Investigation | How it works, how to disable/activate |
-| Recognizing creatures | Nature/Arcana | Identifying type, weaknesses, behaviors |
+- **routine** — zero or one signal present, and the signal is mild.
+- **notable** — one or two signals present at meaningful strength, OR a tense single-scene beat (high stakes within one scene, even with no campaign-arc resonance).
+- **climactic** — the moment carries CAMPAIGN-ARC weight. Reserved for beats that would matter to a player retelling the campaign months later: a death of a known character, a betrayal of a long-running ally, the moment a campaign-central question is answered, the boss falling, a defining choice with permanent consequences, a long-pursued goal paying off.
 
-## WHEN NOT TO ROLL — IMPORTANT
+Critical: scene-level tension is NOT climactic. A skill check with TPK risk is a tense notable, not a climactic moment, because the campaign arc isn't turning on it. Climactic is reserved for beats the players will REMEMBER.
 
-A real DM never asks for a roll unless failure would be INTERESTING. Ask yourself:
-- "If they fail, does anything change?" If no → don't roll, just narrate success.
-- "Could they just try again with no consequence?" If yes → don't roll, auto-succeed.
-- "Is this a routine task for an adventurer?" If yes → don't roll.
+Boundary discrimination — these patterns LOOK weighty but aren't:
 
-Specific NO-ROLL situations:
-- Trivial actions anyone could do (open door, walk across room, step closer, pick up item)
-- Simple physical movement (walking, stepping forward, approaching something visible)
-- Observing OBVIOUS things (seeing a door, noticing a person, looking at something in plain sight)
-- Information the character would automatically know (common knowledge for their background)
-- Scanning a room for VISIBLE people or objects (they're in plain sight!)
-- Looking around when there is nothing hidden or concealed
-- Routine tasks with unlimited time and no pressure (setting up camp, lighting a fire normally)
-- Actions where the player is just adding narrative flair (no extra roll for a cool description)
+- An ongoing combat round inside a dramatic encounter is still routine. The encounter being important doesn't make every swing important. Only the decisive moment (the boss falling, a death) is climactic.
+- A tense skill check with high consequences is notable. Stakes raise it above routine but don't reach climactic — the campaign arc isn't pivoting on a trap disarm.
+- A first meeting with an NPC is only notable if that NPC will matter going forward. A vendor encountered for one transaction is routine even on the first visit.
+- Dramatic player verbiage with no real stakes is routine. Pose ≠ weight.
+- A death is only climactic if the dead character was a known, named figure the players had a relationship with. A reported offscreen death of an unnamed NPC is routine.
 
-**CRITICAL: "I look around" / "I scan the room" / "I check who is here" / "I step closer" / "I approach" in a safe or explored location = NO ROLL. Only roll if something is actively hidden, the environment is dangerous, or specialized knowledge is needed.**
+When two tiers feel equally valid, pick the LOWER one. The premium tier must be earned — overuse dulls its impact.
 
-**CRITICAL: Movement is NEVER a skill check.** "I step closer", "I walk to the well", "I approach the figure" = exploration or roleplay, NOT a skill check. Movement only requires a roll if the terrain itself is hazardous (climbing a cliff, crossing a tightrope, swimming rapids).
+**Important: significance is independent of whether the turn needs a roll.** Many notable scenes have no roll (an omen observed, a body discovered, a friend's confession). Don't conflate "no triage signals" with "routine significance."
 
-## SETTING THE DC (Difficulty Class)
+## DOES THIS NEED A ROLL?
 
-When a roll IS needed, set an appropriate DC using this standard 5e table:
+A roll is needed when ALL of these are true:
+1. **Uncertainty** — a competent adventurer could plausibly fail at this attempt.
+2. **Stakes** — failure changes the situation (something is lost, missed, or made worse). Not just "try again."
+3. **Pressure or specialization** — there's time pressure, danger, opposition, OR success requires expertise the character may not have.
 
-| DC | Difficulty | Example |
-|----|-----------|---------|
-| 5  | Very Easy | Climbing a knotted rope, noticing something large and obvious |
-| 8  | Easy | Following fresh tracks in mud, calming a frightened animal |
-| 10 | Medium | Picking a simple lock, haggling a fair price, recalling common lore |
-| 12 | Moderate | Persuading a skeptical guard, finding a concealed door |
-| 15 | Hard | Picking a quality lock, deciphering ancient text, tracking over stone |
-| 18 | Very Hard | Sneaking past alert guards, recalling obscure arcane knowledge |
-| 20 | Nearly Impossible | Picking a masterwork lock, persuading a hostile king |
+If any one is missing → no roll. Narrate the outcome directly.
 
-**CRITICAL: Match the DC to the specific situation.** A casual Perception check in a quiet tavern is DC 10-12, NOT DC 15. Save DC 15+ for genuinely difficult challenges.
+Boundary discrimination:
 
-## CHOOSING THE RIGHT SKILL
+- "I open the unlocked door" → no roll. No uncertainty.
+- "I pick the locked door" → roll. Uncertainty + stakes.
+- "I search the room over an hour" (safe, no pressure) → no roll. They find what's findable.
+- "I search the room while guards approach" → roll. Pressure + stakes.
+- "I look at the markings on the wall" → no roll. Anyone can see them.
+- "I recognize the markings as elven sigils" → roll. Specialized knowledge required.
 
-Pick the skill that best matches HOW the character is doing the action:
-- **Perception** = noticing things passively (hearing, seeing, smelling)
-- **Investigation** = actively examining, deducing, figuring out HOW something works
-- **History/Arcana/Religion/Nature** = recalling knowledge about a topic
-- **Stealth** = moving unseen, hiding
-- **Athletics** = climbing, jumping, swimming, feats of strength
-- **Persuasion/Deception/Intimidation** = social influence
-- **Survival** = tracking, foraging, navigating wilderness
-- **Insight** = reading someone's intentions or detecting lies
+Routine signals that mean NO ROLL even with adventurer context:
+- Movement to a visible destination ("I step closer", "I walk to the bar"). Movement is never a skill check unless the terrain itself is hazardous (cliff, tightrope, rapids).
+- Observation of obvious things ("I look around the tavern", "I check who is here") in safe or explored locations.
+- Common knowledge a character would know automatically.
+- Routine actions with unlimited time and no consequences (setting up camp, lighting a normal fire).
+- Player flavor — describing HOW the action looks doesn't add a roll.
 
-"I look for tracks" = **Survival**, not Perception.
-"I examine the mechanism" = **Investigation**, not Perception.
-"I recall what I know about elves" = **History**, not Perception.
+## SETTING THE DC
+
+DC scales with difficulty: 5=trivial, 10=easy, 12=moderate, 15=hard, 18=very hard, 20=nearly impossible.
+
+Anchor by situation, not by drama. A casual Perception check in a quiet tavern is DC 10-12, not DC 15. Reserve DC 15+ for genuine challenges where most adventurers would meaningfully struggle.
+
+## CHOOSING THE SKILL
+
+Match the skill to HOW the character is doing the action, not what they're targeting:
+
+- **Perception** — passive noticing (hearing, seeing, smelling).
+- **Investigation** — actively examining, deducing, figuring out HOW something works.
+- **History / Arcana / Religion / Nature** — recalling knowledge about a topic.
+- **Stealth** — moving unseen, hiding.
+- **Athletics** — climbing, jumping, swimming, feats of strength.
+- **Acrobatics** — balance, dexterity, evasion.
+- **Persuasion / Deception / Intimidation** — social influence.
+- **Survival** — tracking, foraging, wilderness navigation.
+- **Insight** — reading intentions, detecting lies.
+
+Discriminative cases people get wrong:
+- "I look for tracks" → Survival, not Perception.
+- "I examine the mechanism" → Investigation, not Perception.
+- "I recall what I know about elves" → History, not Perception.
 
 ## ACTION TYPES
 
-**attack** - Hostile action toward a CREATURE (triggers combat)
-**cast_spell** - Casting any spell
-**skill_check** - Any action with uncertain outcome requiring ability/skill check
-**saving_throw** - Forced saves (resisting effects)
-**purchase** - Buying items
-**sell** - Selling items
-**inventory** - Managing items (equip, drop, use)
-**movement** - Tactical positioning
-**social** - Conversation without persuasion needed
-**exploration** - Observing visible things
-**roleplay** - Pure character expression
+- **attack** — melee/ranged WEAPON attack toward a CREATURE (triggers combat). Spells are not attacks.
+- **cast_spell** — casting any spell, including attack cantrips. If the action names a spell, this overrides attack.
+- **skill_check** — any action with uncertain outcome requiring ability/skill check (including difficult attacks against objects).
+- **saving_throw** — forced saves (resisting effects).
+- **purchase** — buying items.
+- **sell** — selling items.
+- **inventory** — managing items (equip, drop, use).
+- **movement** — tactical positioning.
+- **social** — conversation that doesn't require persuasion (asking prices, greeting, small talk).
+- **exploration** — observing visible things, no roll required.
+- **roleplay** — pure character expression with no mechanical effect.
 
-## CLASSIFICATION RULES
+Boundary discrimination:
 
-1. **Attacks vs Skill Checks**:
-   - Hostile action toward a CREATURE → attack (triggers combat)
-   - Action against an OBJECT with difficulty → skill_check (DEX for ranged, STR for melee)
-   - Action against an OBJECT trivially → roleplay (just narrate)
-
-   Examples:
-   - "I attack the goblin" → attack, is_creature_target=true
-   - "I shoot a tree 200m away" → skill_check (DEX, DC 20 for extreme range)
-   - "I kick a pebble" → roleplay (trivial, no roll)
-   - "I smash the locked chest" → skill_check (STR, DC based on material)
-
-2. **Skill Checks**: Outcome is uncertain AND matters
-   - Physical feats with difficulty → skill_check (Athletics/Acrobatics/DEX/STR)
-   - Finding hidden things → skill_check (Perception/Investigation)
-   - Influencing NPCs → skill_check (Persuasion/Deception/Intimidation)
-
-3. **Social**: Only when no persuasion/influence is needed
-   - Casual conversation, asking prices, greeting → social
+- "I attack the goblin" → attack, is_creature_target=true.
+- "I cast fire bolt at the goblin" → cast_spell. Spell name overrides attack classification.
+- "I shoot an arrow at a tree 200m away" → skill_check (DEX, DC 20). Object target with difficulty.
+- "I kick a pebble" → roleplay. Trivial object, no stakes.
+- "I smash the locked chest" → skill_check (STR, DC by material).
+- "I greet the innkeeper warmly" → social. No persuasion needed.
+- "I convince the guard to let us pass" → skill_check (Persuasion).
 
 ## FOR ATTACK ACTIONS (creature targets only)
 
@@ -269,18 +236,7 @@ Note any resources consumed by the action:
 
 ## CURRENCY SPENDING
 
-ALWAYS include currency_spent when the player loses, spends, or gives away money - regardless of action_type.
-This applies to inventory, roleplay, social, or any other action type.
-
-Examples:
-- "I empty half my coin purse" → currency_spent: {"gold": 50} (if they have 100gp)
-- "I tip the barmaid 5 silver" → currency_spent: {"silver": 5}
-- "I drop my coins on the ground" → currency_spent based on amount
-- "I pay the toll" → currency_spent: {"gold": 2}
-- "I give them all my gold" → currency_spent: {"gold": X} (their current gold amount)
-
-Use the denomination the player specifies. Available: copper, silver, electrum, gold, platinum.
-Check the character's Currency in the context to calculate amounts like "half" or "all".
+Always include `currency_spent` when the player spends, loses, or gives away money — regardless of action_type. Use the denomination the player specifies (copper, silver, electrum, gold, platinum). For amounts like "half" or "all," compute from the character's current Currency in the context.
 
 ## FOR PURCHASES
 
@@ -301,12 +257,19 @@ When "Scene Entities" context is provided, these NPCs/creatures EXIST and can be
 
 ## OUTPUT FORMAT
 
-Output valid JSON:
+Output valid JSON. Field order matters — emit them in this sequence so your
+scene-weight judgment is fixed before mechanical details narrow your view:
 
 ```json
 {
+    // STEP 1: think through the scene first
+    "reasoning": "Brief explanation. Note which significance signals fired and why.",
+
+    // STEP 2: commit to scene weight before letting mechanics bias you
+    "narrative_significance": "routine",  // routine | notable | climactic — REQUIRED
+
+    // STEP 3: classify the mechanical action
     "action_type": "skill_check",  // REQUIRED
-    "reasoning": "Brief explanation",
 
     // For attack (creature targets ONLY):
     "target_name": "goblin",
@@ -336,7 +299,8 @@ Output valid JSON:
 }
 ```
 
-Only include fields relevant to the action_type."""
+Only include fields relevant to the action_type, but ALWAYS include
+`reasoning`, `narrative_significance`, and `action_type` (in that order)."""
 
 
 # =============================================================================
@@ -394,6 +358,15 @@ class TriageSchema(BaseModel):
     # For social/roleplay (no mechanics needed)
     narrative_direction: str = ""
 
+    # Phase C: tier-routing hint (see Docs/Roadmap/tiered_narrator.md)
+    # Brain classifies the narrative weight so the orchestrator can pick a
+    # premium narrator client for moments worth dwelling on.
+    # - "routine"   : ordinary turns; trash-mob combat, casual exploration, small talk
+    # - "notable"   : first major NPC, scene change, surprising reveal
+    # - "climactic" : boss fight, character death, major confession, betrayal
+    # Default is "routine" so older brains/legacy responses get safe routing.
+    narrative_significance: str = "routine"
+
     # Resources consumed by the action (ammunition, consumables, etc.)
     resources_consumed: list[dict] = []  # [{"item": "Arrow", "quantity": 1}]
 
@@ -448,11 +421,33 @@ class TriageResult:
     # For social/roleplay (no mechanics needed)
     narrative_direction: Optional[str] = None
 
+    # Phase C: narrator-tier hint from the brain (routine/notable/climactic).
+    # Defaults to "routine" so legacy callers and parse failures route safely.
+    narrative_significance: str = "routine"
+
     # Resources consumed by the action
     resources_consumed: list[dict] = field(default_factory=list)
 
     # Currency spent/lost by the action
     currency_spent: Optional[dict] = None
+
+
+_VALID_SIGNIFICANCES = frozenset({"routine", "notable", "climactic"})
+
+
+def _validate_significance(value) -> str:
+    """Coerce a brain-output significance value to one of the known tiers.
+
+    Falls back to "routine" for missing, empty, or unknown values so a
+    misbehaving brain can't poison the routing decision. Lowercase + strip
+    so common formatting variants ("Notable ", "CLIMACTIC") all work.
+    """
+    if not isinstance(value, str):
+        return "routine"
+    cleaned = value.strip().lower()
+    if cleaned in _VALID_SIGNIFICANCES:
+        return cleaned
+    return "routine"
 
 
 @dataclass
@@ -477,6 +472,7 @@ class DMResponse:
     tool_calls_made: list[dict] = field(default_factory=list)
     dice_rolls: list[DiceRoll] = field(default_factory=list)
     combat_triggered: bool = False  # True if hostility threshold triggered combat
+    proposed_effects: list = field(default_factory=list)  # ProposedEffect list for immersion
 
 
 @dataclass
@@ -486,6 +482,36 @@ class ToolExecutionResult:
     success: bool
     result: Any
     error: Optional[str] = None
+
+
+class _BoundedKeySet:
+    """Bounded FIFO key set used by `_applied_effects` for idempotency.
+
+    Behaves like a `set` for the two operations we need (`__contains__`,
+    `add`) but evicts the oldest entry when full so memory growth stays
+    bounded. Audit #5: prior implementation was a raw `set` that grew
+    forever because message IDs were unique-per-turn UUIDs.
+    """
+
+    def __init__(self, maxlen: int = 1000):
+        import collections as _collections
+        self._set: set[str] = set()
+        self._queue: "_collections.deque[str]" = _collections.deque(maxlen=maxlen)
+
+    def __contains__(self, key: str) -> bool:
+        return key in self._set
+
+    def add(self, key: str) -> None:
+        if key in self._set:
+            return
+        if self._queue.maxlen is not None and len(self._queue) == self._queue.maxlen:
+            evicted = self._queue[0]
+            self._set.discard(evicted)
+        self._queue.append(key)
+        self._set.add(key)
+
+    def __len__(self) -> int:
+        return len(self._set)
 
 
 # =============================================================================
@@ -539,7 +565,12 @@ class DMOrchestrator:
         # Effect processing (replaces mechanics extraction)
         self._effect_validator: Optional[EffectValidator] = None
         self._effect_executor: Optional[EffectExecutor] = None
-        self._applied_effects: set[str] = set()  # Idempotency tracking
+        # Audit #5: was an unbounded set that grew forever because message_id
+        # was uuid-per-turn (so retries never deduped and old keys never aged
+        # out). Now a bounded FIFO that holds the last N keys. message_id is
+        # also derived from `session_key:turn-N` so retries within the same
+        # turn collapse onto the same key.
+        self._applied_effects: _BoundedKeySet = _BoundedKeySet(maxlen=1000)
         self._last_executed_effects: list[ProposedEffect] = []  # For KG bridging
 
         # DM Scratchpad: session-scoped state for narrator continuity.
@@ -602,13 +633,19 @@ class DMOrchestrator:
                     disposition=entity.disposition.value if entity.disposition else "unknown",
                 )
 
-        # Layer 2: WorldState location validation (referenced_entities check)
+        # Layer 2: WorldState location validation (referenced_entities check).
+        # Iterate values (the dict is keyed by id now); check the canonical
+        # name AND any aliases so paraphrases get caught too.
         world_state = getattr(self._current_session, 'world_state', None) if self._current_session else None
         if world_state and world_state.current_location:
-            for npc_name, npc_state in world_state.npcs.items():
-                if len(npc_name) < 3:
-                    continue
-                if npc_name.lower() in narrative_lower:
+            for npc_state in world_state.npcs.values():
+                # Build the set of names to check (canonical + aliases)
+                candidates = [npc_state.name] + list(npc_state.aliases)
+                matched_via = next(
+                    (c for c in candidates if c and len(c) >= 3 and c.lower() in narrative_lower),
+                    None,
+                )
+                if matched_via:
                     # NPC mentioned — check if they're at the right location
                     if (
                         npc_state.location
@@ -617,7 +654,7 @@ class DMOrchestrator:
                     ):
                         logger.warning(
                             "npc_location_mismatch",
-                            npc=npc_name,
+                            npc=npc_state.name,
                             npc_location=npc_state.location,
                             party_location=world_state.current_location,
                         )
@@ -988,6 +1025,11 @@ class DMOrchestrator:
         _kg_seed_ids: list[str] = []
         _kg_vector_matches = 0
         _kg_narrative_recalled = 0
+        # Telemetry buckets — filled out below for the assertion API
+        _kg_text_match_seeds: list[str] = []
+        _kg_scene_seeds: list[str] = []
+        _kg_vector_match_seeds: list[str] = []
+        _kg_recalled_chunks: list[dict] = []
         if kg and kg.node_count() > 0:
             try:
                 from ..game.knowledge.matcher import EntityNameMatcher
@@ -998,15 +1040,18 @@ class DMOrchestrator:
 
                 # Tier 1: Substring match on player text
                 text_seeds = matcher.match(action)
+                _kg_text_match_seeds = list(text_seeds)
 
                 # Tier 2: Always include current scene (location + present NPCs)
                 scene_seeds = matcher.scene_seeds(world_state_pre) if world_state_pre else []
+                _kg_scene_seeds = list(scene_seeds)
 
                 # Tier 3: Vector fallback if player text didn't match any entities
                 if not text_seeds and kg.node_count() > 0:
                     vs = get_vector_store()
                     text_seeds = matcher.vector_match(action, context.campaign_id, vs)
                     _kg_vector_matches = len(text_seeds)
+                    _kg_vector_match_seeds = list(text_seeds)
 
                 # Merge and deduplicate (text matches first for priority)
                 seen = set()
@@ -1038,6 +1083,7 @@ class DMOrchestrator:
                                     c["content"][:300] for c in past_chunks
                                 )
                                 _kg_narrative_recalled = len(past_chunks)
+                                _kg_recalled_chunks = list(past_chunks)
                     except Exception as e:
                         logger.warning("kg_narrative_recall_failed", error=str(e))
 
@@ -1065,8 +1111,19 @@ class DMOrchestrator:
         else:
             # No mechanics - just respond to the player's action naturally
             narrative, proposed_effects = await self._narrate_action(action, player_name, context, triage)
+        # Cache the prose for the dedup judge in _process_proposed_effects.
+        # The judge reads this to decide whether an add_npc looks like an
+        # entity already in the registry.
+        self._last_narrator_prose = narrative or ""
         _turn_record.end_stage("narrate")
-        _turn_record.record_narrator_response(narrative or "", format_type="xml" if _is_anthropic_client(self.narrator.client) else "text")
+        _turn_record.record_narrator_response(narrative or "", format_type=_get_client_provider(self.narrator.client))
+
+        # Phase A telemetry: record which narrator tier handled this turn.
+        # Source-of-truth is _last_narrator_routing populated by
+        # _get_narrator_client_for_turn during this exact turn.
+        _routing = getattr(self, "_last_narrator_routing", None)
+        if _routing:
+            _turn_record.record_narrator_routing(**_routing)
 
         # Step 3.5: Post-generation NPC validation (deterministic, no LLM)
         # Checks if narrator used NPC names in wrong locations
@@ -1196,6 +1253,12 @@ class DMOrchestrator:
                 narrative_chunk_stored=_narrative_chunk_stored,
                 vector_matches=_kg_vector_matches,
                 narrative_chunks_recalled=_kg_narrative_recalled,
+                # Phase A telemetry: actual content surfaced
+                context_yaml=context.kg_context_yaml,
+                narrative_chunks=_kg_recalled_chunks,
+                text_match_seeds=_kg_text_match_seeds,
+                scene_seeds=_kg_scene_seeds,
+                vector_match_seeds=_kg_vector_match_seeds,
             )
 
         # Step 3.7: NLI contradiction check — DISABLED
@@ -1221,7 +1284,15 @@ class DMOrchestrator:
             or world_state is not None  # WorldState extraction supersedes entity extraction
         )
         if narrative:
-            message_id = str(uuid.uuid4())
+            # Audit #5: derive message_id from session+turn so retries within
+            # the same turn collapse onto the same idempotency key. Two
+            # different sessions in the same campaign won't collide because
+            # session_key is unique per session. Falls back to a uuid if
+            # world_state isn't available (rare path).
+            if world_state and self._current_session:
+                message_id = f"{self._current_session.session_key}:turn-{world_state.turn}"
+            else:
+                message_id = str(uuid.uuid4())
             combat_triggered = await self._process_narrator_output(
                 narrative, context, proposed_effects, message_id,
                 skip_entity_extraction=skip_extraction,
@@ -1339,14 +1410,26 @@ class DMOrchestrator:
         # Token usage stats
         narr_prompt = getattr(self, '_last_narrator_prompt_tokens', 0)
         narr_completion = getattr(self, '_last_narrator_completion_tokens', 0)
+        narr_cache_read = getattr(self, '_last_narrator_cache_read_tokens', 0)
+        narr_cache_write = getattr(self, '_last_narrator_cache_write_tokens', 0)
         if narr_prompt or narr_completion:
             narr_time_s = _turn_record.data.get("timings", {}).get("narrate", 0) / 1000
             tps = narr_completion / narr_time_s if narr_time_s > 0 else 0
-            _turn_record.set("tokens", {
+            token_stats = {
                 "narrator_prompt": narr_prompt,
                 "narrator_completion": narr_completion,
                 "narrator_tps": round(tps, 1),
-            })
+            }
+            # Surface cache stats only when the provider reports them — keeps
+            # turn logs clean for Ollama/Groq runs.
+            if narr_cache_read or narr_cache_write:
+                token_stats["narrator_cache_read"] = narr_cache_read
+                token_stats["narrator_cache_write"] = narr_cache_write
+                total_input = narr_prompt + narr_cache_read
+                token_stats["narrator_cache_hit_ratio"] = (
+                    round(narr_cache_read / total_input, 3) if total_input else 0.0
+                )
+            _turn_record.set("tokens", token_stats)
 
         self._turn_logger.flush(_turn_record)
 
@@ -1356,6 +1439,7 @@ class DMOrchestrator:
             tool_calls_made=tool_calls,
             dice_rolls=dice_rolls,
             combat_triggered=combat_triggered,
+            proposed_effects=proposed_effects,
         )
 
     async def triage_action(
@@ -1457,6 +1541,12 @@ class DMOrchestrator:
                 is_creature_target=triage_data.get("is_creature_target", False),
                 # Narrative guidance
                 narrative_direction=_or_none(narrative_direction),
+                # Tier-routing hint (Phase C). Validate to known values; any
+                # other string defaults to "routine" so brain hallucinations
+                # don't bleed into routing decisions.
+                narrative_significance=_validate_significance(
+                    triage_data.get("narrative_significance")
+                ),
                 # Resource consumption
                 resources_consumed=triage_data.get("resources_consumed", []),
                 # Currency spending
@@ -1735,7 +1825,7 @@ class DMOrchestrator:
                 "narrative_hint": f"{player_name} isn't known to the system.",
             }
 
-        character, char_id = resolved
+        char_id, character = resolved
 
         # Execute the purchase through the existing tool function
         result = await self._execute_purchase_item({
@@ -1814,7 +1904,7 @@ class DMOrchestrator:
                 "narrative_hint": f"{player_name} isn't known to the system.",
             }
 
-        character, char_id = resolved
+        char_id, character = resolved
 
         # Determine inventory action type from the action text
         pickup_keywords = ["pick up", "pickup", "take", "grab", "collect", "pocket", "put in", "stash", "keep"]
@@ -2040,20 +2130,117 @@ class DMOrchestrator:
                 have=currency.gold,
             )
 
-    def _get_narrator_tools(self) -> list[dict]:
-        """Select narrator tool set.
+    # Action types Phase B vetoes as definitely-mundane. The brain can still
+    # override with an explicit "climactic" classification (e.g. dropping the
+    # entire party fortune as a final dramatic gesture flips the currency
+    # transaction to climactic), but otherwise these route to standard.
+    _PHASE_B_MUNDANE_ACTION_TYPES = frozenset({
+        "inventory",   # equip / drop / use item
+    })
 
-        The narrator's unique knowledge is WHO it wrote about and WHAT
-        it introduced. Mechanical effects (rolls, damage, transfers,
-        currency, combat) are handled by triage and the rules brain —
-        having the narrator also declare those creates redundancy.
+    def _select_narrator_client_for_turn(
+        self,
+        action: str,
+        triage: Optional["TriageResult"],
+        context: Optional[BrainContext],
+    ):
+        """Pick the narrator client to use for this turn.
 
-        Core tools (all providers):
-        - ref_entity: only the narrator knows which entity it referenced
-        - add_npc: only the narrator knows it introduced someone new
-        - spawn_object: only the narrator knows it placed an object
+        Uses pre-narration signals only. See ``Docs/Roadmap/tiered_narrator.md``
+        for the full design.
+
+        Signals (in priority order):
+        - ``FORCE_NARRATOR_TIER`` env var (QA/testing override)
+        - Action prefixed with ``[OPENING SCENE]`` → opening tier
+        - **Phase B veto** (deterministic) — known mundane paths force
+          standard tier UNLESS the brain explicitly says ``"climactic"``:
+          - In ongoing combat (combat narration round-by-round)
+          - Action type is inventory
+        - **Phase C** (brain-driven) — brain says ``"notable"`` or
+          ``"climactic"`` → premium tier
+        - Otherwise → standard tier
         """
-        return NARRATOR_TOOLS_CORE
+        import os
+
+        force_tier = os.environ.get("FORCE_NARRATOR_TIER") or None
+
+        is_opening = bool(action and action.lstrip().startswith("[OPENING SCENE]"))
+
+        # Phase C: brain-classified narrative weight (routine/notable/climactic)
+        significance = getattr(triage, "narrative_significance", "routine") if triage else "routine"
+
+        # Phase B veto: deterministic mundane-path detection. These paths
+        # don't need premium prose — combat rounds, inventory shuffling,
+        # routine purchases. The brain can still override with "climactic"
+        # for true peak moments (boss death blow, PC death in combat, etc.).
+        action_type = getattr(triage, "action_type", None) if triage else None
+        in_combat = bool(context and getattr(context, "in_combat", False))
+
+        definitely_standard = bool(
+            in_combat
+            or (action_type and action_type in self._PHASE_B_MUNDANE_ACTION_TYPES)
+        )
+
+        tier = select_narrator_tier(
+            is_opening=is_opening,
+            definitely_standard=definitely_standard,
+            significance=significance,
+            force_tier=force_tier,
+        )
+
+        client = get_narrator_client_for(tier)
+
+        # Keep self.narrator.client in sync so brain-side helpers that read
+        # off the brain (e.g. format builders) see the current tier client.
+        # This is an intentional mutation — narrator is a thin holder.
+        self.narrator.client = client
+
+        # Cache routing decision for the turn record (read by
+        # process_narrator_turn → record_narrator_routing).
+        self._last_narrator_routing = {
+            "tier": tier,
+            "provider": _get_client_provider(client),
+            "model": getattr(client, "model", "") or "",
+            "significance": significance,
+            "phase_b_veto": bool(definitely_standard),
+        }
+
+        # Telemetry: log the tier choice with the signals that drove it. Lets
+        # us tune the Phase B veto and brain classification thresholds over time.
+        logger.info(
+            "narrator_tier_selected",
+            tier=tier,
+            is_opening=is_opening,
+            significance=significance,
+            definitely_standard=definitely_standard,
+            in_combat=in_combat,
+            action_type=action_type,
+            forced=bool(force_tier),
+        )
+        return client
+
+    def _get_narrator_tools(self) -> list[dict]:
+        """Select narrator tool set based on the active profile's tier.
+
+        Tiers (configured in profiles.yaml under narrator.tools):
+        - "core" (default): 3 tools — ref_entity, add_npc, spawn_object.
+          Safest for sub-10B local narrators that drop tools as count grows.
+        - "core_plus": adds change_location and start_combat. Suitable for
+          capable local narrators (Qwen 3.6, Qwen 3.5:27b dense) and any
+          cloud narrator.
+        - "full": all 12 tools. Cloud narrators (DeepSeek V4 Pro/Flash,
+          Claude Sonnet/Haiku) handle the larger surface reliably.
+
+        Whatever the narrator doesn't declare is filled in by the state
+        and entity extractors as fallback.
+        """
+        from ..config import get_profile
+        try:
+            tier = get_profile().narrator.tools or "core"
+        except Exception:
+            # Profile load failed — fall back to safest tier
+            tier = "core"
+        return get_narrator_tools_for_tier(tier)
 
     def _append_tool_reminder(self, messages: list[dict]) -> None:
         """Append entity constraints, situational directives, and tool reminder.
@@ -2064,17 +2251,18 @@ class DMOrchestrator:
         """
         parts = []
 
-        # Inject entity constraints from world state — these are HARD FACTS
+        # Inject entity constraints from world state — these are HARD FACTS.
+        # Iterate values (dict is id-keyed); show npc.name (canonical), not the UUID.
         world_state = getattr(self._current_session, 'world_state', None) if self._current_session else None
         if world_state and world_state.npcs:
             constraints = []
             hostile_npcs = []
-            for name, npc in world_state.npcs.items():
+            for npc in world_state.npcs.values():
                 if npc.alive:
                     desc = npc.description[:80] if npc.description else ""
-                    constraints.append(f"- {name}: {npc.disposition}, {desc}")
+                    constraints.append(f"- {npc.name}: {npc.disposition}, {desc}")
                     if npc.disposition in ("hostile", "unfriendly"):
-                        hostile_npcs.append(name)
+                        hostile_npcs.append(npc.name)
             if constraints:
                 parts.append(
                     "ENTITY FACTS (your prose MUST NOT contradict these):\n"
@@ -2110,25 +2298,33 @@ class DMOrchestrator:
         prose: str,
         messages: list[dict],
     ) -> list[ProposedEffect]:
-        """Second pass for local models: force tool calls after narration.
+        """Second pass: force tool calls after narration.
 
-        Qwen MoE writes good prose but inconsistently calls tools in the
-        same turn. This sends the prose back with tool_choice=required
-        so the model MUST declare which entities it referenced.
+        Audit #20: previously this built a fresh 2-message prompt with just
+        the prose, throwing away the roster, world-state YAML, and `[id: ...]`
+        tags from the original messages. The model then couldn't resolve any
+        roster IDs and would invent new NPCs instead of using `ref_entity`.
 
-        Only runs for OllamaClient when the first pass produced no tools.
+        Now we reuse the full original message stack, append the assistant's
+        prose as an assistant turn, and add a user turn instructing the model
+        to declare tool calls. This preserves all the entity context.
         """
-        followup_messages = [
+        # Reuse the original messages — they contain the system prompt with
+        # roster IDs, world state YAML, and entity context the model needs.
+        followup_messages = list(messages) + [
+            {"role": "assistant", "content": prose[:2000]},
             {
-                "role": "system",
+                "role": "user",
                 "content": (
-                    "You just wrote the following narration. Now declare which "
-                    "entities from the roster you referenced, and any new NPCs "
-                    "or objects you introduced. Call the appropriate tools.\n\n"
-                    f"Your narration:\n{prose[:2000]}"
+                    "Now call a tool for everything you narrated above, using only "
+                    "the tools available to you:\n"
+                    "- ref_entity for each roster entity you referenced (use the roster IDs)\n"
+                    "- add_npc / spawn_object for any new NPC or object you introduced\n"
+                    "- update_player for any player damage, healing, loot, currency, or condition change\n"
+                    "- change_location if the party moved; start_combat if a fight began\n"
+                    "Do NOT respond with prose — only tool calls."
                 ),
             },
-            {"role": "user", "content": "Call ref_entity, add_npc, or spawn_object for every entity in the narration above."},
         ]
 
         try:
@@ -2137,7 +2333,12 @@ class DMOrchestrator:
                 temperature=0,
                 max_tokens=500,
                 think=False,
-                tools=NARRATOR_TOOLS_CORE,
+                # Tier-aware (audit #2/N2): the no-tool fallback previously
+                # hardcoded CORE, so on core_plus/full profiles the streaming
+                # path could never recover update_player/change_location/
+                # start_combat. Use the profile's tier like the primary calls do;
+                # core-tier gaps are still backfilled by the state/entity extractors.
+                tools=self._get_narrator_tools(),
                 tool_choice="required",
             )
 
@@ -2168,6 +2369,10 @@ class DMOrchestrator:
         # Capture token stats for turn logging
         self._last_narrator_prompt_tokens = getattr(response, 'prompt_tokens', 0)
         self._last_narrator_completion_tokens = getattr(response, 'completion_tokens', 0)
+        # Prompt-cache telemetry (Anthropic, DeepSeek, ...). Zero on providers
+        # without caching support — observability only, no behavior gating.
+        self._last_narrator_cache_read_tokens = getattr(response, 'cache_read_tokens', 0)
+        self._last_narrator_cache_write_tokens = getattr(response, 'cache_write_tokens', 0)
 
         raw_content = response.content.strip() if response.content else ""
 
@@ -2215,6 +2420,9 @@ class DMOrchestrator:
         Returns:
             Tuple of (narrative text, proposed effects)
         """
+        # Tier-aware narrator client selection (Phase B)
+        self._select_narrator_client_for_turn(action, triage, context)
+
         # Build narrator context with the mechanical result
         narrative_hint = mechanical_result.get("narrative_hint", "")
         action_type = mechanical_result.get("action_type", "action")
@@ -2276,8 +2484,8 @@ Write your narration directly."""
             if not prose:
                 prose = narrative_hint
 
-            # Two-turn followup for local models
-            if not proposed_effects and isinstance(self.narrator.client, OllamaClient):
+            # Two-turn followup: if narrator didn't call tools, ask again
+            if not proposed_effects and prose:
                 followup_effects = await self._narrator_tool_followup(prose, messages)
                 proposed_effects = followup_effects
 
@@ -2395,6 +2603,9 @@ Write your narration directly."""
         Returns:
             Tuple of (narrative text, proposed effects)
         """
+        # Tier-aware narrator client selection (Phase B)
+        self._select_narrator_client_for_turn(action, triage, context)
+
         # Get narrative direction from triage (tells narrator what to describe)
         direction = triage.narrative_direction or "Describe what happens naturally."
 
@@ -2476,8 +2687,9 @@ Write your narration directly."""
         self._append_tool_reminder(messages)
 
         # Use streaming if callback provided and client supports it
-        # (streaming doesn't support tools, so fall back to non-streaming with tools)
+        # (streaming doesn't support tools — tool followup happens separately)
         if self._on_narrative_token and hasattr(self.narrator.client, "chat_stream"):
+            logger.debug("narrator_streaming_enabled")
             response = await self.narrator.client.chat_stream(
                 messages=messages,
                 temperature=self.narrator.temperature,
@@ -2534,6 +2746,9 @@ Write your narration directly."""
         Returns:
             Tuple of (narrative text, proposed effects)
         """
+        # Tier-aware narrator client selection (Phase B)
+        self._select_narrator_client_for_turn(action, triage, context)
+
         # Build narrator context with strict constraints
         narrator_context = self._build_narrator_context(
             action, player_name, context, triage, resolution
@@ -2715,6 +2930,19 @@ Write your narration directly."""
                 referenced_entity_ids=referenced_entity_ids,
             )
 
+            # Phase-4 dedup pass: run extractor's new_npcs through the brain
+            # judge BEFORE applying. The narrator-side _dedup_rewrite catches
+            # paraphrase drift in tool-call effects; this catches the same
+            # drift on the extractor side (where the extractor saw prose
+            # like "Old Bram" and proposed a new NPC even though "Bram" is
+            # already registered). On rewrite: drop from new_npcs, append
+            # an NPCUpdate(id=..., add_aliases=[...]) so the alias is
+            # recorded against the existing record.
+            if delta.new_npcs and world_state.npcs:
+                delta = await self._dedup_extractor_new_npcs(
+                    delta, narrative, world_state
+                )
+
             # Apply delta (validates internally, returns rejections)
             rejections = world_state.apply_delta(delta)
 
@@ -2743,6 +2971,87 @@ Write your narration directly."""
         except Exception as e:
             logger.warning("state_delta_extraction_failed", error=str(e))
             return None
+
+    async def _dedup_extractor_new_npcs(
+        self,
+        delta: "StateDelta",
+        narrator_prose: str,
+        world_state: "WorldState",
+    ) -> "StateDelta":
+        """Run each ``delta.new_npcs`` entry through the brain dedup judge.
+
+        Mirrors :meth:`_dedup_rewrite` (which runs on narrator-side ADD_NPC
+        effects), but operates on the state-extractor's proposed ``new_npcs``
+        before they reach ``apply_delta``.
+
+        On high-confidence rewrite the entry is dropped from ``new_npcs``
+        and an ``NPCUpdate(id=target_id, add_aliases=[paraphrased_name])``
+        is appended to ``npc_updates`` so ``apply_delta`` records the
+        alias against the existing entity.
+
+        Default safe: any judge error / parse failure / unknown target id
+        keeps the original ``new_npcs`` entry. False negatives (missed
+        dedup) recover next turn when the registry has more recency
+        signal; false positives (wrongly merging two distinct characters)
+        do not, so we bias to keep.
+        """
+        from ..game.world_state import NPCUpdate
+
+        try:
+            from .extractors.dedup_judge import get_dedup_judge
+        except Exception as e:
+            logger.warning("extractor_dedup_judge_import_failed", error=str(e))
+            return delta
+
+        judge = get_dedup_judge()
+        surviving: list = []
+        appended_updates: list = []
+
+        for proposed in delta.new_npcs:
+            try:
+                decision = await judge.judge_add_npc(
+                    proposed_name=proposed.name or "",
+                    proposed_description=proposed.description or "",
+                    narrator_prose=narrator_prose,
+                    existing_npcs=list(world_state.npcs.values()),
+                    current_turn=world_state.turn,
+                )
+            except Exception as e:
+                logger.warning("extractor_dedup_judge_call_exception", error=str(e))
+                surviving.append(proposed)
+                continue
+
+            if not decision.is_rewrite:
+                surviving.append(proposed)
+                continue
+
+            target_id = decision.target_id
+            if target_id not in world_state.npcs:
+                logger.warning(
+                    "extractor_dedup_target_not_in_world_state",
+                    target_id=target_id,
+                )
+                surviving.append(proposed)
+                continue
+
+            alias = (decision.alias or proposed.name or "").strip()
+            update = NPCUpdate(
+                id=target_id,
+                add_aliases=[alias] if alias else None,
+            )
+            appended_updates.append(update)
+
+            logger.info(
+                "extractor_dedup_rewrite_applied",
+                proposed_name=proposed.name,
+                target_id=target_id,
+                alias=alias,
+            )
+
+        delta.new_npcs = surviving
+        if appended_updates:
+            delta.npc_updates = list(delta.npc_updates) + appended_updates
+        return delta
 
     def _sync_effect_to_world_state(self, effect: ProposedEffect) -> None:
         """Sync a successfully executed effect into WorldState.
@@ -2808,13 +3117,21 @@ Write your narration directly."""
         elif etype == EffectType.ADD_NPC:
             from ..game.world_state import NPCState
             npc_name = effect.npc_name or "Unknown"
-            if npc_name not in world_state.npcs:
-                world_state.npcs[npc_name] = NPCState(
+            # Mint a new NPCState only if we don't already have a matching
+            # one (by name or alias). Dedup by id is enforced inside
+            # apply_delta; here at the orchestrator effect-sync we use
+            # name lookup as the cheap pre-check (the brain dedup judge
+            # will eventually run upstream of this to catch paraphrases).
+            existing = world_state._find_npc(npc_name)
+            if existing is None:
+                npc = NPCState(
                     name=npc_name,
                     location=world_state.current_location,
                     disposition=effect.npc_disposition or "neutral",
                     description=effect.npc_description or "",
+                    last_seen_turn=world_state.turn,
                 )
+                world_state.npcs[npc.id] = npc
 
         elif etype == EffectType.CONSUME_RESOURCE:
             resource = effect.resource_name or effect.item_name or "a resource"
@@ -2828,6 +3145,146 @@ Write your narration directly."""
             # Remove from scene items if present
             if effect.target:
                 world_state.remove_item(effect.target)
+
+        elif etype == EffectType.CHANGE_LOCATION:
+            # Narrator-authoritative location change: overrides whatever the
+            # state extractor may have produced for this turn. The state
+            # extractor still runs (as fallback for cases where the narrator
+            # didn't tool-call), but if both fired the narrator wins because
+            # this sync runs AFTER the extractor's apply_delta.
+            new_loc = (effect.location_name or "").strip()
+            if new_loc:
+                if world_state.current_location != new_loc:
+                    # Track previous location as a connected one (it's reachable)
+                    if (
+                        world_state.current_location
+                        and world_state.current_location not in world_state.connected_locations
+                    ):
+                        world_state.connected_locations.append(world_state.current_location)
+                world_state.current_location = new_loc
+                if effect.location_description:
+                    world_state.location_description = effect.location_description
+                world_state.record_transfer(f"party arrived at {new_loc}")
+
+        elif etype == EffectType.REF_ENTITY:
+            # Narrator referenced an existing roster entity — bump recency
+            # so relevance-based roster selection (last_seen_turn window)
+            # keeps this entity surfaced. Lightweight; no other state change.
+            ref_id = (effect.ref_entity_id or "").strip()
+            if ref_id:
+                npc_state = world_state.npcs.get(ref_id) or world_state._find_npc(ref_id)
+                if npc_state is not None:
+                    npc_state.last_seen_turn = world_state.turn
+                    # If the prose used a different alias than the canonical
+                    # name, accumulate it. Helps future paraphrase resolution.
+                    alias = (effect.ref_alias_used or "").strip()
+                    if alias and alias != npc_state.name and alias not in npc_state.aliases:
+                        npc_state.aliases.append(alias)
+
+        elif etype == EffectType.UPDATE_ENTITY:
+            # Narrator-authoritative entity update: mirrors the SceneEntity
+            # mutations that _execute_update_entity already applied so the
+            # WorldState YAML the narrator sees next turn matches.
+            entity_id = (effect.update_entity_id or "").strip()
+            if entity_id:
+                npc_state = world_state.npcs.get(entity_id) or world_state._find_npc(entity_id)
+                if npc_state is not None:
+                    # Bump recency on any update too
+                    npc_state.last_seen_turn = world_state.turn
+                    if effect.update_disposition is not None:
+                        npc_state.disposition = effect.update_disposition.lower()
+                    if effect.update_status is not None:
+                        # WorldState uses .alive bool — translate status
+                        status = effect.update_status.lower()
+                        if status in ("dead",):
+                            npc_state.alive = False
+                        elif status in ("alive", "wounded", "unconscious", "fled", "captured"):
+                            # Keep alive=True but record status in notes for narrator visibility
+                            if status != "alive":
+                                npc_state.notes = (
+                                    (npc_state.notes + " " if npc_state.notes else "")
+                                    + f"[{status}]"
+                                ).strip()
+                    if effect.update_importance is not None:
+                        npc_state.important = bool(effect.update_importance)
+                    if effect.update_description_addition:
+                        addition = effect.update_description_addition.strip()
+                        if addition and addition not in (npc_state.description or ""):
+                            npc_state.description = (
+                                (npc_state.description + " " if npc_state.description else "")
+                                + addition
+                            ).strip()
+                    # NPC inventory deltas — adds and removes apply directly
+                    # to the NPCState.inventory list so the narrator sees
+                    # them in the YAML next turn.
+                    if effect.update_add_items:
+                        for item in effect.update_add_items:
+                            item_norm = item.strip()
+                            if item_norm and item_norm not in npc_state.inventory:
+                                npc_state.inventory.append(item_norm)
+                    if effect.update_remove_items:
+                        for item in effect.update_remove_items:
+                            item_norm = item.strip().lower()
+                            # Remove case-insensitively
+                            npc_state.inventory = [
+                                i for i in npc_state.inventory
+                                if i.strip().lower() != item_norm
+                            ]
+
+        elif etype == EffectType.UPDATE_PLAYER:
+            # Consolidated player-state mutation. The Character object lives
+            # in the session; we update what we can on the WorldState side
+            # (player snapshot + transfer log) and rely on the orchestrator's
+            # downstream wiring (inventory_repo, character_repo) for the
+            # mechanical mutations.
+            log_parts: list[str] = []
+            if effect.player_item_grant:
+                names = [e.get("name", "") for e in effect.player_item_grant if e.get("name")]
+                if names:
+                    log_parts.append(f"player gained: {', '.join(names)}")
+                # Also: if any grant has source='npc:...', mirror as removal
+                # from that NPC's inventory.
+                for entry in effect.player_item_grant:
+                    src = (entry.get("source") or "").strip()
+                    if src.startswith("npc:"):
+                        npc_id = src.split(":", 1)[1]
+                        npc_state = world_state.npcs.get(npc_id) or world_state._find_npc(npc_id)
+                        if npc_state is not None:
+                            item_norm = entry.get("name", "").strip().lower()
+                            npc_state.inventory = [
+                                i for i in npc_state.inventory
+                                if i.strip().lower() != item_norm
+                            ]
+            if effect.player_item_remove:
+                names = [e.get("name", "") for e in effect.player_item_remove if e.get("name")]
+                if names:
+                    log_parts.append(f"player lost: {', '.join(names)}")
+                # If any remove has destination='npc:...', mirror as add to
+                # that NPC's inventory (this is how "I give the relic to the
+                # innkeeper" sticks 20 turns later).
+                for entry in effect.player_item_remove:
+                    dst = (entry.get("destination") or "").strip()
+                    if dst.startswith("npc:"):
+                        npc_id = dst.split(":", 1)[1]
+                        npc_state = world_state.npcs.get(npc_id) or world_state._find_npc(npc_id)
+                        if npc_state is not None:
+                            item = entry.get("name", "").strip()
+                            if item and item not in npc_state.inventory:
+                                npc_state.inventory.append(item)
+            if effect.player_currency_delta:
+                log_parts.append(f"currency: {effect.player_currency_delta}")
+            if effect.player_hp_delta is not None:
+                sign = "+" if effect.player_hp_delta > 0 else ""
+                log_parts.append(
+                    f"HP {sign}{effect.player_hp_delta}"
+                    + (f" ({effect.player_damage_type})" if effect.player_damage_type else "")
+                )
+            if effect.player_add_conditions:
+                log_parts.append(f"conditions+: {effect.player_add_conditions}")
+            if effect.player_remove_conditions:
+                log_parts.append(f"conditions-: {effect.player_remove_conditions}")
+            if log_parts:
+                world_state.record_transfer(" | ".join(log_parts))
 
     def _sync_npcs_to_registry(
         self,
@@ -2989,6 +3446,11 @@ Write your narration directly."""
                 applied_effects_store=self._applied_effects,
             )
 
+        # Thread the acting player so update_player effects (audit #1) target the
+        # right PC instead of guessing. Set every turn — the executor is reused.
+        acting = self._resolve_character_by_name(context.player_name) if context.player_name else None
+        self._effect_executor.acting_character_id = acting[0] if acting else None
+
         # Ensure validator exists
         if not self._effect_validator:
             self._effect_validator = EffectValidator(
@@ -3000,8 +3462,24 @@ Write your narration directly."""
         campaign_id = context.campaign_id or "unknown"
         msg_id = message_id or str(uuid.uuid4())
 
+        # Phase-5 dedup judge: when an ADD_NPC effect proposes an NPC that
+        # looks like one already in the registry (paraphrase drift), the
+        # judge rewrites the effect to REF_ENTITY pointing at the existing
+        # id. The judge defaults to ACCEPT on any uncertainty (false
+        # negatives are recoverable; false positives merge distinct
+        # characters and are not). Idempotency keys are still indexed by
+        # tool-call position, so retry safety survives the rewrite (per
+        # research: never derive idempotency keys from LLM output).
+        world_state_for_dedup = (
+            getattr(self._current_session, 'world_state', None)
+            if self._current_session else None
+        )
+        narrator_prose = getattr(self, "_last_narrator_prose", "") or ""
+
         for i, effect in enumerate(effects):
-            # Build idempotency key
+            # Build idempotency key BEFORE any rewrite, so retries hit the
+            # same key whether the original effect was add_npc or its
+            # rewritten ref_entity.
             idem_key = build_effect_idempotency_key(campaign_id, msg_id, i)
 
             # Skip effects requiring confirmation (handled separately via UI)
@@ -3013,6 +3491,18 @@ Write your narration directly."""
                 )
                 # TODO: Queue for player confirmation via Discord UI
                 continue
+
+            # Dedup judge — only runs on ADD_NPC effects with a registry to
+            # check against. Ask the brain whether this is genuinely new.
+            if (
+                effect.effect_type == EffectType.ADD_NPC
+                and world_state_for_dedup is not None
+                and world_state_for_dedup.npcs
+                and effect.npc_name
+            ):
+                effect = await self._dedup_rewrite(
+                    effect, narrator_prose, world_state_for_dedup
+                )
 
             # Validate
             validation = self._effect_validator.validate(effect)
@@ -3050,6 +3540,81 @@ Write your narration directly."""
                 )
 
         return combat_triggered
+
+    async def _dedup_rewrite(
+        self,
+        effect: ProposedEffect,
+        narrator_prose: str,
+        world_state: "WorldState",
+    ) -> ProposedEffect:
+        """Run the brain dedup judge on an ADD_NPC effect.
+
+        If the judge confidently identifies the proposed NPC as one
+        already in the registry (paraphrase drift), rewrite the effect
+        in-place to a REF_ENTITY pointing at the existing id and stash
+        the paraphrased name as an alias. Otherwise return the original
+        effect unchanged.
+
+        Default safe: returns original on any judge error / parse failure
+        / "accept" decision.
+        """
+        try:
+            from .extractors.dedup_judge import get_dedup_judge
+        except Exception as e:
+            logger.warning("dedup_judge_import_failed", error=str(e))
+            return effect
+
+        judge = get_dedup_judge()
+        try:
+            decision = await judge.judge_add_npc(
+                proposed_name=effect.npc_name or "",
+                proposed_description=effect.npc_description or "",
+                narrator_prose=narrator_prose,
+                existing_npcs=list(world_state.npcs.values()),
+                current_turn=world_state.turn,
+            )
+        except Exception as e:
+            logger.warning("dedup_judge_call_exception", error=str(e))
+            return effect
+
+        if not decision.is_rewrite:
+            return effect
+
+        # Rewrite ADD_NPC → REF_ENTITY pointing at the existing id.
+        # Also accumulate the paraphrased name as an alias on the
+        # existing NPCState so future paraphrases match more easily.
+        target_id = decision.target_id
+        existing = world_state.npcs.get(target_id)
+        if existing is None:
+            # Judge proposed an id that doesn't exist — be safe and accept the original
+            logger.warning(
+                "dedup_judge_target_not_in_world_state",
+                target_id=target_id,
+            )
+            return effect
+
+        if decision.alias and decision.alias != existing.name and decision.alias not in existing.aliases:
+            existing.aliases.append(decision.alias)
+
+        logger.info(
+            "dedup_rewrite_applied",
+            original_name=effect.npc_name,
+            target_id=target_id,
+            existing_name=existing.name,
+            alias=decision.alias,
+        )
+
+        # Build the rewritten REF_ENTITY effect — preserve idempotency-relevant
+        # context (no idempotency key change; that's tied to tool-call index).
+        return ProposedEffect(
+            effect_type=EffectType.REF_ENTITY,
+            ref_entity_id=target_id,
+            ref_alias_used=decision.alias,
+            # Preserve any dialogue tracking the narrator added on the
+            # original add_npc call — those still belong to this entity.
+            dialogue_indices=list(effect.dialogue_indices),
+            dialogue_emotions=list(effect.dialogue_emotions),
+        )
 
     async def _check_player_attack_initiation(
         self,

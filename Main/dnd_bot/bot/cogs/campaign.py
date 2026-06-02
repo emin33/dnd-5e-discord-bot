@@ -41,6 +41,10 @@ logger = structlog.get_logger()
 _campaign_players: dict[str, list[int]] = {}  # campaign_id -> [user_ids]
 _campaign_players_lock = asyncio.Lock()
 
+# Serializes "Start Game" attempts so two near-simultaneous clicks can't both
+# pass the `has_active_session` check before either creates the session.
+_session_start_lock = asyncio.Lock()
+
 # Track active character creation wizards ((guild_id, user_id) -> state)
 _creation_states: dict[tuple[int, int], CharacterCreationState] = {}
 _creation_states_lock = asyncio.Lock()
@@ -71,7 +75,11 @@ class CampaignCog(commands.Cog):
         self.creator = get_creator()
 
     async def _handle_join(self, interaction: discord.Interaction, campaign: Campaign):
-        """Handle a player joining the campaign."""
+        """Handle a player joining the campaign.
+
+        Caller (the lobby button) has already deferred the interaction, so we
+        use `interaction.followup.send` rather than `response.send_message`.
+        """
         user_id = interaction.user.id
 
         # Check if already joined with a character in this campaign
@@ -79,7 +87,7 @@ class CampaignCog(commands.Cog):
         character = await char_repo.get_by_user_and_campaign(user_id, campaign.id)
 
         if character:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 f"You've already joined as **{character.name}**!",
                 ephemeral=True,
             )
@@ -128,7 +136,8 @@ class CampaignCog(commands.Cog):
         )
 
         embed = view.get_embed(campaign.name)
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        # Caller (lobby button) deferred — use followup, not response.
+        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
     async def _use_existing_character(
         self,
@@ -536,8 +545,7 @@ class CampaignCog(commands.Cog):
                     break
 
         if not skill_choice:
-            # No skill choices, skip to confirmation
-            await self._show_confirmation(interaction, campaign)
+            await self._show_appearance(interaction, campaign)
             return
 
         num_skills = skill_choice.get("choose", 2)
@@ -549,7 +557,7 @@ class CampaignCog(commands.Cog):
                 available_skills.append(skill_index)
 
         async def on_skills_complete(skill_interaction: discord.Interaction):
-            await self._show_confirmation(skill_interaction, campaign)
+            await self._show_appearance(skill_interaction, campaign)
 
         view = SkillSelectView(state, available_skills, num_skills, on_skills_complete)
 
@@ -558,6 +566,63 @@ class CampaignCog(commands.Cog):
             title="Choose Your Skills",
             description=f"As a {class_name}, choose {num_skills} skills to be proficient in.",
             color=discord.Color.blue(),
+        )
+
+        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+
+    async def _show_appearance(self, interaction: discord.Interaction, campaign: Campaign):
+        """Show appearance step (only if images enabled)."""
+        user_id = interaction.user.id
+        guild_id = interaction.guild_id or 0
+        state = _creation_states.get((guild_id, user_id))
+        if not state:
+            return
+
+        # Skip if images aren't enabled
+        try:
+            from ...config import get_profile
+            profile = get_profile()
+            if not profile.immersion.image_enabled:
+                await self._show_confirmation(interaction, campaign)
+                return
+        except Exception:
+            await self._show_confirmation(interaction, campaign)
+            return
+
+        from ..views.character_appearance import AppearanceModal
+
+        async def on_appearance_done(description: str):
+            state.description = description
+            await self._show_confirmation(interaction, campaign)
+
+        modal = AppearanceModal(on_appearance_done)
+
+        view = discord.ui.View(timeout=120)
+
+        async def show_modal(btn_interaction: discord.Interaction):
+            await btn_interaction.response.send_modal(modal)
+
+        async def skip(btn_interaction: discord.Interaction):
+            await btn_interaction.response.defer()
+            state.description = ""
+            await self._show_confirmation(btn_interaction, campaign)
+
+        describe_btn = discord.ui.Button(label="Describe Appearance", style=discord.ButtonStyle.primary)
+        describe_btn.callback = show_modal
+        skip_btn = discord.ui.Button(label="Skip", style=discord.ButtonStyle.secondary)
+        skip_btn.callback = skip
+        view.add_item(describe_btn)
+        view.add_item(skip_btn)
+
+        embed = discord.Embed(
+            title="Character Appearance",
+            description=(
+                f"**{state.name}** the {state.race_index.title()} {state.class_index.title()}\n\n"
+                "Describe your character's physical appearance. This will be used for "
+                "scene image generation and your character sheet.\n\n"
+                "*Example: A tall elf with silver hair and emerald eyes, wearing worn leather armor...*"
+            ),
+            color=discord.Color.purple(),
         )
 
         await interaction.followup.send(embed=embed, view=view, ephemeral=True)
@@ -588,9 +653,13 @@ class CampaignCog(commands.Cog):
         race_name = race_data["name"] if race_data else state.race_index.title()
         class_name = class_data["name"] if class_data else state.class_index.title()
 
+        desc = f"**{state.name}**\n{race_name} {class_name}"
+        if state.description:
+            desc += f"\n\n*{state.description[:200]}*"
+
         embed = discord.Embed(
             title="Confirm Your Character",
-            description=f"**{state.name}**\n{race_name} {class_name}",
+            description=desc,
             color=discord.Color.green(),
         )
 
@@ -631,6 +700,10 @@ class CampaignCog(commands.Cog):
         try:
             # Create the character
             character = self.creator.build_character(state)
+
+            # Set appearance description from wizard
+            if state.description:
+                character.description = state.description
 
             # Save to database
             char_repo = await get_character_repo()
@@ -694,13 +767,19 @@ class CampaignCog(commands.Cog):
             )
 
     async def _handle_start(self, interaction: discord.Interaction, campaign: Campaign):
-        """Handle the DM starting the game - actually starts the session."""
+        """Handle the DM starting the game - actually starts the session.
+
+        Caller (the lobby button) has already deferred. The has_active_session
+        check + start_session must run under `_session_start_lock` so two
+        concurrent "Start Game" clicks can't both pass the check and create
+        duplicate sessions.
+        """
         # Check database for characters in this campaign
         char_repo = await get_character_repo()
         characters = await char_repo.get_all_by_campaign(campaign.id)
 
         if not characters:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "No players have joined yet! Wait for players to click 'Join Campaign'.",
                 ephemeral=True,
             )
@@ -711,22 +790,23 @@ class CampaignCog(commands.Cog):
 
         session_manager = get_session_manager()
 
-        # Check if session already active
-        if session_manager.has_active_session(interaction.channel_id):
-            await interaction.response.send_message(
-                "A game session is already active in this channel!",
-                ephemeral=True,
-            )
-            return
+        async with _session_start_lock:
+            # Check inside the lock so the result is consistent with the start call below.
+            if session_manager.has_active_session(interaction.channel_id):
+                await interaction.followup.send(
+                    "A game session is already active in this channel!",
+                    ephemeral=True,
+                )
+                return
 
-        # Start the session with the actual campaign ID
-        # Note: dm_user_id=None because the AI is the DM, not a human
-        session = await session_manager.start_session(
-            channel_id=interaction.channel_id,
-            guild_id=interaction.guild_id,
-            campaign_id=campaign.id,
-            dm_user_id=None,  # AI is the DM, no human DM
-        )
+            # Start the session with the actual campaign ID
+            # Note: dm_user_id=None because the AI is the DM, not a human
+            session = await session_manager.start_session(
+                channel_id=interaction.channel_id,
+                guild_id=interaction.guild_id,
+                campaign_id=campaign.id,
+                dm_user_id=None,  # AI is the DM, no human DM
+            )
 
         # Auto-join all players who have characters
         for character in characters:
@@ -774,11 +854,30 @@ class CampaignCog(commands.Cog):
             from ...llm.brains.narrator import get_narrator
             from ...memory import get_memory_manager, save_memory_state
             narrator = get_narrator()
-            opening = await narrator.generate_opening(
+            opening, opening_effects = await narrator.generate_opening(
                 campaign_name=campaign.name,
                 world_setting=campaign.world_setting,
                 characters=characters,
             )
+
+            # Process tool call effects (registers NPCs, assigns voices).
+            # Discord context, so the session_key is f"discord:{channel_id}".
+            if opening_effects:
+                from ...game.scene.registry import get_scene_registry
+                from ...llm.effects import EffectExecutor
+                _session_key = f"discord:{interaction.channel_id}"
+                scene_registry = get_scene_registry(campaign.id, _session_key)
+                executor = EffectExecutor(scene_registry=scene_registry)
+                for effect in opening_effects:
+                    logger.info(
+                        "opening_effect",
+                        type=effect.effect_type.value,
+                        npc_name=effect.npc_name,
+                        dialogue_indices=effect.dialogue_indices,
+                        dialogue_emotions=effect.dialogue_emotions,
+                    )
+                    await executor.execute(effect)
+
             if opening:
                 # Store opening in memory so future narrator calls have scene context
                 memory = await get_memory_manager(campaign.id)
@@ -793,6 +892,35 @@ class CampaignCog(commands.Cog):
                 )
                 narrator_embed.set_author(name="The Story Begins...")
                 await interaction.followup.send(embed=narrator_embed)
+
+                # Fire immersion pipelines for opening narration
+                import asyncio as _asyncio
+                try:
+                    from ...config import get_profile
+                    from ...models.immersion import GuildImmersionSettings
+                    from ...game.frontend import GameEvent
+
+                    profile = get_profile()
+                    imm = profile.immersion
+                    if imm.tts_enabled or imm.image_enabled:
+                        from ..frontends.discord_text import DiscordTextFrontend
+                        from ...game.scene.registry import get_scene_registry as _get_sr
+                        channel = interaction.channel
+                        frontend = DiscordTextFrontend(channel)
+                        _sr = _get_sr(campaign.id, f"discord:{interaction.channel_id}")
+                        event = GameEvent.narrative_complete(
+                            narrative=opening,
+                            proposed_effects=opening_effects or [],
+                            scene_entities=_sr.get_all() if _sr else [],
+                            player_characters=characters,
+                        )
+                        if imm.tts_enabled:
+                            _asyncio.create_task(frontend._generate_and_send_audio(event))
+                        if imm.image_enabled:
+                            _asyncio.create_task(frontend._generate_and_send_image(event))
+                except Exception as imm_err:
+                    logger.debug("opening_immersion_failed", error=str(imm_err))
+
         except Exception as e:
             logger.warning("failed_to_generate_opening", error=str(e))
 

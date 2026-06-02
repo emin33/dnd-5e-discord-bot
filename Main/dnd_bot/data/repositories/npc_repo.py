@@ -27,8 +27,8 @@ class NPCRepository:
             """
             INSERT INTO npc (id, campaign_id, name, description, location,
                            monster_index, base_disposition, voice_notes,
-                           is_alive, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                           is_alive, created_at, voice_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 npc.id,
@@ -41,6 +41,7 @@ class NPCRepository:
                 npc.voice_notes,
                 1 if npc.is_alive else 0,
                 npc.created_at.isoformat(),
+                npc.voice_id,
             ),
         )
         await db.commit()
@@ -112,7 +113,7 @@ class NPCRepository:
             """
             UPDATE npc SET name = ?, description = ?, location = ?,
                           monster_index = ?, base_disposition = ?,
-                          voice_notes = ?, is_alive = ?
+                          voice_notes = ?, is_alive = ?, voice_id = ?
             WHERE id = ?
             """,
             (
@@ -123,6 +124,7 @@ class NPCRepository:
                 self._disposition_to_int(npc.base_disposition),
                 npc.voice_notes,
                 1 if npc.is_alive else 0,
+                npc.voice_id,
                 npc.id,
             ),
         )
@@ -249,6 +251,16 @@ class NPCRepository:
 
     # ==================== Conversion Helpers ====================
 
+    async def update_voice_id(self, npc_id: str, voice_id: str) -> bool:
+        """Update just the voice_id for an NPC."""
+        db = await self._get_db()
+        await db.execute(
+            "UPDATE npc SET voice_id = ? WHERE id = ?",
+            (voice_id, npc_id),
+        )
+        await db.commit()
+        return True
+
     def _row_to_npc(self, row) -> NPC:
         """Convert database row to NPC model."""
         return NPC(
@@ -262,6 +274,7 @@ class NPCRepository:
             voice_notes=row[7],
             is_alive=bool(row[8]),
             created_at=datetime.fromisoformat(row[9]) if row[9] else datetime.utcnow(),
+            voice_id=row[10] if len(row) > 10 else None,
         )
 
     def _row_to_relationship(self, row) -> NPCRelationship:

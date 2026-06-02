@@ -33,6 +33,18 @@ def build_character_sheet_embed(character: Character) -> discord.Embed:
         color=color,
     )
 
+    # Portrait (if available)
+    if character.portrait_url:
+        embed.set_thumbnail(url=character.portrait_url)
+
+    # Appearance (if set)
+    if character.description:
+        embed.add_field(
+            name="Appearance",
+            value=character.description[:256],
+            inline=False,
+        )
+
     # HP and AC
     hp_text = f"**{character.hp.current}/{character.hp.maximum}**"
     if character.hp.temporary > 0:

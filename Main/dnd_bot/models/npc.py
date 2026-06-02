@@ -49,6 +49,9 @@ class NPC(BaseModel):
     # Roleplay notes
     voice_notes: Optional[str] = None
 
+    # TTS voice (ElevenLabs voice ID for immersion features)
+    voice_id: Optional[str] = None
+
     # Status
     is_alive: bool = True
 
@@ -98,6 +101,9 @@ class SceneEntity(BaseModel):
     # Reference to persistent data (if applicable)
     npc_id: Optional[str] = None      # Links to NPC model if persisted
     monster_index: Optional[str] = None  # SRD monster reference
+
+    # TTS voice (ElevenLabs voice ID for immersion features)
+    voice_id: Optional[str] = None
 
     # Current state in scene
     disposition: Disposition = Disposition.NEUTRAL

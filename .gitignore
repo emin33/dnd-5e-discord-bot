@@ -65,3 +65,22 @@ Main/data/eval_logs/
 Main/data/benchmark_logs/
 *.db-shm
 *.db-wal
+
+# Generated audio / TTS artifacts (not source)
+*.wav
+*.mp3
+*.flac
+*.ogg
+
+# Fish Speech model weights & local voice data (large binaries, not source)
+fish_checkpoints/
+fish_voices/
+fish-speech-repo/
+fish-speech-s1-mini/
+
+# Misc runtime logs/output
+Main/data/logs/
+Main/data/creativity_logs/
+Main/data/long_horizon_run*.log
+Main/data/claude_play_*.log
+Main/_testout.txt

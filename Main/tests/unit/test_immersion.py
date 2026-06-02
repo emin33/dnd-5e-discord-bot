@@ -46,13 +46,19 @@ class TestProseParser:
 
     def test_speaker_attribution_from_context(self):
         text = 'Captain Thorne says "Stand down, soldier!"'
-        segments = self._parse(text)
+        registry = MagicMock()
+        entity = SceneEntity(name="Captain Thorne", entity_type=EntityType.NPC, npc_id="npc-thorne")
+        registry.get_by_name.return_value = entity
+        segments = self._parse(text, registry=registry)
         dialogue = [s for s in segments if s.segment_type == SegmentType.DIALOGUE][0]
         assert dialogue.speaker_name == "Captain Thorne"
 
     def test_speaker_attribution_whispers(self):
         text = 'Elara whispers "Follow me through the passage."'
-        segments = self._parse(text)
+        registry = MagicMock()
+        entity = SceneEntity(name="Elara", entity_type=EntityType.NPC, npc_id="npc-elara")
+        registry.get_by_name.return_value = entity
+        segments = self._parse(text, registry=registry)
         dialogue = [s for s in segments if s.segment_type == SegmentType.DIALOGUE][0]
         assert dialogue.speaker_name == "Elara"
 
@@ -103,6 +109,87 @@ class TestProseParser:
         dialogue = [s for s in segments if s.segment_type == SegmentType.DIALOGUE][0]
         assert dialogue.speaker_name == "Thorin"
         assert dialogue.speaker_entity_id.startswith("pc:")
+
+# ── Image Factory ───────────────────────────────────────────────────────────
+
+
+class TestImageFactoryGuidance:
+    """Audit #13: image_guidance=0.0 must reach the provider unchanged.
+
+    Flux Schnell legitimately uses guidance=0.0; the prior code
+    `(immersion.image_guidance if immersion and immersion.image_guidance else 0)`
+    treated 0.0 as falsy and silently used the settings default instead.
+    """
+
+    def _make_immersion_cfg(self, guidance):
+        """Build a minimal immersion config exposing image_guidance/image_steps/image_model."""
+        cfg = MagicMock()
+        cfg.image_provider = "local"
+        cfg.image_guidance = guidance
+        cfg.image_steps = 4
+        cfg.image_model = "black-forest-labs/FLUX.1-schnell"
+        return cfg
+
+    def _make_settings(self):
+        s = MagicMock()
+        s.image_provider = "fal"  # overridden by profile
+        s.local_image_guidance = 7.0  # the would-be-wrong fallback
+        s.local_image_steps = 20
+        s.local_image_model = "black-forest-labs/FLUX.1-dev"
+        return s
+
+    def _capture_provider_kwargs(self, monkeypatch, immersion_cfg):
+        """Patch image_factory's dependencies and capture _create_image_provider kwargs."""
+        from dnd_bot.immersion import image_factory
+
+        # Reset singleton so each test gets a fresh dispatch
+        image_factory._reset_image_provider()
+
+        captured = {}
+
+        def fake_create(provider, **kwargs):
+            captured["provider"] = provider
+            captured["kwargs"] = kwargs
+            return MagicMock()
+
+        profile = MagicMock()
+        profile.immersion = immersion_cfg
+
+        monkeypatch.setattr(image_factory, "_create_image_provider", fake_create)
+
+        # get_settings/get_profile are imported inside get_image_provider via
+        # `from ..config import get_settings, get_profile` — patch the source.
+        from dnd_bot import config as cfg_module
+        monkeypatch.setattr(cfg_module, "get_settings", lambda: self._make_settings())
+        monkeypatch.setattr(cfg_module, "get_profile", lambda: profile)
+
+        image_factory.get_image_provider()
+        return captured
+
+    def test_guidance_zero_reaches_provider(self, monkeypatch):
+        """image_guidance=0.0 in the profile should pass through, NOT be replaced with the settings default."""
+        captured = self._capture_provider_kwargs(
+            monkeypatch, self._make_immersion_cfg(guidance=0.0)
+        )
+        assert captured["provider"] == "local"
+        assert captured["kwargs"]["guidance_scale"] == 0.0
+
+    def test_guidance_nonzero_reaches_provider(self, monkeypatch):
+        """Non-zero profile guidance also passes through (sanity)."""
+        captured = self._capture_provider_kwargs(
+            monkeypatch, self._make_immersion_cfg(guidance=3.5)
+        )
+        assert captured["kwargs"]["guidance_scale"] == 3.5
+
+    def test_guidance_none_falls_back_to_settings(self, monkeypatch):
+        """Explicit None falls back to settings.local_image_guidance (7.0 in the fixture)."""
+        captured = self._capture_provider_kwargs(
+            monkeypatch, self._make_immersion_cfg(guidance=None)
+        )
+        assert captured["kwargs"]["guidance_scale"] == 7.0
+
+
+
 
 
 # ── Voice Assigner (keyword detection) ──────────────────────────────────────
@@ -213,8 +300,8 @@ class TestGuildImmersionSettings:
         assert settings.tts_enabled is False
         assert settings.image_enabled is False
         assert settings.image_frequency == ImageFrequency.ON_DEMAND
-        assert settings.narrator_tts_provider == "inworld"
-        assert settings.narrator_tts_voice == "Sarah"
+        assert settings.narrator_tts_provider == "kokoro"
+        assert settings.narrator_tts_voice == "af_heart"
 
     def test_custom_settings(self):
         from dnd_bot.models.immersion import GuildImmersionSettings, ImageFrequency

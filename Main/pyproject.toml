@@ -43,6 +43,10 @@ dev = [
 eval = [
     "google-genai>=1.0.0",
 ]
+kokoro = [
+    "kokoro>=0.9.4",
+    "soundfile",
+]
 
 [build-system]
 requires = ["hatchling"]

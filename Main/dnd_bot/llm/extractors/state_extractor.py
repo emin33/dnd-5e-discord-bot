@@ -20,50 +20,74 @@ from ...game.world_state import StateDelta, get_state_delta_schema
 logger = structlog.get_logger()
 
 
-EXTRACTION_PROMPT = """You extract world state changes from D&D narrative text.
+EXTRACTION_PROMPT = """You extract world state changes from D&D narrative prose.
 
 Given the narrator's prose and the current world state, identify WHAT CHANGED.
-Only include fields where something actually changed. Omit unchanged fields.
+Only include fields that changed. Omit fields where nothing changed.
 
-## What to extract:
+## Fields you may emit
 
-**time_change** - Only if time of day shifted (dawn/morning/midday/afternoon/dusk/evening/night/midnight)
-**location_change** - Short place NAME only (2-4 words max). Examples: "the tavern", "forest clearing", "north gate". NEVER a description or sentence. If the narrative just describes surroundings without the party moving to a distinct named area, do NOT set this.
-**location_description** - Brief description of the new location (only if location changed)
-**new_connections** - Newly revealed exits or paths from current location. SHORT place names only (2-4 words, e.g., "north gate", "the river", "dark cave"). NEVER full sentences or descriptions.
-**new_npcs** - NPCs appearing for the FIRST time. Include:
-  - name: the NPC's name or short label (e.g., "Marta", "the blacksmith")
-  - location: MUST use the current location name from the world state (the "location" field). Do NOT invent sub-locations like "behind the stall" or "inside the cottage". If the NPC is where the party is, use the same location string.
-  - disposition (hostile/unfriendly/neutral/friendly/allied)
-  - description (brief), important (true if quest-giver, ally, or key story NPC)
-**npc_updates** - Changes to EXISTING NPCs (moved, changed disposition, died, etc.)
-  - Only include the fields that changed
-  - location: use short place names, not descriptions
-**removed_npcs** - NPCs who LEFT the scene (not dead, just departed)
-**new_quests** - Quests or tasks assigned to the party for the FIRST time. Include:
-  - name (short quest title), giver (NPC who assigned it), status ("active")
-  - objectives (list of goals), location (where to go, if mentioned)
-**quest_updates** - Changes to EXISTING quests (completed, failed, new objectives revealed)
-  - Only include the fields that changed
-**new_events** - Significant narrative events (1 sentence each, max 2)
-**new_facts** - Established facts that must not be contradicted later
-**flag_changes** - World flags that changed (e.g., "bridge_destroyed": true)
-**phase_change** - Only if game phase changed (exploration/combat/dialogue/rest)
+- **time_change** — only if time of day shifted (dawn / morning / midday / afternoon / dusk / evening / night / midnight).
+- **location_change** — set ONLY if the party moved to a distinct named area.
+- **location_description** — brief sentence describing the new location, only if location changed.
+- **new_connections** — list of newly revealed exits/paths from current location.
+- **new_npcs** — list of NPCs appearing for the FIRST time. Each has: `name`, `location`, `disposition`, `description`, `important` (bool).
+- **npc_updates** — list of changes to EXISTING NPCs. Each entry resolves a target by either:
+  - `id` — the UUID from the world state's NPC entries (PREFERRED when the registry has the entity).
+  - `name` — fallback lookup; matches the entity's current name OR any string in its `aliases` list.
 
-## Location naming rules:
-- ALL location names (location_change, new_connections, NPC location) must be SHORT: 2-4 words max.
-- Use proper place names when available ("Thornfield", "the market"), not descriptions ("small makeshift stall between stable and general store").
-- For NPCs at the party's location, copy the exact current location string from the world state.
-- Good: "settlement", "the tavern", "north gate", "old mill"
-- Bad: "a small clearing near the river bend", "interior of the sealed building", "behind the merchant's stall"
+  Then include only changed fields. Special fields beyond `location` / `disposition` / `description` / `alive` / `notes` / `important`:
+  - `new_name` — the entity has been **renamed** by the prose ("the hooded figure introduces himself as Fred"). Old name auto-moves into aliases.
+  - `add_aliases` — list of paraphrased names observed in prose, but identity unchanged ("Old Bram" when the registry has "Bram"; "the cloaked one" when the same character was "the hooded figure"). Identity stays; the alias is recorded so future paraphrases match.
+  - `add_inventory` / `remove_inventory` — items the NPC now holds or no longer holds.
+- **removed_npcs** — list of names who LEFT the scene (not dead, just departed).
+- **new_quests** — list of NEW quests. Each: `name`, `giver`, `status` ("active"), `objectives` (list), `location` (string, optional).
+- **quest_updates** — list of changes to EXISTING quests. Include only changed fields.
+- **new_events** — list of significant narrative events (1 sentence each, max 2).
+- **new_facts** — list of established facts that must not be contradicted later.
+- **flag_changes** — object of world flags that changed (e.g., `{"bridge_destroyed": true}`).
+- **phase_change** — only if game phase changed (exploration / combat / dialogue / rest).
 
-## Rules:
-- Extract ONLY what the narrative establishes. Do not infer or speculate.
-- If nothing changed, return an empty object: {}
-- Keep descriptions concise (under 100 characters)
-- For NPC disposition: "hostile" = actively aggressive, "unfriendly" = antagonistic but not violent, "neutral" = indifferent, "friendly" = helpful, "allied" = fights alongside party
-- Mark NPCs as important=true if they are quest-givers, named allies, rulers, or key to the story
-- Do NOT create new_npcs for entities already in the world state
+## Place names — strict format
+
+Use this format for every location string (location_change, new_connections, NPC `location`, quest `location`):
+
+- 2-4 words, optionally with one article ("the", "a")
+- Either a proper name ("Thornfield", "Grimstone Hall") or a short generic ("the tavern", "north gate", "old mill", "ruined clearing")
+
+For NPCs at the party's current location, copy the exact location string from the current world state context — do not invent sub-locations.
+
+Discriminative examples — these formats are accepted vs rejected:
+
+- "the tavern" ✓ vs "behind the bar inside the tavern" ✗
+- "ruined clearing" ✓ vs "a small clearing near the river bend" ✗
+- "Grimstone vault" ✓ vs "interior of the sealed dwarven vault" ✗
+
+If the narrative describes a new area without naming it, INVENT a 2-word name from its character (a clearing with a shrine → "shrine clearing").
+
+## Field types — strict
+
+- All list fields must be JSON arrays, even if there's only one entry: `"new_facts": ["The bridge is out."]`. Never a bare string.
+- All boolean fields must be `true` or `false`, not strings.
+
+## Disposition signals
+
+- **hostile** — actively attacking right now (charging, swinging, casting offensively).
+- **unfriendly** — antagonistic but not yet attacking (blocking, refusing, threatening).
+- **neutral** — indifferent.
+- **friendly** — helpful, accommodating.
+- **allied** — fights alongside the party.
+
+`important` = true ONLY when the NPC is a quest-giver, named ally, ruler, or key story figure.
+
+## Extraction rules
+
+- Extract ONLY what the narrative establishes — do not infer or speculate beyond the prose.
+- Do NOT create `new_npcs` for entities already in the world state.
+- **Prefer `npc_updates` over `new_npcs` whenever the prose refers to an entity already in the registry — even when the prose paraphrases the name** ("Old Bram" while the registry has "Bram"; "the cloaked stranger" while "the hooded figure" already exists with matching description). Match by id, current name, alias, archetype, role, or distinguishing description (clothing, location, profession). Emit `npc_updates: [{id: "<existing-uuid>", add_aliases: ["<paraphrased name>"]}]` to record the alias rather than fragmenting one character into multiple records.
+- Use `npc_updates[].new_name` ONLY when prose explicitly establishes a new identity for a previously placeholder-named entity (e.g., "the stranger reveals her name is Marta" → `npc_updates: [{id, new_name: "Marta"}]`). Otherwise use `add_aliases` for paraphrases.
+- Keep `description` under 100 characters.
+- If nothing changed, return `{}`.
 
 Output valid JSON matching the StateDelta schema."""
 

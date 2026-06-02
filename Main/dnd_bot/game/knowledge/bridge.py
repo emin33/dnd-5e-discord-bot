@@ -97,9 +97,11 @@ class DeltaBridge:
         for update in delta.npc_updates:
             ops.extend(self._handle_npc_update(update, world_state, known, now))
 
-        # 5. Removed NPCs → clear location property, drop located_at edge
-        for npc_name in delta.removed_npcs:
-            ops.extend(self._handle_removed_npc(npc_name))
+        # 5. Removed NPCs → clear location property, drop located_at edge.
+        # ``removed_npcs`` carries names (or ids — backwards compat); the
+        # handler resolves to a UUID via world_state lookup.
+        for npc_identifier in delta.removed_npcs:
+            ops.extend(self._handle_removed_npc(npc_identifier, world_state))
 
         # 6. New quests → quest node + edges to giver and location
         for quest in delta.new_quests:
@@ -247,8 +249,14 @@ class DeltaBridge:
         return ops
 
     def _handle_new_npc(self, npc, world_state: "WorldState", known: set[str], now: datetime) -> list[GraphOperation]:
+        """Create a KG node for a new NPC, using the NPCState's stable
+        UUID as the node_id. This is the cross-layer identity anchor —
+        WorldState NPCState.id == KG entity.node_id, so narrator tool
+        calls (which receive the id from the roster) resolve correctly
+        in either layer.
+        """
         ops: list[GraphOperation] = []
-        npc_id = slugify(npc.name)
+        npc_id = npc.id  # Use the NPCState's stable UUID (was: slugify(npc.name))
         if not npc_id:
             return ops
 
@@ -317,8 +325,21 @@ class DeltaBridge:
         return ops
 
     def _handle_npc_update(self, update, world_state: "WorldState", known: set[str], now: datetime) -> list[GraphOperation]:
+        """Convert an NPCUpdate to a KG UpdateNode op. Resolution chain:
+        1. ``update.id`` if provided (preferred — narrator passed an id from roster)
+        2. WorldState lookup by name/alias (returns NPCState.id)
+        3. ``slugify(update.name)`` fallback for legacy callers / older
+           KG nodes that were created with slug-based ids
+        """
         ops: list[GraphOperation] = []
-        npc_id = slugify(update.name)
+        npc_id = (update.id or "").strip()
+        if not npc_id and update.name and world_state is not None:
+            existing = world_state._find_npc(update.name)
+            if existing:
+                npc_id = existing.id
+        if not npc_id and update.name:
+            # Legacy fallback: slug-based id for older KG nodes
+            npc_id = slugify(update.name)
         if not npc_id:
             return ops
 
@@ -374,12 +395,27 @@ class DeltaBridge:
 
         return ops
 
-    def _handle_removed_npc(self, npc_name: str) -> list[GraphOperation]:
-        """NPC left the scene — clear location, keep the node."""
+    def _handle_removed_npc(self, npc_identifier: str, world_state: "WorldState" = None) -> list[GraphOperation]:
+        """NPC left the scene — clear location, keep the node.
+
+        ``npc_identifier`` is preferentially an NPCState.id (UUID); falls
+        back to a name lookup against world_state when available, then
+        a slugify fallback for legacy callers.
+        """
         ops: list[GraphOperation] = []
-        npc_id = slugify(npc_name)
+        npc_id = (npc_identifier or "").strip()
         if not npc_id:
             return ops
+        # If it's a name (not a UUID), resolve via world_state to find the id
+        if world_state is not None and npc_id not in world_state.npcs:
+            existing = world_state._find_npc(npc_id)
+            if existing:
+                npc_id = existing.id
+            else:
+                # Final fallback for legacy callers / tests that pass a slug
+                npc_id = slugify(npc_identifier)
+                if not npc_id:
+                    return ops
 
         ops.append(UpdateNode(node_id=npc_id, properties={"location": ""}))
         ops.append(RemoveEdge(
@@ -419,7 +455,7 @@ class DeltaBridge:
         # Edge: giver NPC → quest (QUEST_GIVER, highest priority)
         if quest.giver:
             giver_id = slugify(quest.giver)
-            if giver_id in known or giver_id:
+            if giver_id and giver_id in known:
                 ops.append(AddEdge(relationship=Relationship(
                     source_id=giver_id,
                     target_id=quest_id,
@@ -511,7 +547,13 @@ class DeltaBridge:
         """ADD_NPC → AddNode(NPC) + LOCATED_AT edge."""
         ops: list[GraphOperation] = []
         npc_name = effect.npc_name or "Unknown"
-        npc_id = slugify(npc_name)
+        # ROOT-2 (DF-3): anchor on the WorldState NPCState UUID — the same
+        # cross-layer identity key the delta path (_handle_new_npc) uses — so
+        # the KG node, ChromaDB vector, world_state, and matcher all agree.
+        # The effect-sync mints this NPCState (orchestrator:3117) BEFORE the KG
+        # bridge runs, so it's available here. Slug only as a last resort.
+        existing_npc = world_state._find_npc(npc_name)
+        npc_id = (existing_npc.id if existing_npc else None) or slugify(npc_name)
         if not npc_id:
             return ops
 

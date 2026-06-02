@@ -11,6 +11,7 @@ narrator's view of reality as a compact YAML snapshot.
 """
 
 from typing import Literal, Optional
+import uuid
 import structlog
 import yaml
 
@@ -56,7 +57,21 @@ def is_valid_phase_transition(current: str, target: str) -> bool:
 
 
 class NPCState(BaseModel):
-    """State of an NPC in the world."""
+    """State of an NPC in the world.
+
+    Identity model: ``id`` is the stable canonical anchor (a UUID),
+    NEVER changes once assigned. ``name`` is mutable and may be a
+    placeholder like "the hooded figure" for unnamed entities; when
+    the prose later names them ("Fred"), the narrator emits
+    ``update_entity(entity_id=..., name="Fred")`` and the old name
+    moves into ``aliases``. ``description`` is the textual matching
+    surface for paraphrase resolution.
+
+    See TODO.md "NPC duplicate-add via paraphrase drift" for the
+    research and design rationale (Graphiti / OpenAI temporal-agents
+    cookbook / LINK-KG pattern).
+    """
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     name: str
     location: str = ""
     disposition: str = "neutral"  # hostile/unfriendly/neutral/friendly/allied
@@ -64,6 +79,9 @@ class NPCState(BaseModel):
     alive: bool = True
     notes: str = ""
     important: bool = False  # Quest-givers, allies, key story NPCs stay visible
+    inventory: list[str] = Field(default_factory=list)  # Items the NPC currently holds (narrative tracking)
+    aliases: list[str] = Field(default_factory=list)    # Past names / paraphrases — used for dedup matching
+    last_seen_turn: int = 0                              # Turn the narrator last referenced this entity (for recency in roster)
 
 
 class QuestState(BaseModel):
@@ -84,14 +102,24 @@ class QuestUpdate(BaseModel):
 
 
 class NPCUpdate(BaseModel):
-    """A proposed change to an existing NPC."""
-    name: str
+    """A proposed change to an existing NPC.
+
+    The extractor identifies the target by ``id`` when known (preferred);
+    falls back to ``name`` for backwards compatibility. WorldState
+    resolution: id → name → aliases → fuzzy.
+    """
+    id: Optional[str] = None       # Stable UUID (preferred lookup key)
+    name: str = ""                  # Human-readable name (fallback lookup)
     location: Optional[str] = None
     disposition: Optional[str] = None
     description: Optional[str] = None
     alive: Optional[bool] = None
     notes: Optional[str] = None
     important: Optional[bool] = None
+    new_name: Optional[str] = None  # When narrator renames an entity (old name → aliases)
+    add_aliases: Optional[list[str]] = None  # Additional paraphrase aliases observed
+    add_inventory: Optional[list[str]] = None
+    remove_inventory: Optional[list[str]] = None
 
 
 class PlayerSnapshot(BaseModel):
@@ -150,6 +178,10 @@ class WorldState(BaseModel):
     location_description: str = ""
     connected_locations: list[str] = Field(default_factory=list)
 
+    # NPCs keyed by stable UUID (NPCState.id). Use ``find_npc(name_or_id_or_alias)``
+    # for human-friendly lookups; direct ``npcs[id]`` access only when the
+    # caller is sure they have the canonical id (e.g. narrator tool calls
+    # passing entity_id from the roster).
     npcs: dict[str, NPCState] = Field(default_factory=dict)
     quests: dict[str, QuestState] = Field(default_factory=dict)
     players: dict[str, PlayerSnapshot] = Field(default_factory=dict)
@@ -239,30 +271,35 @@ class WorldState(BaseModel):
             if conn and conn not in self.connected_locations:
                 self.connected_locations.append(conn)
 
-        # New NPCs
+        # New NPCs — keyed by stable UUID. Dedup is the job of the
+        # orchestrator's brain dedup judge BEFORE the delta lands here;
+        # this layer only refuses literal duplicate IDs (which would
+        # indicate a regression in the dedup pipeline).
         for npc in delta.new_npcs:
-            if npc.name in self.npcs:
-                rejections.append(f"NPC already exists: {npc.name}")
+            # Ensure the NPC has an id (older test fixtures may not).
+            if not npc.id:
+                npc.id = str(uuid.uuid4())
+            if npc.id in self.npcs:
+                rejections.append(f"NPC already exists by id: {npc.id} ({npc.name})")
                 continue
             # Default location to current party location if not specified
             if not npc.location:
                 npc.location = self.current_location
-            self.npcs[npc.name] = npc
+            self.npcs[npc.id] = npc
 
-        # NPC updates
+        # NPC updates — resolve target by id (preferred), then name, then alias
         for update in delta.npc_updates:
-            existing = self.npcs.get(update.name)
+            existing = self._resolve_npc(update.id, update.name)
             if not existing:
-                # Try case-insensitive match
-                existing = self._find_npc(update.name)
-                if not existing:
-                    rejections.append(f"NPC not found for update: {update.name}")
-                    continue
+                rejections.append(
+                    f"NPC not found for update: id={update.id!r} name={update.name!r}"
+                )
+                continue
 
             # Validate: dead NPCs can't act
             if not existing.alive and update.alive is not True:
                 if update.disposition or update.location or update.notes:
-                    rejections.append(f"Dead NPC cannot act: {update.name}")
+                    rejections.append(f"Dead NPC cannot act: {existing.name}")
                     continue
 
             # Apply non-None fields
@@ -278,6 +315,32 @@ class WorldState(BaseModel):
                 existing.notes = update.notes
             if update.important is not None:
                 existing.important = update.important
+
+            # Identity changes — narrator renamed the entity. Old name → aliases.
+            if update.new_name and update.new_name.strip() and update.new_name != existing.name:
+                old_name = existing.name
+                existing.name = update.new_name.strip()
+                if old_name and old_name not in existing.aliases:
+                    existing.aliases.append(old_name)
+            # Additional aliases observed in prose paraphrases
+            if update.add_aliases:
+                for alias in update.add_aliases:
+                    a = (alias or "").strip()
+                    if a and a != existing.name and a not in existing.aliases:
+                        existing.aliases.append(a)
+
+            # Inventory deltas
+            if update.add_inventory:
+                for item in update.add_inventory:
+                    item_norm = (item or "").strip()
+                    if item_norm and item_norm not in existing.inventory:
+                        existing.inventory.append(item_norm)
+            if update.remove_inventory:
+                lower_targets = {(i or "").strip().lower() for i in update.remove_inventory}
+                existing.inventory = [
+                    i for i in existing.inventory
+                    if i.strip().lower() not in lower_targets
+                ]
 
         # New quests
         for quest in delta.new_quests:
@@ -339,14 +402,43 @@ class WorldState(BaseModel):
 
         return rejections
 
-    def _find_npc(self, name: str) -> Optional[NPCState]:
-        """Find NPC by exact or case-insensitive name."""
-        if name in self.npcs:
-            return self.npcs[name]
-        name_lower = name.lower()
-        for key, npc in self.npcs.items():
-            if key.lower() == name_lower or npc.name.lower() == name_lower:
+    def _find_npc(self, name_or_id: str) -> Optional[NPCState]:
+        """Find an NPC by id, name, or alias.
+
+        Resolution order: exact id → exact name (case-insensitive) →
+        alias (case-insensitive). Returns the NPCState or None.
+        """
+        if not name_or_id:
+            return None
+        # Exact id match (the dict is keyed by id)
+        if name_or_id in self.npcs:
+            return self.npcs[name_or_id]
+        target_lower = name_or_id.lower().strip()
+        # Name match
+        for npc in self.npcs.values():
+            if npc.name and npc.name.lower() == target_lower:
                 return npc
+        # Alias match
+        for npc in self.npcs.values():
+            for alias in npc.aliases:
+                if alias and alias.lower() == target_lower:
+                    return npc
+        return None
+
+    def _resolve_npc(
+        self,
+        npc_id: Optional[str] = None,
+        name: Optional[str] = None,
+    ) -> Optional[NPCState]:
+        """Resolve an NPC by id (preferred) or name. Used by apply_delta
+        when handling NPCUpdate which may carry either or both.
+        """
+        if npc_id:
+            npc = self.npcs.get(npc_id)
+            if npc:
+                return npc
+        if name:
+            return self._find_npc(name)
         return None
 
     def get_npcs_at_location(self, location: str = "") -> list[NPCState]:
@@ -402,30 +494,61 @@ class WorldState(BaseModel):
                 player_list.append(entry)
             data["party"] = player_list
 
-        # NPCs at current location (full detail)
+        # NPCs at current location (full detail).
+        #
+        # Format mirrors the LINK-KG / Graphiti / OpenAI-temporal-agents
+        # research: id is the canonical anchor for tool calls; description
+        # is the matching surface for prose paraphrases; aliases catch past
+        # names; full metadata (inventory, notes, disposition) lets the
+        # narrator write coherent prose ("the fat blacksmith with the
+        # crimson knife").
         local_npcs = self.get_npcs_at_location()
         if local_npcs:
             npc_entries = []
             for npc in local_npcs:
                 entry: dict = {
+                    "id": npc.id,
                     "name": npc.name,
                     "disposition": npc.disposition,
                 }
                 if npc.description:
-                    entry["desc"] = npc.description[:100]
+                    entry["desc"] = npc.description[:160]
+                if npc.aliases:
+                    entry["aliases"] = list(npc.aliases)
+                if npc.inventory:
+                    entry["inventory"] = list(npc.inventory)
                 if npc.notes:
                     entry["notes"] = npc.notes[:80]
+                if npc.last_seen_turn:
+                    entry["last_seen_turn"] = npc.last_seen_turn
                 npc_entries.append(entry)
             data["npcs_here"] = npc_entries
 
-        # Important NPCs elsewhere (one-line summaries)
+        # Important NPCs elsewhere — same structured format as npcs_here,
+        # so paraphrase-resolution against id+description+aliases works
+        # regardless of whether the entity is in the current scene.
         distant_important = self.get_important_npcs_elsewhere()
         if distant_important:
-            data["key_npcs_elsewhere"] = [
-                f"{npc.name}: at {npc.location or 'unknown'}, {npc.disposition}"
-                + (f" - {npc.notes[:60]}" if npc.notes else "")
-                for npc in distant_important
-            ]
+            distant_entries = []
+            for npc in distant_important:
+                entry: dict = {
+                    "id": npc.id,
+                    "name": npc.name,
+                    "disposition": npc.disposition,
+                    "location": npc.location or "unknown",
+                }
+                if npc.description:
+                    entry["desc"] = npc.description[:120]
+                if npc.aliases:
+                    entry["aliases"] = list(npc.aliases)
+                if npc.inventory:
+                    entry["inventory"] = list(npc.inventory)
+                if npc.notes:
+                    entry["notes"] = npc.notes[:60]
+                if npc.last_seen_turn:
+                    entry["last_seen_turn"] = npc.last_seen_turn
+                distant_entries.append(entry)
+            data["key_npcs_elsewhere"] = distant_entries
 
         # Active quests
         active_quests = [q for q in self.quests.values() if q.status == "active"]

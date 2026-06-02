@@ -252,6 +252,11 @@ class Character(BaseModel):
     campaign_id: CampaignId
     name: str = Field(min_length=1, max_length=64)
 
+    # Appearance and immersion
+    description: str = ""  # Physical appearance for image generation
+    portrait_url: Optional[str] = None  # URL to character portrait image
+    voice_id: Optional[str] = None  # TTS voice ID (ElevenLabs)
+
     # Core info
     race_index: str  # SRD index: "dwarf", "elf", etc.
     class_index: str  # SRD index: "fighter", "wizard", etc.

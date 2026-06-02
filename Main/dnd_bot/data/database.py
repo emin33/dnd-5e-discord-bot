@@ -127,8 +127,33 @@ class Database:
                 # Read and execute migration
                 sql = migration_file.read_text()
 
-                # Execute the migration (may contain multiple statements)
-                await self.connection.executescript(sql)
+                # Try executescript first (fast path). On "duplicate column
+                # name" errors, fall back to statement-by-statement execution
+                # so idempotent ALTER TABLE ADD COLUMN patterns don't crash on
+                # databases that already have the column (e.g. dev DBs where
+                # columns were added out-of-band).
+                try:
+                    await self.connection.executescript(sql)
+                except Exception as e:
+                    if "duplicate column name" not in str(e).lower():
+                        raise
+                    logger.info(
+                        "migration_fallback_per_statement",
+                        version=version,
+                        reason="duplicate_column_name",
+                    )
+                    for stmt in _split_sql_statements(sql):
+                        try:
+                            await self.connection.execute(stmt)
+                        except Exception as stmt_err:
+                            if "duplicate column name" in str(stmt_err).lower():
+                                logger.debug(
+                                    "migration_skip_duplicate_column",
+                                    version=version,
+                                    stmt=stmt[:80].replace("\n", " "),
+                                )
+                                continue
+                            raise
                 await self.commit()
 
                 logger.info("migration_applied", version=version)
@@ -136,6 +161,22 @@ class Database:
     async def transaction(self):
         """Context manager for transactions with automatic commit/rollback."""
         return TransactionContext(self)
+
+
+def _split_sql_statements(sql: str) -> list[str]:
+    """Split a multi-statement SQL string into individual statements.
+
+    Strips line comments (-- ...) and empty statements. Naive split on ';' —
+    does not handle string literals containing semicolons, which migration
+    files do not use.
+    """
+    cleaned_lines = []
+    for line in sql.split("\n"):
+        if "--" in line:
+            line = line[: line.index("--")]
+        cleaned_lines.append(line)
+    cleaned = "\n".join(cleaned_lines)
+    return [s.strip() for s in cleaned.split(";") if s.strip()]
 
 
 class TransactionContext:

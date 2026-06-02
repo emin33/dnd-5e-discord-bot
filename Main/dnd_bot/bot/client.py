@@ -140,6 +140,7 @@ class DnDBot(commands.Bot):
             "dnd_bot.bot.cogs.game",
             "dnd_bot.bot.cogs.campaign",
             "dnd_bot.bot.cogs.inventory",
+            "dnd_bot.bot.cogs.immersion",
         ]
 
         for cog in cog_modules:
@@ -161,29 +162,9 @@ class DnDBot(commands.Bot):
 
 
 def create_bot() -> DnDBot:
-    """Create and return a new bot instance."""
-    bot = DnDBot()
+    """Create and return a new bot instance.
 
-    # Load cogs synchronously before bot starts
-    cog_modules = [
-        "dnd_bot.bot.cogs.admin",
-        "dnd_bot.bot.cogs.character",
-        "dnd_bot.bot.cogs.actions",
-        "dnd_bot.bot.cogs.combat",
-        "dnd_bot.bot.cogs.spells",
-        "dnd_bot.bot.cogs.rest",
-        "dnd_bot.bot.cogs.game",
-        "dnd_bot.bot.cogs.campaign",
-        "dnd_bot.bot.cogs.inventory",
-    ]
-
-    for cog in cog_modules:
-        try:
-            bot.load_extension(cog)
-            print(f"Loaded cog: {cog}")
-        except Exception as e:
-            print(f"FAILED to load cog {cog}: {e}")
-            import traceback
-            traceback.print_exc()
-
-    return bot
+    Cogs are loaded by `setup_hook()` when the bot starts — don't load them
+    here too, or every cog raises `ExtensionAlreadyLoaded` on startup.
+    """
+    return DnDBot()

@@ -7,6 +7,7 @@ import structlog
 from ...data.repositories import get_character_repo
 from ...game.mechanics.rest import get_rest_manager
 from ...game.combat.manager import get_combat_for_channel
+from ..views.campaign_lobby import get_active_campaign_id
 
 logger = structlog.get_logger()
 
@@ -35,12 +36,6 @@ class RestCog(commands.Cog):
             min_value=0,
             max_value=20,
         ),
-        campaign_id: discord.Option(
-            str,
-            "Campaign ID",
-            required=False,
-            default="default",
-        ),
     ):
         """Take a short rest to recover resources."""
         await ctx.defer()
@@ -50,6 +45,15 @@ class RestCog(commands.Cog):
         if combat and combat.combat.state.value in ("active", "setup"):
             await ctx.respond(
                 "You can't rest during combat!",
+                ephemeral=True,
+            )
+            return
+
+        # Resolve the active campaign from the guild's lobby state (audit #52).
+        campaign_id = get_active_campaign_id(ctx.guild_id)
+        if not campaign_id:
+            await ctx.respond(
+                "No active campaign in this guild. Use `/campaign create` first.",
                 ephemeral=True,
             )
             return
@@ -137,12 +141,6 @@ class RestCog(commands.Cog):
     async def long_rest(
         self,
         ctx: discord.ApplicationContext,
-        campaign_id: discord.Option(
-            str,
-            "Campaign ID",
-            required=False,
-            default="default",
-        ),
     ):
         """Take a long rest to fully recover."""
         await ctx.defer()
@@ -152,6 +150,15 @@ class RestCog(commands.Cog):
         if combat and combat.combat.state.value in ("active", "setup"):
             await ctx.respond(
                 "You can't rest during combat!",
+                ephemeral=True,
+            )
+            return
+
+        # Resolve the active campaign from the guild's lobby state (audit #52).
+        campaign_id = get_active_campaign_id(ctx.guild_id)
+        if not campaign_id:
+            await ctx.respond(
+                "No active campaign in this guild. Use `/campaign create` first.",
                 ephemeral=True,
             )
             return
@@ -239,14 +246,17 @@ class RestCog(commands.Cog):
     async def rest_status(
         self,
         ctx: discord.ApplicationContext,
-        campaign_id: discord.Option(
-            str,
-            "Campaign ID",
-            required=False,
-            default="default",
-        ),
     ):
         """View your current resources and rest status."""
+        # Resolve the active campaign from the guild's lobby state (audit #52).
+        campaign_id = get_active_campaign_id(ctx.guild_id)
+        if not campaign_id:
+            await ctx.respond(
+                "No active campaign in this guild. Use `/campaign create` first.",
+                ephemeral=True,
+            )
+            return
+
         repo = await get_character_repo()
         character = await repo.get_by_user_and_campaign(ctx.author.id, campaign_id)
 
@@ -378,14 +388,17 @@ class RestCog(commands.Cog):
             min_value=1,
             max_value=6,
         ),
-        campaign_id: discord.Option(
-            str,
-            "Campaign ID",
-            required=False,
-            default="default",
-        ),
     ):
         """Add or remove exhaustion levels."""
+        # Resolve the active campaign from the guild's lobby state (audit #52).
+        campaign_id = get_active_campaign_id(ctx.guild_id)
+        if not campaign_id:
+            await ctx.respond(
+                "No active campaign in this guild. Use `/campaign create` first.",
+                ephemeral=True,
+            )
+            return
+
         repo = await get_character_repo()
         character = await repo.get_by_user_and_campaign(ctx.author.id, campaign_id)
 

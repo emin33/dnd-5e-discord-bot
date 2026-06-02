@@ -8,6 +8,7 @@ from ...models import AbilityScore
 from ...data.repositories import get_character_repo
 from ...data.srd import get_srd
 from ...game.magic import get_spellcasting_manager, SpellType
+from ..views.campaign_lobby import get_active_campaign_id
 
 logger = structlog.get_logger()
 
@@ -360,16 +361,19 @@ class SpellsCog(commands.Cog):
             required=False,
             default=False,
         ),
-        campaign_id: discord.Option(
-            str,
-            "Campaign ID",
-            required=False,
-            default="default",
-        ),
     ):
         """Cast a spell from your spell list."""
         await ctx.defer()
         # Get character
+        # Resolve the active campaign from the guild's lobby state (audit #52).
+        campaign_id = get_active_campaign_id(ctx.guild_id)
+        if not campaign_id:
+            await ctx.respond(
+                "No active campaign in this guild. Use `/campaign create` first.",
+                ephemeral=True,
+            )
+            return
+
         repo = await get_character_repo()
         character = await repo.get_by_user_and_campaign(ctx.author.id, campaign_id)
 
@@ -498,14 +502,17 @@ class SpellsCog(commands.Cog):
     async def spell_slots(
         self,
         ctx: discord.ApplicationContext,
-        campaign_id: discord.Option(
-            str,
-            "Campaign ID",
-            required=False,
-            default="default",
-        ),
     ):
         """View your current spell slots."""
+        # Resolve the active campaign from the guild's lobby state (audit #52).
+        campaign_id = get_active_campaign_id(ctx.guild_id)
+        if not campaign_id:
+            await ctx.respond(
+                "No active campaign in this guild. Use `/campaign create` first.",
+                ephemeral=True,
+            )
+            return
+
         repo = await get_character_repo()
         character = await repo.get_by_user_and_campaign(ctx.author.id, campaign_id)
 
@@ -583,14 +590,17 @@ class SpellsCog(commands.Cog):
             required=True,
             choices=["check", "break"],
         ),
-        campaign_id: discord.Option(
-            str,
-            "Campaign ID",
-            required=False,
-            default="default",
-        ),
     ):
         """Check or break concentration on a spell."""
+        # Resolve the active campaign from the guild's lobby state (audit #52).
+        campaign_id = get_active_campaign_id(ctx.guild_id)
+        if not campaign_id:
+            await ctx.respond(
+                "No active campaign in this guild. Use `/campaign create` first.",
+                ephemeral=True,
+            )
+            return
+
         repo = await get_character_repo()
         character = await repo.get_by_user_and_campaign(ctx.author.id, campaign_id)
 
@@ -641,14 +651,17 @@ class SpellsCog(commands.Cog):
             "Spell to prepare",
             required=True,
         ),
-        campaign_id: discord.Option(
-            str,
-            "Campaign ID",
-            required=False,
-            default="default",
-        ),
     ):
         """Add a spell to your prepared spells."""
+        # Resolve the active campaign from the guild's lobby state (audit #52).
+        campaign_id = get_active_campaign_id(ctx.guild_id)
+        if not campaign_id:
+            await ctx.respond(
+                "No active campaign in this guild. Use `/campaign create` first.",
+                ephemeral=True,
+            )
+            return
+
         repo = await get_character_repo()
         character = await repo.get_by_user_and_campaign(ctx.author.id, campaign_id)
 
@@ -696,14 +709,17 @@ class SpellsCog(commands.Cog):
             "Spell to unprepare",
             required=True,
         ),
-        campaign_id: discord.Option(
-            str,
-            "Campaign ID",
-            required=False,
-            default="default",
-        ),
     ):
         """Remove a spell from your prepared spells."""
+        # Resolve the active campaign from the guild's lobby state (audit #52).
+        campaign_id = get_active_campaign_id(ctx.guild_id)
+        if not campaign_id:
+            await ctx.respond(
+                "No active campaign in this guild. Use `/campaign create` first.",
+                ephemeral=True,
+            )
+            return
+
         repo = await get_character_repo()
         character = await repo.get_by_user_and_campaign(ctx.author.id, campaign_id)
 
@@ -741,16 +757,19 @@ class SpellsCog(commands.Cog):
             "Name of the spell to cast as a ritual",
             required=True,
         ),
-        campaign_id: discord.Option(
-            str,
-            "Campaign ID",
-            required=False,
-            default="default",
-        ),
     ):
         """Cast a spell as a ritual without expending a spell slot."""
         await ctx.defer()
         # Get character
+        # Resolve the active campaign from the guild's lobby state (audit #52).
+        campaign_id = get_active_campaign_id(ctx.guild_id)
+        if not campaign_id:
+            await ctx.respond(
+                "No active campaign in this guild. Use `/campaign create` first.",
+                ephemeral=True,
+            )
+            return
+
         repo = await get_character_repo()
         character = await repo.get_by_user_and_campaign(ctx.author.id, campaign_id)
 

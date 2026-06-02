@@ -539,19 +539,31 @@ class SceneEntityRegistry:
         return len(self._entities) > 0
 
 
-# Registry instances by channel
-_registries: dict[int, SceneEntityRegistry] = {}
+# Registry instances by session_key (audit #8: was keyed by `int channel_id`,
+# which collided across voice + web sessions because they all set
+# `channel_id=0`. Now keyed by the per-session string identifier so each
+# session gets its own registry).
+_registries: dict[str, SceneEntityRegistry] = {}
 
 
-def get_scene_registry(campaign_id: str, channel_id: int) -> SceneEntityRegistry:
-    """Get or create scene registry for a channel."""
-    if channel_id not in _registries:
-        _registries[channel_id] = SceneEntityRegistry(campaign_id, channel_id)
-    return _registries[channel_id]
+def get_scene_registry(campaign_id: str, session_key: str) -> SceneEntityRegistry:
+    """Get or create scene registry for a session.
+
+    `session_key` must uniquely identify the session (e.g.
+    ``"discord:{channel_id}"`` for Discord, ``"voice:{uuid}"`` for voice,
+    ``"web:{uuid}"`` for web). Two sessions with the same key share state —
+    that's a bug if you didn't intend it.
+    """
+    if session_key not in _registries:
+        # `channel_id` on SceneEntityRegistry was historically used for debug
+        # logging. Pass 0 here for non-Discord contexts; the registry doesn't
+        # use it for keying.
+        _registries[session_key] = SceneEntityRegistry(campaign_id, 0)
+    return _registries[session_key]
 
 
-def clear_scene_registry(channel_id: int) -> None:
-    """Clear scene registry for a channel."""
-    if channel_id in _registries:
-        _registries[channel_id].clear()
-        del _registries[channel_id]
+def clear_scene_registry(session_key: str) -> None:
+    """Clear scene registry for a session."""
+    if session_key in _registries:
+        _registries[session_key].clear()
+        del _registries[session_key]

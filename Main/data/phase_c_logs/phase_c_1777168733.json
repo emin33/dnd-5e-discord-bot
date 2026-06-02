@@ -1,0 +1,404 @@
+{
+  "profile": "haiku_immersive_dreamshaper",
+  "elapsed_total_s": 29.188000000000102,
+  "scenarios": [
+    {
+      "name": "trash_mob_attack_round_3",
+      "expected": "routine",
+      "predicted": "routine",
+      "predicted_action_type": "attack",
+      "elapsed_s": 0.9380000000001019,
+      "error": null,
+      "raw": {
+        "action_type": "attack",
+        "reasoning": "The player is initiating a direct, hostile attack with a weapon against a creature in combat.",
+        "narrative_significance": "routine",
+        "target_name": "goblin",
+        "is_creature_target": true
+      },
+      "notes": "Routine combat swing in an ongoing fight. No new beat."
+    },
+    {
+      "name": "ask_innkeeper_price",
+      "expected": "routine",
+      "predicted": "routine",
+      "predicted_action_type": "social",
+      "elapsed_s": 1.280999999999949,
+      "error": null,
+      "raw": {
+        "action_type": "social",
+        "reasoning": "The player is asking a routine, non-confrontational question to a known NPC in a safe location. This requires no roll and is purely roleplay/information gathering.",
+        "narrative_significance": "routine",
+        "narrative_direction": "Aldric, the innkeeper, looks up from polishing a tankard, a weary but familiar expression crossing his face. He gestures vaguely around the common room. 'For a room, it'll be three silver pieces, and a meal... well, a decent meal will see you for another day, about two silver more. We've got everything from stale bread to stew, depending on your appetite.' He waits for your reply."
+      },
+      "notes": "Mundane shopping interaction with a known NPC."
+    },
+    {
+      "name": "walk_to_market",
+      "expected": "routine",
+      "predicted": "routine",
+      "predicted_action_type": "exploration",
+      "elapsed_s": 1.0619999999998981,
+      "error": null,
+      "raw": {
+        "action_type": "exploration",
+        "reasoning": "The player is moving through a familiar, safe area (the market square) and simply looking for a type of vendor. This is routine movement and observation of a known area, requiring no roll.",
+        "narrative_significance": "routine",
+        "narrative_direction": "Describe the general atmosphere of the market square. As the party moves through, they should notice various stalls, people haggling, and the general bustle of commerce. When they reach the area where leatherworkers typically set up, describe the specific stalls or signs that indicate their presence."
+      },
+      "notes": "Simple movement between familiar locations. No stakes."
+    },
+    {
+      "name": "check_pack_for_rope",
+      "expected": "routine",
+      "predicted": "routine",
+      "predicted_action_type": "inventory",
+      "elapsed_s": 0.8910000000000764,
+      "error": null,
+      "raw": {
+        "action_type": "inventory",
+        "reasoning": "The player is performing a routine action of organizing their gear, which does not involve uncertainty, danger, or specialized knowledge. This is a simple inventory management action.",
+        "narrative_significance": "routine",
+        "narrative_direction": "The player rummages through their pack and pulls out the coil of rope. Describe the rope\u2014is it sturdy, old, brightly colored, etc.?"
+      },
+      "notes": "Inventory action, no opposition, no narrative weight."
+    },
+    {
+      "name": "small_talk_with_guard",
+      "expected": "routine",
+      "predicted": "routine",
+      "predicted_action_type": "social",
+      "elapsed_s": 1.2660000000000764,
+      "error": null,
+      "raw": {
+        "action_type": "social",
+        "reasoning": "The player is initiating a casual conversation with a neutral NPC about the weather. This is a routine social interaction that does not require a roll, as the goal is simply to pass the time and establish rapport, not to overcome resistance or discover hidden information.",
+        "narrative_significance": "routine",
+        "narrative_direction": "The guard glances up from his post, a visible sigh escaping him. He gives a minimal nod in response to the greeting and the comment on the weather, offering a brief, unenthusiastic reply before returning his attention to his post. He doesn't challenge the party, but he doesn't offer any helpful information either."
+      },
+      "notes": "Casual social with a low-stakes, undescribed background NPC."
+    },
+    {
+      "name": "step_into_known_room",
+      "expected": "routine",
+      "predicted": "routine",
+      "predicted_action_type": "movement",
+      "elapsed_s": 0.8899999999998727,
+      "error": null,
+      "raw": {
+        "action_type": "movement",
+        "reasoning": "The player is simply walking back into a familiar, safe location. Movement itself is never a skill check unless the terrain is hazardous.",
+        "narrative_significance": "routine",
+        "narrative_direction": "Describe the atmosphere of the inn. Aldric might look up from behind the bar, acknowledging the party's return."
+      },
+      "notes": "Moving back into a previously-described familiar location."
+    },
+    {
+      "name": "pay_for_drinks",
+      "expected": "routine",
+      "predicted": "routine",
+      "predicted_action_type": "roleplay",
+      "elapsed_s": 0.8910000000000764,
+      "error": null,
+      "raw": {
+        "action_type": "roleplay",
+        "reasoning": "This is a simple transaction (paying for drinks) that requires no skill check, combat, or specialized knowledge. It's a routine social interaction.",
+        "narrative_significance": "routine",
+        "narrative_direction": "Aldric the innkeeper takes the two silver pieces, nods appreciatively, and slides two tankards of ale across the bar toward the players."
+      },
+      "notes": "Currency transaction with a known NPC. No stakes."
+    },
+    {
+      "name": "first_meeting_with_named_mentor",
+      "expected": "notable",
+      "predicted": "notable",
+      "predicted_action_type": "social",
+      "elapsed_s": 1.3899999999998727,
+      "error": null,
+      "raw": {
+        "action_type": "social",
+        "reasoning": "The player is initiating a conversation with a key NPC (Master Caldwell) in a new, important location. Since the goal is introduction and explanation, this is primarily roleplay, not a skill check unless the player attempts to *persuade* him of something. As a first meeting, the narrative focus is on the interaction itself.",
+        "narrative_significance": "notable",
+        "narrative_direction": "Describe the atmosphere of the library\u2014dust motes in sunbeams, towering shelves, the scent of old parchment. When the player speaks, describe Caldwell's initial reaction: perhaps a slight raising of an eyebrow, a pause in his reading, or a slow, assessing gaze. Guide the narrator to make Caldwell's response thoughtful and slightly reserved, acknowledging the council's directive but requiring the players to earn his trust."
+      },
+      "notes": "First meeting with a major NPC. Their first impression matters."
+    },
+    {
+      "name": "enter_new_dungeon",
+      "expected": "notable",
+      "predicted": "notable",
+      "predicted_action_type": "exploration",
+      "elapsed_s": 1.094000000000051,
+      "error": null,
+      "raw": {
+        "action_type": "exploration",
+        "reasoning": "The player is entering a completely new, previously undescribed location. This is a moment of discovery and sets the scene for the entire encounter, making it narratively significant.",
+        "narrative_significance": "notable",
+        "narrative_direction": "Describe the immediate sensory details of the crypt. Is it dusty, damp, cold, or strangely preserved? What is the general layout? Are there immediate features like sarcophagi, altars, or strange markings visible in the dim light? Since the door was just opened, the initial impression should be strong."
+      },
+      "notes": "First entry into a new dungeon. Atmosphere matters."
+    },
+    {
+      "name": "find_important_letter",
+      "expected": "notable",
+      "predicted": "notable",
+      "predicted_action_type": "exploration",
+      "elapsed_s": 0.9380000000001019,
+      "error": null,
+      "raw": {
+        "action_type": "exploration",
+        "reasoning": "Opening a drawer and retrieving an object is a trivial action that does not involve uncertainty, danger, or specialized knowledge. The focus is on the object itself, not the act of retrieval.",
+        "narrative_significance": "notable",
+        "narrative_direction": "Describe the physical action of opening the drawer and the feel of the sealed letter. Since the letter advances the central mystery, the discovery itself is notable, even if the action is simple."
+      },
+      "notes": "Finding a major plot clue. Worth dwelling on."
+    },
+    {
+      "name": "npc_breaks_down_crying",
+      "expected": "notable",
+      "predicted": "notable",
+      "predicted_action_type": "social",
+      "elapsed_s": 1.5779999999999745,
+      "error": null,
+      "raw": {
+        "action_type": "social",
+        "reasoning": "The player is attempting to elicit information from an NPC using gentle questioning. Since the party has earned trust, this is a direct social interaction, not a test of specialized knowledge or physical skill. The goal is to encourage confession, which is best handled through roleplay guidance rather than a mechanical roll.",
+        "narrative_significance": "notable",
+        "narrative_direction": "Marta flinches slightly at your gentle tone, her eyes darting around the kitchen as if expecting eavesdroppers. She grips the edge of the wooden table until her knuckles are white. She looks at you, a mixture of fear and desperate relief crossing her face. She opens her mouth, but no sound comes out. She seems to be fighting an internal battle before finally whispering, 'It wasn't just... it wasn't what you think.' Guide the narrator to describe her hesitation and the weight of her secret."
+      },
+      "notes": "An NPC reacting strongly. The reveal is meaningful but not the climax."
+    },
+    {
+      "name": "strange_omen_appears",
+      "expected": "notable",
+      "predicted": "routine",
+      "predicted_action_type": "exploration",
+      "elapsed_s": 1.1399999999998727,
+      "error": null,
+      "raw": {
+        "action_type": "exploration",
+        "reasoning": "The player is simply observing the visible sky and the villagers' attention. This is a routine observation of the environment and requires no specialized knowledge or physical challenge.",
+        "narrative_significance": "routine",
+        "narrative_direction": "Describe the sky and the villagers' reactions. Since the player is just looking, the focus should be on sensory details: the color of the sky, the nature of the object, and the general mood of the crowd (fear, awe, confusion). No roll is needed."
+      },
+      "notes": "An atmospheric scene change with mystery. Notable, not climactic."
+    },
+    {
+      "name": "discover_body_of_quest_giver",
+      "expected": "notable",
+      "predicted": "notable",
+      "predicted_action_type": "skill_check",
+      "elapsed_s": 1.3910000000000764,
+      "error": null,
+      "raw": {
+        "action_type": "skill_check",
+        "reasoning": "Checking a pulse is a medical/physical assessment of a living being. While it seems simple, determining if someone is alive, injured, or dying requires specialized knowledge (Medicine skill) and the outcome is uncertain (he might be faking it, or the injury might be subtle).",
+        "narrative_significance": "notable",
+        "needs_roll": true,
+        "skill": "medicine",
+        "ability": "wisdom",
+        "dc": 12,
+        "on_success": [
+          "You confirm his pulse is faint but steady, indicating he is alive but severely weakened."
+        ],
+        "on_failure": [
+          "You feel nothing, or only a faint, irregular flutter, making it difficult to tell if he is merely unconscious or worse."
+        ]
+      },
+      "notes": "Death of a secondary recurring NPC. Notable weight, but not the climax."
+    },
+    {
+      "name": "sealed_vault_opens",
+      "expected": "notable",
+      "predicted": "climactic",
+      "predicted_action_type": "roleplay",
+      "elapsed_s": 1.3589999999999236,
+      "error": null,
+      "raw": {
+        "action_type": "roleplay",
+        "reasoning": "The player is completing a mechanical action and stepping back. Since the mechanism is the focus and the vault opening is the culmination of three sessions, this moment is highly significant. No roll is needed as the action is described as completing the mechanism, and the focus shifts to the reveal.",
+        "narrative_significance": "climactic",
+        "narrative_direction": "Describe the sound of the final mechanism working\u2014a deep, grinding, ancient sound. As the vault grinds open, the air should change (dust, cold, scent of age). Describe the immediate visual reveal of the vault's interior, making it feel monumental and important. The party should feel the weight of the moment."
+      },
+      "notes": "A major payoff opening. New scene about to be revealed."
+    },
+    {
+      "name": "boss_fight_starts",
+      "expected": "climactic",
+      "predicted": "climactic",
+      "predicted_action_type": "attack",
+      "elapsed_s": 0.7820000000001528,
+      "error": null,
+      "raw": {
+        "action_type": "attack",
+        "reasoning": "The player is initiating direct, hostile combat against a named, hostile creature (Lady Veshra). This is a clear combat action.",
+        "narrative_significance": "climactic",
+        "target_name": "Lady Veshra",
+        "is_creature_target": true
+      },
+      "notes": "The campaign's BBEG fight begins. Peak narrative moment."
+    },
+    {
+      "name": "character_dies",
+      "expected": "climactic",
+      "predicted": "climactic",
+      "predicted_action_type": "roleplay",
+      "elapsed_s": 1.3429999999998472,
+      "error": null,
+      "raw": {
+        "action_type": "roleplay",
+        "reasoning": "This is a dramatic, character-driven action that involves sacrificing oneself to save an ally. It is not a mechanical check against an object or creature, but a narrative beat that requires the DM to describe the immediate consequences of the sacrifice.",
+        "narrative_significance": "climactic",
+        "narrative_direction": "Describe the impact of Thorn's body absorbing the dragon's bite/attack, the immediate physical sensation of the blow, and the resulting collapse. Focus on the emotional weight of the sacrifice for the other characters (especially the player controlling Pip, if they are present, or the party). The dragon's immediate reaction to the loss of its target and the sudden appearance of a new, unexpected threat (Thorn) should be described."
+      },
+      "notes": "Player character death moment. As climactic as it gets."
+    },
+    {
+      "name": "villain_reveals_identity",
+      "expected": "climactic",
+      "predicted": "climactic",
+      "predicted_action_type": "social",
+      "elapsed_s": 1.3600000000001273,
+      "error": null,
+      "raw": {
+        "action_type": "social",
+        "reasoning": "This is a direct confrontation demanding information from a specific NPC. Since the player is demanding an answer rather than trying to trick or persuade, and the context is a high-stakes confrontation, a direct social challenge is appropriate. No skill check is needed unless the NPC is actively resisting or the player needs to overcome a specific social barrier (like fear or authority). Given the dramatic context, a direct confrontation narrative is best.",
+        "narrative_significance": "climactic",
+        "narrative_direction": "The masked figure remains cornered, breathing heavily. The tension is palpable. The DM should describe the masked figure's reaction to the direct demand\u2014are they defiant, terrified, or resigned? The player's tone should dictate the immediate response, but the core action is the confrontation itself."
+      },
+      "notes": "Major identity reveal. Recontextualizes the campaign."
+    },
+    {
+      "name": "betrayal_moment",
+      "expected": "climactic",
+      "predicted": "climactic",
+      "predicted_action_type": "social",
+      "elapsed_s": 1.5,
+      "error": null,
+      "raw": {
+        "action_type": "social",
+        "reasoning": "This is a direct confrontation with a major NPC who has betrayed the party. While it involves dialogue, the core action is the player making a declaration/accusation, which is best handled as roleplay, not a skill check, unless the player attempts to *convince* him to stop. Since the player is confronting him with knowledge, it's a dramatic moment of revelation.",
+        "narrative_significance": "climactic",
+        "narrative_direction": "The air in the chamber crackles with sudden, terrible realization. Brother Kael freezes, the cult symbol on his robes seeming to glow malevolently. Describe the immediate atmosphere\u2014the sudden silence, the tension, and Kael's reaction to being called out. Does he deny it, or does a flicker of something\u2014fear, regret, or cold satisfaction\u2014cross his face? This is the moment the party's understanding of him shatters."
+      },
+      "notes": "Long-running ally revealed as the traitor. Defining beat."
+    },
+    {
+      "name": "final_choice",
+      "expected": "climactic",
+      "predicted": "climactic",
+      "predicted_action_type": "roleplay",
+      "elapsed_s": 1.25,
+      "error": null,
+      "raw": {
+        "action_type": "roleplay",
+        "reasoning": "This is a definitive, high-stakes moral choice that involves a physical action (shattering the artifact) but is fundamentally a character declaration of will. Since the outcome is tied to the world's fate, it is a climactic moment, and the action itself is a declaration rather than a skill check.",
+        "narrative_significance": "climactic",
+        "narrative_direction": "Describe the physical act of shattering the artifact. Focus on the immense power radiating from the object, the resistance the player feels, and the resulting backlash or release of energy as the artifact breaks. The narrative should emphasize the weight of the choice and the immediate, world-altering consequences of the shattering."
+      },
+      "notes": "Campaign-defining moral choice. Peak weight."
+    },
+    {
+      "name": "dragon_emerges",
+      "expected": "climactic",
+      "predicted": "climactic",
+      "predicted_action_type": "exploration",
+      "elapsed_s": 1.2339999999999236,
+      "error": null,
+      "raw": {
+        "action_type": "exploration",
+        "reasoning": "The player is observing a massive, visible, and highly dramatic event (the mountain moving to reveal a dragon). This is a pure observation of the environment, not an attempt to find something hidden or solve a puzzle. Therefore, no roll is needed.",
+        "narrative_significance": "climactic",
+        "narrative_direction": "Describe the sheer scale and terror of the reveal. The ground shaking, the impossible geometry of the mountain folding, and the overwhelming presence of the dragon. Focus on sensory details: the smell of ozone, the sound of grinding stone, the heat, and the sheer impossibility of the sight."
+      },
+      "notes": "The campaign's eponymous dragon reveals itself. Climactic."
+    },
+    {
+      "name": "edge_skill_check_with_real_stakes",
+      "expected": "notable",
+      "predicted": "climactic",
+      "predicted_action_type": "skill_check",
+      "elapsed_s": 1.7350000000001273,
+      "error": null,
+      "raw": {
+        "action_type": "skill_check",
+        "reasoning": "The player is attempting to disarm a complex, dangerous trap (a pressure plate connected to gas). This requires specialized knowledge of traps and careful physical manipulation under extreme time pressure and danger. Failure has a catastrophic consequence (TPK risk).",
+        "narrative_significance": "climactic",
+        "needs_roll": true,
+        "skill": "Investigation",
+        "ability": "Intelligence",
+        "dc": 18,
+        "on_success": [
+          "You carefully analyze the mechanism, noting the tripwire tension and the plate's seams. You find the precise point to disrupt the circuit without triggering the main plate, and the gas remains dormant."
+        ],
+        "on_failure": [
+          "Your touch is too heavy, or you misjudge the tension. A loud *hiss* echoes through the corridor, and the poisonous gas immediately begins to fill the air, forcing everyone to make immediate saving throws."
+        ],
+        "resources_consumed": [],
+        "currency_spent": {}
+      },
+      "notes": "Skill check with REAL stakes (TPK risk). Borderline notable, not yet climactic."
+    },
+    {
+      "name": "edge_routine_combat_in_climactic_arc",
+      "expected": "routine",
+      "predicted": "routine",
+      "predicted_action_type": "attack",
+      "elapsed_s": 0.6399999999998727,
+      "error": null,
+      "raw": {
+        "action_type": "attack",
+        "reasoning": "The player is directly attacking a specific creature in combat.",
+        "narrative_significance": "routine",
+        "target_name": "third minion",
+        "is_creature_target": true
+      },
+      "notes": "Routine swing inside a climactic encounter. Tests whether the brain over-promotes when context is dramatic."
+    },
+    {
+      "name": "edge_first_time_in_minor_shop",
+      "expected": "routine",
+      "predicted": "routine",
+      "predicted_action_type": "exploration",
+      "elapsed_s": 1.0160000000000764,
+      "error": null,
+      "raw": {
+        "action_type": "exploration",
+        "reasoning": "The player is simply browsing visible goods in a safe, established location. This is a routine observation and requires no specialized knowledge or risk.",
+        "narrative_significance": "routine",
+        "narrative_direction": "Describe the general atmosphere of the stall and the types of goods available (belts, pouches, armor scraps, etc.). Since the player is just looking, they can pick out items of interest to ask about later, or simply take a moment to observe the craftsmanship."
+      },
+      "notes": "Tests whether 'first time in a new place' gets over-promoted when the place is mundane."
+    },
+    {
+      "name": "edge_dramatic_action_low_stakes",
+      "expected": "routine",
+      "predicted": "routine",
+      "predicted_action_type": "roleplay",
+      "elapsed_s": 1.155999999999949,
+      "error": null,
+      "raw": {
+        "action_type": "roleplay",
+        "reasoning": "The player is performing a dramatic, non-threatening action for fun in a public setting. This is pure roleplay and does not involve a physical challenge, specialized knowledge, or uncertain outcome that requires a roll. The merchant's reaction is narrative, not a skill check.",
+        "narrative_significance": "routine",
+        "narrative_direction": "Describe the dramatic flourish of the sword draw and the pointed gesture. Since it's a joke, the merchant should react with visible alarm, perhaps stumbling backward or yelping, but not with genuine fear of violence, keeping the tone lighthearted."
+      },
+      "notes": "Tests whether dramatic verbiage tricks the brain. Should stay routine because there's no real narrative weight."
+    },
+    {
+      "name": "edge_minor_npc_dies_offscreen",
+      "expected": "routine",
+      "predicted": "routine",
+      "predicted_action_type": "exploration",
+      "elapsed_s": 1.0630000000001019,
+      "error": null,
+      "raw": {
+        "action_type": "exploration",
+        "reasoning": "The player is reading a document (the report). This is a passive act of information gathering about a past event, not an attempt to overcome an obstacle, solve a puzzle, or interact with a living being. It is purely narrative consumption.",
+        "narrative_significance": "routine",
+        "narrative_direction": "Describe the report's contents in detail, focusing on the tone, the missing information, or any specific details that pique the players' interest. Since the report is the focus, the narrative should guide the players' immediate reaction to the information presented."
+      },
+      "notes": "Tests whether 'death' alone promotes. Should stay routine \u2014 the courier was never a character."
+    }
+  ]
+}

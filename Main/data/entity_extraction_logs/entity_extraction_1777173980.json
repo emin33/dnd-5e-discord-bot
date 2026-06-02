@@ -1,0 +1,593 @@
+{
+  "profile": "haiku_immersive_dreamshaper",
+  "elapsed_total_s": 14.344000000000051,
+  "scenarios": [
+    {
+      "name": "innkeeper_greeting",
+      "extracted": {
+        "entities": [
+          {
+            "name": "Aldric",
+            "entity_type": "npc",
+            "description": "The broad-shouldered innkeeper",
+            "disposition": "friendly",
+            "monster_index": null
+          }
+        ],
+        "scene_update": "The tavern feels welcoming",
+        "hostility_changes": [],
+        "combat_initiated": false
+      },
+      "elapsed_s": 0.9690000000000509,
+      "error": null,
+      "checks": [
+        {
+          "name": "combat_initiated",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "entity[aldric].type",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "entity[aldric].disposition",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "entity[aldric].monster_index",
+          "passed": false,
+          "detail": "got monster_index=None (should_be_set=True)"
+        }
+      ]
+    },
+    {
+      "name": "forge_tension",
+      "extracted": {
+        "entities": [
+          {
+            "name": "burly dwarf",
+            "entity_type": "npc",
+            "description": "A stocky dwarf with a scarred face and smith's apron",
+            "disposition": "unfriendly",
+            "monster_index": null
+          }
+        ],
+        "scene_update": "The blacksmith's forge remains tense",
+        "hostility_changes": [],
+        "combat_initiated": false
+      },
+      "elapsed_s": 0.9369999999998981,
+      "error": null,
+      "checks": [
+        {
+          "name": "combat_initiated",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "entity[dwarf].type",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "entity[dwarf].disposition",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "entity[dwarf].monster_index",
+          "passed": false,
+          "detail": "got monster_index=None (should_be_set=True)"
+        }
+      ]
+    },
+    {
+      "name": "tense_standoff",
+      "extracted": {
+        "entities": [
+          {
+            "name": "three guards",
+            "entity_type": "creature",
+            "description": "Three guards blocking the alley",
+            "disposition": "unfriendly",
+            "monster_index": "guard"
+          },
+          {
+            "name": "captain",
+            "entity_type": "npc",
+            "description": "A scarred woman in chainmail",
+            "disposition": "unfriendly",
+            "monster_index": null
+          }
+        ],
+        "scene_update": "The alley is blocked by armed guards",
+        "hostility_changes": [],
+        "combat_initiated": false
+      },
+      "elapsed_s": 1.2970000000004802,
+      "error": null,
+      "checks": [
+        {
+          "name": "combat_initiated",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "entity[captain].type",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "entity[captain].disposition",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "entity[captain].monster_index",
+          "passed": false,
+          "detail": "got monster_index=None (should_be_set=True)"
+        }
+      ]
+    },
+    {
+      "name": "actual_attack_starts_combat",
+      "extracted": {
+        "entities": [
+          {
+            "name": "bandit",
+            "entity_type": "creature",
+            "description": "The initial attacker",
+            "disposition": "hostile",
+            "monster_index": "thug"
+          },
+          {
+            "name": "two bandits",
+            "entity_type": "creature",
+            "description": "Bandits emerging from the shadows",
+            "disposition": "hostile",
+            "monster_index": "thug"
+          }
+        ],
+        "scene_update": "Combat has begun on the forest path",
+        "hostility_changes": [],
+        "combat_initiated": true
+      },
+      "elapsed_s": 1.2349999999996726,
+      "error": null,
+      "checks": [
+        {
+          "name": "combat_initiated",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "entity[bandit].type",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "entity[bandit].disposition",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "entity[bandit].monster_index",
+          "passed": true,
+          "detail": ""
+        }
+      ]
+    },
+    {
+      "name": "goblin_arrows_fly",
+      "extracted": {
+        "entities": [
+          {
+            "name": "six goblins",
+            "entity_type": "creature",
+            "description": "Goblins emerging from the brush, bows drawn",
+            "disposition": "hostile",
+            "monster_index": "thug"
+          }
+        ],
+        "scene_update": "The clearing is suddenly hostile",
+        "hostility_changes": [
+          {
+            "name": "six goblins",
+            "delta": 0,
+            "reason": "Transitioned from unseen to actively threatening"
+          }
+        ],
+        "combat_initiated": false
+      },
+      "elapsed_s": 1.3429999999998472,
+      "error": null,
+      "checks": [
+        {
+          "name": "combat_initiated",
+          "passed": false,
+          "detail": "got=False, expected=True"
+        },
+        {
+          "name": "entity[goblin].type",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "entity[goblin].disposition",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "entity[goblin].monster_index",
+          "passed": true,
+          "detail": ""
+        }
+      ]
+    },
+    {
+      "name": "threat_no_attack",
+      "extracted": {
+        "entities": [
+          {
+            "name": "cult fanatics",
+            "entity_type": "creature",
+            "description": "A group of cultists lining up in a half-circle, hands raised in complex sigils",
+            "disposition": "unfriendly",
+            "monster_index": "cult-fanatic"
+          },
+          {
+            "name": "leader",
+            "entity_type": "npc",
+            "description": "The leader of the cult fanatics",
+            "disposition": "unfriendly",
+            "monster_index": null
+          }
+        ],
+        "scene_update": "The ritual chamber is charged with ominous energy",
+        "hostility_changes": [],
+        "combat_initiated": false
+      },
+      "elapsed_s": 1.360000000000582,
+      "error": null,
+      "checks": [
+        {
+          "name": "combat_initiated",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "entity[fanatic].type",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "entity[fanatic].disposition",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "entity[fanatic].monster_index",
+          "passed": true,
+          "detail": ""
+        }
+      ]
+    },
+    {
+      "name": "merchant_in_shop",
+      "extracted": {
+        "entities": [
+          {
+            "name": "Pelo",
+            "entity_type": "npc",
+            "description": "A wiry leatherworker with calloused hands",
+            "disposition": "friendly",
+            "monster_index": null
+          }
+        ],
+        "scene_update": null,
+        "hostility_changes": [],
+        "combat_initiated": false
+      },
+      "elapsed_s": 0.8899999999994179,
+      "error": null,
+      "checks": [
+        {
+          "name": "combat_initiated",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "entity[pelo].type",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "entity[pelo].disposition",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "entity[pelo].monster_index",
+          "passed": false,
+          "detail": "got monster_index=None (should_be_set=True)"
+        }
+      ]
+    },
+    {
+      "name": "locked_chest_in_room",
+      "extracted": {
+        "entities": [
+          {
+            "name": "heavy iron-bound chest",
+            "entity_type": "object",
+            "description": "A chest with a corroded padlock and strange runes scratched into the lid",
+            "disposition": "neutral",
+            "monster_index": null
+          }
+        ],
+        "scene_update": "The study contains a notable chest",
+        "hostility_changes": [],
+        "combat_initiated": false
+      },
+      "elapsed_s": 1.0,
+      "error": null,
+      "checks": [
+        {
+          "name": "combat_initiated",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "entity[chest].type",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "entity[chest].monster_index",
+          "passed": true,
+          "detail": ""
+        }
+      ]
+    },
+    {
+      "name": "atmosphere_only_no_entities",
+      "extracted": {
+        "entities": [],
+        "scene_update": null,
+        "hostility_changes": [],
+        "combat_initiated": false
+      },
+      "elapsed_s": 0.5630000000001019,
+      "error": null,
+      "checks": [
+        {
+          "name": "combat_initiated",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "forbid[wind]",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "forbid[torchlight]",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "forbid[draft]",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "forbid[smell]",
+          "passed": true,
+          "detail": ""
+        }
+      ]
+    },
+    {
+      "name": "spell_effect_not_creature",
+      "extracted": {
+        "entities": [],
+        "scene_update": "The arena is filled with dark energy",
+        "hostility_changes": [],
+        "combat_initiated": false
+      },
+      "elapsed_s": 0.5309999999999491,
+      "error": null,
+      "checks": [
+        {
+          "name": "combat_initiated",
+          "passed": false,
+          "detail": "got=False, expected=True"
+        },
+        {
+          "name": "forbid[tendril]",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "forbid[shadow]",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "forbid[energy]",
+          "passed": true,
+          "detail": ""
+        }
+      ]
+    },
+    {
+      "name": "hooded_stranger_is_bandit",
+      "extracted": {
+        "entities": [
+          {
+            "name": "hooded stranger",
+            "entity_type": "npc",
+            "description": "A stranger wearing a hood, with a dagger visible at his belt",
+            "disposition": "unfriendly",
+            "monster_index": null
+          }
+        ],
+        "scene_update": "The alley feels suddenly watched",
+        "hostility_changes": [],
+        "combat_initiated": false
+      },
+      "elapsed_s": 0.9530000000004293,
+      "error": null,
+      "checks": [
+        {
+          "name": "combat_initiated",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "entity[stranger].type",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "entity[stranger].disposition",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "entity[stranger].monster_index",
+          "passed": false,
+          "detail": "got monster_index=None (should_be_set=True)"
+        }
+      ]
+    },
+    {
+      "name": "wolf_pack",
+      "extracted": {
+        "entities": [
+          {
+            "name": "three wolves",
+            "entity_type": "creature",
+            "description": "Three wolves circling the camp",
+            "disposition": "unfriendly",
+            "monster_index": "wolf"
+          }
+        ],
+        "scene_update": "The atmosphere at the campsite grows tense as the wolves circle",
+        "hostility_changes": [],
+        "combat_initiated": false
+      },
+      "elapsed_s": 0.9849999999996726,
+      "error": null,
+      "checks": [
+        {
+          "name": "combat_initiated",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "entity[wolves].type",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "entity[wolves].disposition",
+          "passed": false,
+          "detail": "got disposition=unfriendly, expected hostile"
+        },
+        {
+          "name": "entity[wolves].monster_index",
+          "passed": true,
+          "detail": ""
+        }
+      ]
+    },
+    {
+      "name": "court_audience",
+      "extracted": {
+        "entities": [
+          {
+            "name": "Lord Marwen",
+            "entity_type": "npc",
+            "description": "Sits on the dais",
+            "disposition": "neutral",
+            "monster_index": null
+          },
+          {
+            "name": "two silent guards",
+            "entity_type": "creature",
+            "description": "In ceremonial armor, flanking Lord Marwen",
+            "disposition": "neutral",
+            "monster_index": "guard"
+          }
+        ],
+        "scene_update": "The throne room remains imposing and silent",
+        "hostility_changes": [],
+        "combat_initiated": false
+      },
+      "elapsed_s": 1.25,
+      "error": null,
+      "checks": [
+        {
+          "name": "combat_initiated",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "entity[marwen].type",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "entity[marwen].disposition",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "entity[marwen].monster_index",
+          "passed": false,
+          "detail": "got monster_index=None (should_be_set=True)"
+        }
+      ]
+    },
+    {
+      "name": "suspicious_priest",
+      "extracted": {
+        "entities": [
+          {
+            "name": "Brother Cael",
+            "entity_type": "npc",
+            "description": "A monk with a warm smile whose eyes dart toward the chapel door",
+            "disposition": "friendly",
+            "monster_index": null
+          }
+        ],
+        "scene_update": "The atmosphere remains cordial, though Brother Cael's attention is elsewhere.",
+        "hostility_changes": [],
+        "combat_initiated": false
+      },
+      "elapsed_s": 1.030999999999949,
+      "error": null,
+      "checks": [
+        {
+          "name": "combat_initiated",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "entity[cael].type",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "entity[cael].monster_index",
+          "passed": false,
+          "detail": "got monster_index=None (should_be_set=True)"
+        }
+      ]
+    }
+  ]
+}

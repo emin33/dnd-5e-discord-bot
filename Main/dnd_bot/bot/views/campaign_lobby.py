@@ -66,7 +66,13 @@ class CampaignLobbyView(discord.ui.View):
         custom_id="campaign_join",
     )
     async def join_button(self, button: discord.ui.Button, interaction: discord.Interaction):
-        """Handle join button click."""
+        """Handle join button click.
+
+        Defer immediately — `on_join` does a character_repo lookup before
+        responding, which could blow past Discord's 3-second interaction
+        window on a slow DB or cold cache.
+        """
+        await interaction.response.defer(ephemeral=True)
         await self.on_join(interaction, self.campaign)
 
     @discord.ui.button(
@@ -76,13 +82,19 @@ class CampaignLobbyView(discord.ui.View):
         custom_id="campaign_start",
     )
     async def start_button(self, button: discord.ui.Button, interaction: discord.Interaction):
-        """Handle start game button click - DM only."""
+        """Handle start game button click - DM only.
+
+        DM check happens before defer so we can fast-fail with an ephemeral
+        message. After that, `on_start` does multiple DB queries + a narrator
+        LLM call — defer to keep the interaction alive.
+        """
         if interaction.user.id != self.dm_id:
             await interaction.response.send_message(
                 "Only the Dungeon Master can start the game!",
                 ephemeral=True,
             )
             return
+        await interaction.response.defer(ephemeral=True)
         await self.on_start(interaction, self.campaign)
 
 

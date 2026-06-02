@@ -604,10 +604,16 @@ class TestEntityNameMatcher:
         assert "ironforge-tavern" in seeds
 
     async def test_scene_seeds_npc_at_location(self, matcher_kg):
+        """NPC ids are now UUIDs (NPCState.id) — the matcher emits the
+        UUID directly as the seed. NPCState.id must match the KG node_id
+        (cross-layer identity anchor). The fixture pre-creates a KG node
+        with id 'grimjaw'; we set NPCState.id to match.
+        """
         matcher = EntityNameMatcher(matcher_kg)
         ws = WorldState()
         ws.current_location = "Ironforge Tavern"
-        ws.npcs["Grimjaw"] = NPCState(name="Grimjaw", location="Ironforge Tavern")
+        npc = NPCState(id="grimjaw", name="Grimjaw", location="Ironforge Tavern")
+        ws.npcs[npc.id] = npc
         seeds = matcher.scene_seeds(ws)
         assert "grimjaw" in seeds
         assert "ironforge-tavern" in seeds
@@ -621,7 +627,8 @@ class TestEntityNameMatcher:
         matcher = EntityNameMatcher(matcher_kg)
         ws = WorldState()
         ws.current_location = "Ironforge Tavern"
-        ws.npcs["Grimjaw"] = NPCState(name="Grimjaw", location="back room of the tavern")
+        npc = NPCState(id="grimjaw", name="Grimjaw", location="back room of the tavern")
+        ws.npcs[npc.id] = npc
         seeds = matcher.scene_seeds(ws)
         assert "grimjaw" in seeds
         assert "ironforge-tavern" in seeds
@@ -631,7 +638,8 @@ class TestEntityNameMatcher:
         matcher = EntityNameMatcher(matcher_kg)
         ws = WorldState()
         ws.current_location = "Ironforge Tavern"
-        ws.npcs["Grimjaw"] = NPCState(name="Grimjaw", location="Ironforge Tavern", alive=False)
+        npc = NPCState(id="grimjaw", name="Grimjaw", location="Ironforge Tavern", alive=False)
+        ws.npcs[npc.id] = npc
         seeds = matcher.scene_seeds(ws)
         assert "grimjaw" not in seeds
 
@@ -763,6 +771,42 @@ class TestQuestBridge:
         loc_edges = [e for e in edges if e.relationship.relation_type == RelationType.OBJECTIVE_AT]
         assert len(loc_edges) == 1
         assert loc_edges[0].relationship.target_id == "shadow-ruins"
+
+    def test_quest_giver_not_in_known_skips_edge(self, bridge, world_state):
+        """Audit #10: previously `if giver_id in known or giver_id` was always truthy,
+        so a giver who didn't have a node yet would still produce an orphan
+        QUEST_GIVER edge that `_apply_add_edge` later rejected with
+        "Source node not found". With the fix (`and` instead of `or`), no edge
+        is emitted when the giver isn't already a node.
+        """
+        delta = StateDelta(new_quests=[QuestState(
+            name="Find the Amulet", giver="Unknown Stranger",
+        )])
+        # Note: existing_node_ids does NOT contain "unknown-stranger"
+        ops = bridge.convert(delta, world_state, existing_node_ids={"some-other-npc"})
+
+        giver_edges = [
+            o for o in ops
+            if isinstance(o, AddEdge)
+            and o.relationship.relation_type == RelationType.QUEST_GIVER
+        ]
+        assert giver_edges == [], (
+            "No QUEST_GIVER edge should be created when the giver has no node yet"
+        )
+
+    def test_quest_giver_empty_string_skips_edge(self, bridge, world_state):
+        """Defensive: an empty-string giver should also produce no edge."""
+        delta = StateDelta(new_quests=[QuestState(
+            name="Find the Amulet", giver="",
+        )])
+        ops = bridge.convert(delta, world_state, existing_node_ids=set())
+
+        giver_edges = [
+            o for o in ops
+            if isinstance(o, AddEdge)
+            and o.relationship.relation_type == RelationType.QUEST_GIVER
+        ]
+        assert giver_edges == []
 
 
 # ======================================================================

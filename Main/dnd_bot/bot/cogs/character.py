@@ -315,8 +315,8 @@ class CharacterCog(commands.Cog):
                     break
 
         if not skill_choice:
-            # No skill choices, skip to confirmation
-            await self._show_confirmation_from_interaction(interaction)
+            # No skill choices, skip to appearance
+            await self._show_appearance_from_interaction(interaction)
             return
 
         num_skills = skill_choice.get("choose", 2)
@@ -328,7 +328,7 @@ class CharacterCog(commands.Cog):
                 available_skills.append(skill_index)
 
         async def on_skills_complete(skill_interaction: discord.Interaction):
-            await self._show_confirmation_from_interaction(skill_interaction)
+            await self._show_appearance_from_interaction(skill_interaction)
 
         view = SkillSelectView(state, available_skills, num_skills, on_skills_complete)
 
@@ -337,6 +337,64 @@ class CharacterCog(commands.Cog):
             title="Choose Your Skills",
             description=f"As a {class_name}, choose {num_skills} skills to be proficient in.",
             color=discord.Color.blue(),
+        )
+
+        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+
+    async def _show_appearance_from_interaction(self, interaction: discord.Interaction):
+        """Show appearance description modal (only if images are enabled)."""
+        user_id = interaction.user.id
+        state = _creation_states.get((getattr(interaction, 'guild_id', 0) or 0, user_id))
+        if not state:
+            return
+
+        # Skip appearance step if images aren't enabled
+        try:
+            from ...config import get_profile
+            profile = get_profile()
+            if not profile.immersion.image_enabled:
+                await self._show_confirmation_from_interaction(interaction)
+                return
+        except Exception:
+            await self._show_confirmation_from_interaction(interaction)
+            return
+
+        from ..views.character_appearance import AppearanceModal
+
+        async def on_appearance_complete(description: str):
+            state.description = description
+            await self._show_confirmation_from_interaction(interaction)
+
+        modal = AppearanceModal(on_appearance_complete)
+        # Need a fresh interaction to send a modal -- use followup instead
+        # Since we can't send a modal from a deferred interaction, show a button
+        view = discord.ui.View(timeout=120)
+
+        async def show_modal(btn_interaction: discord.Interaction):
+            await btn_interaction.response.send_modal(modal)
+
+        async def skip_appearance(btn_interaction: discord.Interaction):
+            await btn_interaction.response.defer()
+            state.description = ""
+            await self._show_confirmation_from_interaction(btn_interaction)
+
+        describe_btn = discord.ui.Button(label="Describe Appearance", style=discord.ButtonStyle.primary)
+        describe_btn.callback = show_modal
+        skip_btn = discord.ui.Button(label="Skip", style=discord.ButtonStyle.secondary)
+        skip_btn.callback = skip_appearance
+
+        view.add_item(describe_btn)
+        view.add_item(skip_btn)
+
+        embed = discord.Embed(
+            title="Character Appearance",
+            description=(
+                f"**{state.name}** the {state.race_index.title()} {state.class_index.title()}\n\n"
+                "Describe your character's physical appearance. This will be used for "
+                "scene image generation and your character sheet.\n\n"
+                "*Example: A tall elf with silver hair and emerald eyes, wearing worn leather armor...*"
+            ),
+            color=discord.Color.purple(),
         )
 
         await interaction.followup.send(embed=embed, view=view, ephemeral=True)
@@ -366,9 +424,13 @@ class CharacterCog(commands.Cog):
         race_name = race_data["name"] if race_data else state.race_index.title()
         class_name = class_data["name"] if class_data else state.class_index.title()
 
+        desc = f"**{state.name}**\n{race_name} {class_name}"
+        if state.description:
+            desc += f"\n\n*{state.description[:200]}*"
+
         embed = discord.Embed(
             title="Confirm Your Character",
-            description=f"**{state.name}**\n{race_name} {class_name}",
+            description=desc,
             color=discord.Color.green(),
         )
 
@@ -408,6 +470,10 @@ class CharacterCog(commands.Cog):
         try:
             # Create the character
             character = self.creator.build_character(state)
+
+            # Set appearance description from wizard
+            if state.description:
+                character.description = state.description
 
             # Save to database
             repo = await get_character_repo()
@@ -463,300 +529,6 @@ class CharacterCog(commands.Cog):
                 ephemeral=True,
             )
 
-    async def _show_ability_assignment(self, ctx: discord.ApplicationContext):
-        """Show ability score assignment or point buy."""
-        user_id = ctx.author.id
-        state = _creation_states.get((getattr(interaction, 'guild_id', 0) or 0, user_id))
-        if not state:
-            return
-
-        if state.ability_method == AbilityScoreMethod.POINT_BUY:
-            await self._show_point_buy(ctx)
-        else:
-            # Roll or Standard Array - show assignment view
-            if state.ability_method == AbilityScoreMethod.ROLL:
-                scores = state.ability_rolls.totals
-                # Show roll results
-                embed = build_ability_roll_embed(
-                    state.name,
-                    state.ability_rolls.rolls,
-                    state.ability_rolls.totals,
-                )
-                await ctx.interaction.followup.send(embed=embed, ephemeral=True)
-            else:
-                scores = STANDARD_ARRAY.copy()
-
-            async def on_assignment_complete():
-                # Build AbilityScores from assignments
-                state.final_abilities = AbilityScores(
-                    strength=state.ability_assignments[AbilityScore.STRENGTH],
-                    dexterity=state.ability_assignments[AbilityScore.DEXTERITY],
-                    constitution=state.ability_assignments[AbilityScore.CONSTITUTION],
-                    intelligence=state.ability_assignments[AbilityScore.INTELLIGENCE],
-                    wisdom=state.ability_assignments[AbilityScore.WISDOM],
-                    charisma=state.ability_assignments[AbilityScore.CHARISMA],
-                )
-                await self._show_race_select(ctx)
-
-            view = AbilityAssignmentView(state, scores, on_assignment_complete)
-
-            embed = discord.Embed(
-                title="Assign Ability Scores",
-                description=f"Assign each score to an ability.\nAvailable: {', '.join(str(s) for s in sorted(scores, reverse=True))}",
-                color=discord.Color.blue(),
-            )
-
-            await ctx.interaction.followup.send(embed=embed, view=view, ephemeral=True)
-
-    async def _show_point_buy(self, ctx: discord.ApplicationContext):
-        """Show point buy interface."""
-        user_id = ctx.author.id
-        state = _creation_states.get((getattr(interaction, 'guild_id', 0) or 0, user_id))
-        if not state:
-            return
-
-        async def on_point_buy_complete():
-            state.final_abilities = state.point_buy_state.to_ability_scores()
-            await self._show_race_select(ctx)
-
-        view = PointBuyView(state, on_point_buy_complete)
-
-        await ctx.interaction.followup.send(
-            embed=view.get_embed(),
-            view=view,
-            ephemeral=True,
-        )
-
-    async def _show_race_select(self, ctx: discord.ApplicationContext):
-        """Show race selection."""
-        user_id = ctx.author.id
-        state = _creation_states.get((getattr(interaction, 'guild_id', 0) or 0, user_id))
-        if not state:
-            return
-
-        async def on_race_complete():
-            await self._show_class_select(ctx)
-
-        view = RaceSelectView(state, on_race_complete)
-
-        embed = discord.Embed(
-            title="Choose Your Race",
-            description="Select a race for your character. Racial bonuses will be applied to your ability scores.",
-            color=discord.Color.blue(),
-        )
-
-        await ctx.interaction.followup.send(embed=embed, view=view, ephemeral=True)
-
-    async def _show_class_select(self, ctx: discord.ApplicationContext):
-        """Show class selection."""
-        user_id = ctx.author.id
-        state = _creation_states.get((getattr(interaction, 'guild_id', 0) or 0, user_id))
-        if not state:
-            return
-
-        async def on_class_complete():
-            await self._show_skill_select(ctx)
-
-        view = ClassSelectView(state, on_class_complete)
-
-        # Apply racial bonuses to abilities
-        state.final_abilities = self.creator.apply_racial_bonuses(
-            state.final_abilities,
-            state.race_index,
-        )
-
-        race_data = self.srd.get_race(state.race_index)
-        race_name = race_data["name"] if race_data else state.race_index.title()
-
-        embed = discord.Embed(
-            title="Choose Your Class",
-            description=f"**{state.name}** the {race_name}\n\nSelect a class for your character.",
-            color=discord.Color.blue(),
-        )
-
-        # Show current ability scores with racial bonuses
-        abilities = state.final_abilities
-        embed.add_field(
-            name="Ability Scores (with racial bonuses)",
-            value=(
-                f"STR: {abilities.strength} ({'+' if abilities.str_mod >= 0 else ''}{abilities.str_mod})\n"
-                f"DEX: {abilities.dexterity} ({'+' if abilities.dex_mod >= 0 else ''}{abilities.dex_mod})\n"
-                f"CON: {abilities.constitution} ({'+' if abilities.con_mod >= 0 else ''}{abilities.con_mod})\n"
-                f"INT: {abilities.intelligence} ({'+' if abilities.int_mod >= 0 else ''}{abilities.int_mod})\n"
-                f"WIS: {abilities.wisdom} ({'+' if abilities.wis_mod >= 0 else ''}{abilities.wis_mod})\n"
-                f"CHA: {abilities.charisma} ({'+' if abilities.cha_mod >= 0 else ''}{abilities.cha_mod})"
-            ),
-            inline=False,
-        )
-
-        await ctx.interaction.followup.send(embed=embed, view=view, ephemeral=True)
-
-    async def _show_skill_select(self, ctx: discord.ApplicationContext):
-        """Show skill proficiency selection."""
-        user_id = ctx.author.id
-        state = _creation_states.get((getattr(interaction, 'guild_id', 0) or 0, user_id))
-        if not state:
-            return
-
-        available_skills, choose_count = self.creator.get_skill_choices(state.class_index)
-
-        if not available_skills or choose_count == 0:
-            # Class has no skill choices (shouldn't happen, but handle it)
-            await self._show_confirmation(ctx)
-            return
-
-        async def on_skills_complete():
-            await self._show_confirmation(ctx)
-
-        view = SkillSelectView(state, available_skills, choose_count, on_skills_complete)
-
-        class_data = self.srd.get_class(state.class_index)
-        class_name = class_data["name"] if class_data else state.class_index.title()
-
-        embed = discord.Embed(
-            title="Choose Skill Proficiencies",
-            description=f"As a {class_name}, choose **{choose_count}** skills to be proficient in.",
-            color=discord.Color.blue(),
-        )
-
-        await ctx.interaction.followup.send(embed=embed, view=view, ephemeral=True)
-
-    async def _show_confirmation(self, ctx: discord.ApplicationContext):
-        """Show character confirmation."""
-        user_id = ctx.author.id
-        state = _creation_states.get((getattr(interaction, 'guild_id', 0) or 0, user_id))
-        if not state:
-            return
-
-        async def on_confirm():
-            await self._finalize_character(ctx)
-
-        async def on_restart():
-            state.reset()
-            await ctx.interaction.followup.send(
-                "Character creation reset. Use `/character create` to start over.",
-                ephemeral=True,
-            )
-            _creation_states.pop((getattr(interaction, 'guild_id', 0) or 0, user_id), None)
-
-        view = ConfirmCharacterView(state, on_confirm, on_restart)
-
-        # Build preview
-        race_data = self.srd.get_race(state.race_index)
-        class_data = self.srd.get_class(state.class_index)
-        race_name = race_data["name"] if race_data else state.race_index.title()
-        class_name = class_data["name"] if class_data else state.class_index.title()
-
-        abilities = state.final_abilities
-        starting_hp = self.creator.calculate_starting_hp(state.class_index, abilities.con_mod)
-        ac = self.creator.calculate_armor_class(abilities, state.class_index)
-
-        embed = discord.Embed(
-            title=f"Confirm: {state.name}",
-            description=f"Level 1 {race_name} {class_name}",
-            color=discord.Color.green(),
-        )
-
-        embed.add_field(
-            name="Ability Scores",
-            value=(
-                f"STR: {abilities.strength} ({'+' if abilities.str_mod >= 0 else ''}{abilities.str_mod})\n"
-                f"DEX: {abilities.dexterity} ({'+' if abilities.dex_mod >= 0 else ''}{abilities.dex_mod})\n"
-                f"CON: {abilities.constitution} ({'+' if abilities.con_mod >= 0 else ''}{abilities.con_mod})\n"
-                f"INT: {abilities.intelligence} ({'+' if abilities.int_mod >= 0 else ''}{abilities.int_mod})\n"
-                f"WIS: {abilities.wisdom} ({'+' if abilities.wis_mod >= 0 else ''}{abilities.wis_mod})\n"
-                f"CHA: {abilities.charisma} ({'+' if abilities.cha_mod >= 0 else ''}{abilities.cha_mod})"
-            ),
-            inline=True,
-        )
-
-        embed.add_field(
-            name="Combat Stats",
-            value=(
-                f"HP: {starting_hp}\n"
-                f"AC: {ac}\n"
-                f"Speed: {self.creator.get_speed(state.race_index)} ft"
-            ),
-            inline=True,
-        )
-
-        if state.skill_choices:
-            skills_text = ", ".join(
-                s.value.replace("-", " ").title() for s in state.skill_choices
-            )
-            embed.add_field(
-                name="Skill Proficiencies",
-                value=skills_text,
-                inline=False,
-            )
-
-        await ctx.interaction.followup.send(embed=embed, view=view, ephemeral=True)
-
-    async def _finalize_character(self, ctx: discord.ApplicationContext):
-        """Create the character in the database."""
-        from ...game.character.starting_equipment import assign_starting_equipment
-
-        user_id = ctx.author.id
-        state = _creation_states.get((getattr(interaction, 'guild_id', 0) or 0, user_id))
-        if not state:
-            return
-
-        try:
-            # Build and save character
-            character = self.creator.build_character(state)
-            repo = await get_character_repo()
-            await repo.create(character)
-
-            # Assign starting equipment and gold
-            equipment_result = await assign_starting_equipment(
-                character.id,
-                character.class_index,
-            )
-
-            # Show final character sheet
-            embed = build_character_sheet_embed(character)
-            embed.title = f"Welcome, {character.name}!"
-            embed.description = f"Your character has been created successfully!\n\n{embed.description}"
-
-            # Add starting equipment info
-            if equipment_result["items"]:
-                item_lines = [f"• {item['name']}" + (f" x{item['quantity']}" if item['quantity'] > 1 else "")
-                              for item in equipment_result["items"][:8]]
-                if len(equipment_result["items"]) > 8:
-                    item_lines.append(f"_...and {len(equipment_result['items']) - 8} more items_")
-                embed.add_field(
-                    name=":school_satchel: Starting Equipment",
-                    value="\n".join(item_lines),
-                    inline=False,
-                )
-
-            if equipment_result["gold"]:
-                embed.add_field(
-                    name=":coin: Starting Gold",
-                    value=f"{equipment_result['gold']} gp",
-                    inline=True,
-                )
-
-            await ctx.interaction.followup.send(embed=embed)
-
-            logger.info(
-                "character_created",
-                character_id=character.id,
-                user_id=user_id,
-                name=character.name,
-                race=character.race_index,
-                class_=character.class_index,
-            )
-
-        except Exception as e:
-            logger.error("character_creation_failed", error=str(e))
-            await ctx.interaction.followup.send(
-                f"Failed to create character: {str(e)}",
-                ephemeral=True,
-            )
-
-        finally:
-            _creation_states.pop((getattr(interaction, 'guild_id', 0) or 0, user_id), None)
 
     @character.command(name="sheet", description="View your character sheet")
     async def view_sheet(

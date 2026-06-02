@@ -16,6 +16,7 @@ production:
   narrator:
     provider: anthropic
     model: claude-sonnet-4-6
+    tools: full                      # Sonnet handles full tool inventory reliably
   brain:
     provider: groq
     model: qwen/qwen3-32b
@@ -77,18 +78,33 @@ local_split:
     condensed_size: 10
     compaction_threshold: 6
 
-# Local dense: 27B does everything
-# context_size caps Ollama's KV cache to control VRAM
-# 27B Q4: 65k ctx = 20GB, 86k = 21GB, 131k = 24GB
+# Local dense: qwen3.5:27b narrator + gemma4:e2b brain
+#
+# Phase C benchmarks (2026-04-26):
+#   qwen3.5:27b: 100% routing / 100% raw / 4.0s avg per call
+#   gemma4:e4b:  100% routing / 96%  raw / 1.3s avg
+#   gemma4:e2b:  100% routing / 88%  raw / 0.9s avg  ← best brain ROI
+# Phase B veto rescues the raw-classifier misses on e2b, so routing
+# accuracy is still 100%. e2b is also best at action_type (10/10).
+# Brain runs every turn — saving ~3s per call vs qwen-as-brain
+# matters more than the raw-accuracy gap.
+#
+# VRAM budget (32GB GPU):
+#   qwen3.5:27b Q4 @ 16k: ~15.5GB
+#   gemma4:e2b @ 4k:      ~5-7GB
+#   Total:                ~22GB → ~10GB free for Kokoro/images/etc.
+# Realistic end-game narrator prompts run ~12-13k tokens; 16k narrator
+# context is tight but adequate. Bump to 24k if mid-game memory grows.
 local_dense:
   narrator:
     provider: ollama
     model: qwen3.5:27b
-    context_size: 65000
+    context_size: 16000
+    tools: full                      # 27B dense hit 88% on full tier in benchmark
   brain:
     provider: ollama
-    model: qwen3.5:27b
-    context_size: 32000
+    model: gemma4:e2b
+    context_size: 4000
     fallback_to_ollama: false
   memory:
     buffer_size: 24
@@ -101,6 +117,7 @@ groq_full:
   narrator:
     provider: groq
     model: qwen/qwen3-32b
+    tools: core_plus                 # 32B dense; core_plus keeps tool fidelity high
   brain:
     provider: groq
     model: qwen/qwen3-32b
@@ -116,6 +133,7 @@ groq_local:
   narrator:
     provider: groq
     model: qwen/qwen3-32b
+    tools: core_plus
   brain:
     provider: ollama
     model: qwen3.5:9b
@@ -141,12 +159,14 @@ moe_groq:
     condensed_size: 10
     compaction_threshold: 6
 
-# Qwen 3.6 Plus (free via OpenRouter) narrates, local 27B brain
-# OpenRouter models handle large context well
+# Qwen 3.6 local narrator (~23GB), local 27B brain
+# OpenRouter free tier deprecated 2026-04 — switched to local ollama
 qwen36_local:
   narrator:
-    provider: openrouter
-    model: qwen/qwen3.6-plus:free
+    provider: ollama
+    model: qwen3.6:latest
+    context_size: 32000
+    tools: core_plus                 # Qwen 3.6 has strong tool adherence
   brain:
     provider: ollama
     model: qwen3.5:27b
@@ -162,6 +182,7 @@ haiku_27b:
   narrator:
     provider: anthropic
     model: claude-haiku-4-5-20251001
+    tools: full                      # Haiku handles full tool inventory reliably
   brain:
     provider: ollama
     model: qwen3.5:27b
@@ -178,6 +199,7 @@ haiku_local:
   narrator:
     provider: anthropic
     model: claude-haiku-4-5-20251001
+    tools: full
   brain:
     provider: ollama
     model: qwen3.5:9b
@@ -194,6 +216,7 @@ gemini_pro:
   narrator:
     provider: gemini
     model: gemini-2.5-pro
+    tools: full
   brain:
     provider: ollama
     model: qwen3.5:27b
@@ -211,6 +234,7 @@ gemini_flash:
   narrator:
     provider: gemini
     model: gemini-2.5-flash
+    tools: core_plus                 # Flash is light; core_plus is the safer default
   brain:
     provider: ollama
     model: qwen3.5:9b
@@ -227,6 +251,7 @@ sonnet_local:
   narrator:
     provider: anthropic
     model: claude-sonnet-4-6
+    tools: full
   brain:
     provider: ollama
     model: qwen3.5:27b
@@ -244,6 +269,7 @@ haiku_gemma:
   narrator:
     provider: anthropic
     model: claude-haiku-4-5-20251001
+    tools: full
   brain:
     provider: ollama
     model: gemma4:26b
@@ -284,6 +310,7 @@ sonnet_gemma:
   narrator:
     provider: anthropic
     model: claude-sonnet-4-6
+    tools: full
   brain:
     provider: ollama
     model: gemma4:26b
@@ -301,6 +328,7 @@ groq_gemma:
   narrator:
     provider: groq
     model: qwen/qwen3-32b
+    tools: core_plus
   brain:
     provider: ollama
     model: gemma4:26b
@@ -330,47 +358,16 @@ gemma_full:
     condensed_size: 10
     compaction_threshold: 6
 
-# ===== Voice profiles (Riva ASR+TTS uses ~25GB VRAM) =====
+# ===== Immersion profiles (TTS + images) =====
 
-# Voice production: cloud narrator + cloud brain, zero local VRAM for LLM
-# Use alongside Riva containers on any GPU
-voice_production:
+# Full local immersion: Haiku narrator, E4B brain, Kokoro+Fish TTS, cloud images (FAL)
+# VRAM: ~10GB Gemma E4B + ~5GB Fish S1-mini + ~0.5GB Kokoro = ~15.5GB
+# Use FAL for images since E4B + Fish + Flux won't fit together
+haiku_immersive_local:
   narrator:
     provider: anthropic
-    model: claude-sonnet-4-6
-  brain:
-    provider: groq
-    model: qwen/qwen3-32b
-    fallback_to_ollama: false
-  memory:
-    buffer_size: 30
-    verbatim_size: 10
-    condensed_size: 12
-    compaction_threshold: 8
-
-# Voice hybrid: cloud narrator + local 9B brain (~7GB for brain)
-# Fits alongside Riva on 32GB GPU (~25GB Riva + ~7GB brain)
-voice_hybrid:
-  narrator:
-    provider: anthropic
-    model: claude-sonnet-4-6
-  brain:
-    provider: ollama
-    model: qwen3.5:9b
-    context_size: 8000
-    fallback_to_ollama: false
-  memory:
-    buffer_size: 24
-    verbatim_size: 8
-    condensed_size: 10
-    compaction_threshold: 6
-
-# Voice Gemma: cloud narrator + Gemma E4B brain (~5-8GB)
-# E4B is tiny but has 128K context. Test if triage JSON works at this size.
-voice_gemma:
-  narrator:
-    provider: anthropic
-    model: claude-sonnet-4-6
+    model: claude-haiku-4-5-20251001
+    tools: full
   brain:
     provider: ollama
     model: gemma4:e4b
@@ -381,3 +378,608 @@ voice_gemma:
     verbatim_size: 8
     condensed_size: 10
     compaction_threshold: 6
+  immersion:
+    tts_enabled: true
+    image_enabled: true
+    image_frequency: scene_change
+    narrator_tts_provider: kokoro
+    narrator_tts_voice: af_heart
+    character_tts_provider: fish
+    image_provider: fal
+
+# Max local immersion: Haiku narrator, E2B brain, Kokoro+Fish TTS, local Flux images
+# VRAM: ~2GB Gemma E2B + ~5GB Fish S1-mini + ~0.5GB Kokoro + ~10GB Flux (cpu_offload) = ~17.5GB
+# Trades brain accuracy (91% triage) for fully free local image generation
+haiku_immersive_max_local:
+  narrator:
+    provider: anthropic
+    model: claude-haiku-4-5-20251001
+    tools: full
+  brain:
+    provider: ollama
+    model: gemma4:e2b
+    context_size: 4000
+    fallback_to_ollama: false
+  memory:
+    buffer_size: 20
+    verbatim_size: 6
+    condensed_size: 8
+    compaction_threshold: 5
+  immersion:
+    tts_enabled: true
+    image_enabled: true
+    image_frequency: scene_change
+    narrator_tts_provider: kokoro
+    narrator_tts_voice: af_heart
+    character_tts_provider: fish
+    image_provider: local
+
+# Haiku TTS only: no images, Kokoro narrator, Fish characters
+haiku_tts_only:
+  narrator:
+    provider: anthropic
+    model: claude-haiku-4-5-20251001
+    tools: full
+  brain:
+    provider: ollama
+    model: gemma4:e4b
+    context_size: 8000
+    fallback_to_ollama: false
+  memory:
+    buffer_size: 24
+    verbatim_size: 8
+    condensed_size: 10
+    compaction_threshold: 6
+  immersion:
+    tts_enabled: true
+    image_enabled: false
+    narrator_tts_provider: kokoro
+    narrator_tts_voice: af_heart
+    character_tts_provider: fish
+
+# Quick TTS test: Groq everything, Kokoro TTS for both narrator + characters
+# Fully free: no API keys needed for TTS, just pip install kokoro
+groq_tts_test:
+  narrator:
+    provider: groq
+    model: qwen/qwen3-32b
+  brain:
+    provider: groq
+    model: qwen/qwen3-32b
+    fallback_to_ollama: false
+  memory:
+    buffer_size: 30
+    verbatim_size: 10
+    condensed_size: 12
+    compaction_threshold: 8
+  immersion:
+    tts_enabled: true
+    image_enabled: false
+    narrator_tts_provider: kokoro
+    narrator_tts_voice: af_heart
+    character_tts_provider: kokoro
+
+# Test immersion: Haiku narrator, Groq brain, Fish Speech S2-Pro TTS, FAL images
+# S2-Pro uses ~24GB so brain must be cloud. For testing voice cloning quality.
+haiku_immersive_test:
+  narrator:
+    provider: anthropic
+    model: claude-haiku-4-5-20251001
+    tools: full
+  brain:
+    provider: groq
+    model: qwen/qwen3-32b
+    fallback_to_ollama: false
+  memory:
+    buffer_size: 30
+    verbatim_size: 10
+    condensed_size: 12
+    compaction_threshold: 8
+  immersion:
+    tts_enabled: true
+    image_enabled: false
+    image_frequency: on_demand
+    narrator_tts_provider: fish
+    narrator_tts_voice: ""
+    character_tts_provider: fish
+
+# Daily-driver immersion profile: tiered DeepSeek narrator + Gemma 4 e4b brain
+# + Kokoro narrator TTS + ElevenLabs character voices + local Flux Schnell.
+# VRAM: ~20GB (e4b 10GB + Kokoro 2GB + Schnell 8GB), 12GB headroom on 32GB.
+# Phase C accuracy: 88% on e4b vs 96% on 26b — accepted tradeoff to free
+# VRAM for local images. See Docs/Roadmap/tiered_narrator.md.
+tiered_e4b_full_immersion:
+  narrator:                          # daily turns (Phase B veto path)
+    provider: deepseek
+    model: deepseek-v4-flash
+    tools: full                      # DeepSeek handles full tool inventory reliably
+  narrator_premium:                  # Phase C climactic + override
+    provider: deepseek
+    model: deepseek-v4-pro
+    tools: full
+  narrator_opening:                  # session opener
+    provider: deepseek
+    model: deepseek-v4-pro
+    tools: full
+  brain:
+    provider: ollama
+    model: gemma4:e4b
+    context_size: 8000
+    fallback_to_ollama: false
+  memory:
+    buffer_size: 24
+    verbatim_size: 8
+    condensed_size: 10
+    compaction_threshold: 6
+  immersion:
+    tts_enabled: true
+    image_enabled: true
+    image_frequency: scene_change
+    narrator_tts_provider: kokoro
+    narrator_tts_voice: af_heart
+    character_tts_provider: elevenlabs
+    image_provider: local
+    image_model: black-forest-labs/FLUX.1-schnell
+    image_steps: 4
+    image_guidance: 0.0
+
+# Tiered narrator: V4 Flash daily driver, V4 Pro for opening + premium turns
+# (scene changes, combat starts). Gets ~70% of "all-Pro" quality at a fraction
+# of the cost+latency. See Docs/Roadmap/tiered_narrator.md.
+deepseek_tiered:
+  narrator:
+    provider: deepseek
+    model: deepseek-v4-flash
+    tools: full
+  narrator_premium:
+    provider: deepseek
+    model: deepseek-v4-pro
+    tools: full
+  narrator_opening:
+    provider: deepseek
+    model: deepseek-v4-pro
+    tools: full
+  brain:
+    provider: ollama
+    model: gemma4:26b
+    context_size: 16000
+    fallback_to_ollama: false
+  memory:
+    buffer_size: 24
+    verbatim_size: 8
+    condensed_size: 10
+    compaction_threshold: 6
+
+# Tiered hybrid: local Qwen for routine turns (free, ~14s), DeepSeek V4 Pro
+# for premium moments. Best when you want the immersion stack on the GPU
+# and only pay cloud cost when narrative weight justifies it.
+tiered_hybrid_local_cloud:
+  narrator:
+    provider: ollama
+    model: qwen3.5:27b
+    context_size: 16000
+    tools: core_plus                 # 27B dense handles change_location + start_combat reliably
+  narrator_premium:
+    provider: deepseek
+    model: deepseek-v4-pro
+    tools: full
+  narrator_opening:
+    provider: deepseek
+    model: deepseek-v4-pro
+    tools: full
+  brain:
+    provider: ollama
+    model: gemma4:26b
+    context_size: 16000
+    fallback_to_ollama: false
+  memory:
+    buffer_size: 24
+    verbatim_size: 8
+    condensed_size: 10
+    compaction_threshold: 6
+
+# DeepSeek V4 Pro narrator + Gemma 4 26b brain (local). For benchmarking
+# DeepSeek's narration quality. Pro is the larger model (1.6T total / 49B
+# active). Direct API for prompt caching benefits.
+deepseek_v4_pro:
+  narrator:
+    provider: deepseek
+    model: deepseek-v4-pro
+    tools: full
+  brain:
+    provider: ollama
+    model: gemma4:26b
+    context_size: 16000
+    fallback_to_ollama: false
+  memory:
+    buffer_size: 24
+    verbatim_size: 8
+    condensed_size: 10
+    compaction_threshold: 6
+
+# Premium voice profile: DeepSeek V4 Pro narrator + Groq qwen3-32b brain
+# + ElevenLabs TTS for both narrator and characters, no image. Zero GPU
+# load (everything cloud) so the box stays cool and quiet during a real
+# play session. Designed to ride the V4 Pro sale week.
+#
+# Latency budget per turn (estimate): brain ~2s (3-4 short Groq calls @
+# ~500ms each), narrator ~6-10s (V4 Pro long generation), TTS streams
+# concurrently. Total ~10-13s/turn before audio.
+#
+# Brain swap: drop ``provider: groq, model: qwen/qwen3-32b`` for
+# ``provider: ollama, model: gemma4:26b, context_size: 16000`` to go
+# fully local on brain (no image means VRAM is free). Trade ~2s brain
+# latency for 0 cloud brain cost.
+deepseek_pro_voice:
+  narrator:
+    provider: deepseek
+    model: deepseek-v4-pro
+    tools: full
+  brain:
+    provider: groq
+    model: qwen/qwen3-32b
+    fallback_to_ollama: false
+  memory:
+    buffer_size: 30
+    verbatim_size: 10
+    condensed_size: 12
+    compaction_threshold: 8
+  immersion:
+    tts_enabled: true
+    image_enabled: false
+    narrator_tts_provider: elevenlabs
+    narrator_tts_voice: JBFqnCBsd6RMkjVDRZzb   # George — raspy sage / narrator
+    character_tts_provider: elevenlabs
+
+# DeepSeek V4 Flash narrator + Gemma 4 e2b brain (local).
+# Phase C benchmark (2026-04-26): e2b 100% routing, 0.9s/call, ~5-7GB
+# VRAM. Brain is the cheap component — paying for cloud narrator while
+# keeping a tiny local brain is the cost-optimal split.
+deepseek_v4_flash:
+  narrator:
+    provider: deepseek
+    model: deepseek-v4-flash
+    tools: full
+  brain:
+    provider: ollama
+    model: gemma4:e2b
+    context_size: 4000
+    fallback_to_ollama: false
+  memory:
+    buffer_size: 24
+    verbatim_size: 8
+    condensed_size: 10
+    compaction_threshold: 6
+
+# Cloud immersion: Haiku narrator, Groq brain, Inworld narrator TTS, ElevenLabs characters, FAL images
+# Zero GPU needed. Best quality voice + image combo.
+haiku_immersive_cloud:
+  narrator:
+    provider: anthropic
+    model: claude-haiku-4-5-20251001
+    tools: full
+  brain:
+    provider: groq
+    model: qwen/qwen3-32b
+    fallback_to_ollama: false
+  memory:
+    buffer_size: 30
+    verbatim_size: 10
+    condensed_size: 12
+    compaction_threshold: 8
+  immersion:
+    tts_enabled: true
+    image_enabled: true
+    image_frequency: scene_change
+    narrator_tts_provider: inworld
+    narrator_tts_voice: Sarah
+    character_tts_provider: elevenlabs
+    image_provider: fal
+
+# Budget local images: DreamShaper XL Lightning (fantasy-tuned, ~4-6GB VRAM)
+# Fast (2-4 steps), low VRAM, great for D&D scenes. Pair with cloud LLM.
+haiku_immersive_dreamshaper:
+  narrator:
+    provider: anthropic
+    model: claude-haiku-4-5-20251001
+    tools: full
+  brain:
+    provider: ollama
+    model: gemma4:e4b
+    context_size: 8000
+    fallback_to_ollama: false
+  memory:
+    buffer_size: 24
+    verbatim_size: 8
+    condensed_size: 10
+    compaction_threshold: 6
+  immersion:
+    tts_enabled: true
+    image_enabled: true
+    image_frequency: scene_change
+    narrator_tts_provider: kokoro
+    narrator_tts_voice: af_heart
+    character_tts_provider: fish
+    image_provider: local
+    image_model: lykon/dreamshaper-xl-lightning
+    image_steps: 4
+    image_guidance: 1.5
+
+# Mid-tier local images: Flux Schnell (~7-8GB VRAM, 4 steps)
+# Near Flux Dev quality at fraction of the compute. Best quality-per-VRAM.
+haiku_immersive_schnell:
+  narrator:
+    provider: anthropic
+    model: claude-haiku-4-5-20251001
+    tools: full
+  brain:
+    provider: ollama
+    model: gemma4:e2b
+    context_size: 4000
+    fallback_to_ollama: false
+  memory:
+    buffer_size: 20
+    verbatim_size: 6
+    condensed_size: 8
+    compaction_threshold: 5
+  immersion:
+    tts_enabled: true
+    image_enabled: true
+    image_frequency: scene_change
+    narrator_tts_provider: kokoro
+    narrator_tts_voice: af_heart
+    character_tts_provider: fish
+    image_provider: local
+    image_model: black-forest-labs/FLUX.1-schnell
+    image_steps: 4
+    image_guidance: 0.0
+
+# ===== Voice profiles =====
+# tts: provider (riva|openai|elevenlabs|browser), model, voice
+# asr: provider (riva|openai|browser), model
+# Profiles without tts/asr sections default to browser (JS handles it)
+
+# Voice cloud: zero GPU — OpenAI TTS + browser ASR + cloud LLM
+voice_cloud:
+  narrator:
+    provider: groq
+    model: qwen/qwen3-32b
+  brain:
+    provider: groq
+    model: qwen/qwen3-32b
+    fallback_to_ollama: false
+  tts:
+    provider: openai
+    model: tts-1
+    voice: onyx
+  asr:
+    provider: browser
+  memory:
+    buffer_size: 30
+    verbatim_size: 10
+    condensed_size: 12
+    compaction_threshold: 8
+
+# Voice Riva ASR only (~3GB VRAM) + OpenAI TTS + cloud LLM
+voice_riva_asr:
+  narrator:
+    provider: anthropic
+    model: claude-sonnet-4-6
+    tools: full
+  brain:
+    provider: groq
+    model: qwen/qwen3-32b
+    fallback_to_ollama: false
+  tts:
+    provider: openai
+    model: tts-1
+    voice: onyx
+  asr:
+    provider: riva
+  memory:
+    buffer_size: 30
+    verbatim_size: 10
+    condensed_size: 12
+    compaction_threshold: 8
+
+# Voice production: full Riva ASR+TTS (~7GB VRAM) + cloud LLM
+voice_production:
+  narrator:
+    provider: anthropic
+    model: claude-sonnet-4-6
+    tools: full
+  brain:
+    provider: groq
+    model: qwen/qwen3-32b
+    fallback_to_ollama: false
+  tts:
+    provider: riva
+    voice: Magpie-Multilingual.EN-US.Aria
+  asr:
+    provider: riva
+  memory:
+    buffer_size: 30
+    verbatim_size: 10
+    condensed_size: 12
+    compaction_threshold: 8
+
+# Voice hybrid: Riva voice + local 9B brain (~7GB Riva + ~7GB brain)
+voice_hybrid:
+  narrator:
+    provider: anthropic
+    model: claude-sonnet-4-6
+    tools: full
+  brain:
+    provider: ollama
+    model: qwen3.5:9b
+    context_size: 8000
+    fallback_to_ollama: false
+  tts:
+    provider: riva
+    voice: Magpie-Multilingual.EN-US.Aria
+  asr:
+    provider: riva
+  memory:
+    buffer_size: 24
+    verbatim_size: 8
+    condensed_size: 10
+    compaction_threshold: 6
+
+# Voice Gemma: Riva + Gemma E4B brain (~5-8GB)
+voice_gemma:
+  narrator:
+    provider: anthropic
+    model: claude-sonnet-4-6
+    tools: full
+  brain:
+    provider: ollama
+    model: gemma4:e4b
+    context_size: 8000
+    fallback_to_ollama: false
+  tts:
+    provider: riva
+    voice: Magpie-Multilingual.EN-US.Aria
+  asr:
+    provider: riva
+  memory:
+    buffer_size: 24
+    verbatim_size: 8
+    condensed_size: 10
+    compaction_threshold: 6
+
+# ===== MI300X profiles (~192GB HBM3) =====
+#
+# Container strategy:
+#   LLM: rocm/vllm (production) or ollama:rocm (simpler)
+#     - vllm/vllm-openai-rocm:gemma4 for Gemma 4 Day 0 support
+#     - rocm/vllm-dev:nightly for latest tool-calling fixes
+#     - ollama/ollama:rocm for single-model simplicity
+#   TTS: Kokoro on CPU (ROCm has MIOpen issues — set KOKORO_DEVICE=cpu)
+#     - Or use remsky/Kokoro-FastAPI CPU sidecar container (ONNX)
+#   Images: local Flux in separate ROCm PyTorch container, or FAL cloud
+#
+# Known ROCm gotchas (April 2026):
+#   - Gemma 4 vLLM: tool parser __init__ fix merged (vllm#38847),
+#     but reasoning/tool-call leakage still open (vllm#39043).
+#     Ollama tool calling works fine — uses its own parser.
+#   - Kokoro PyTorch on ROCm: MIOpen GEMM workspace failures (pytorch#150168).
+#     Model runs at CPU speed on GPU. Force CPU with KOKORO_DEVICE=cpu.
+#   - FP8 quantization: broken for Gemma 4 on vLLM (vllm#39049).
+#     Use Q4/Q8 quantization instead.
+#
+# GPU partitioning (optional):
+#   SPX (default): 1x 192GB — best for single large model
+#   DPX: 2x 96GB — split narrator + image gen
+#   sudo amd-smi set --gpu all --compute-partition DPX
+
+# MI300X: Best local narrator + strong brain, cloud-free except images
+# Qwen3 235B-A22B is the consensus #1 open-source creative writing model.
+# 22B active params (MoE) — inference speed similar to dense 27B.
+#
+# VRAM budget:
+#   Narrator (qwen3:235b-a22b Q4): ~132GB
+#   Brain (gemma4:26b): ~15GB
+#   Total: ~147GB, ~45GB headroom for KV cache
+#   Kokoro: on CPU (KOKORO_DEVICE=cpu), Fish Speech: separate server
+#
+# Alternative narrators (swap model line):
+#   qwen3.5:122b-a10b — ~68GB Q4, best tool calling (BFCL-V4 leader), 262K ctx
+#   mistral-large:123b — ~65GB Q4, dense 123B, clear prose (non-commercial license)
+#   qwen3.5:27b — ~16GB Q4, current default, leaves room for everything else
+mi300x:
+  narrator:
+    provider: ollama
+    model: qwen3:235b-a22b
+    context_size: 65000
+    tools: full                      # 235B handles full inventory easily
+  brain:
+    provider: ollama
+    model: gemma4:26b
+    context_size: 32000
+    fallback_to_ollama: false
+  memory:
+    buffer_size: 50
+    verbatim_size: 16
+    condensed_size: 20
+    compaction_threshold: 12
+  immersion:
+    tts_enabled: true
+    image_enabled: true
+    image_frequency: scene_change
+    narrator_tts_provider: kokoro
+    narrator_tts_voice: af_heart
+    character_tts_provider: fish
+    image_provider: fal
+    # Local images possible via DPX partition — switch to:
+    # image_provider: local
+    # image_model: black-forest-labs/FLUX.1-dev
+
+# MI300X light: smaller narrator leaves room for local images + Fish TTS on GPU
+# Qwen3.5 122B-A10B: newest architecture, 262K context, best tool calling.
+# Only 10B active params so prose is lighter than 235B, but still very capable.
+#
+# VRAM budget:
+#   Narrator (qwen3.5:122b-a10b Q8): ~130GB
+#   Brain (gemma4:26b): ~15GB
+#   Fish Speech S1-mini: ~5GB
+#   Total: ~150GB, ~42GB headroom
+mi300x_light:
+  narrator:
+    provider: ollama
+    model: qwen3.5:122b-a10b
+    context_size: 65000
+    tools: full                      # qwen3.5:122b-a10b leads BFCL-V4 tool calling
+  brain:
+    provider: ollama
+    model: gemma4:26b
+    context_size: 32000
+    fallback_to_ollama: false
+  memory:
+    buffer_size: 50
+    verbatim_size: 16
+    condensed_size: 20
+    compaction_threshold: 12
+  immersion:
+    tts_enabled: true
+    image_enabled: true
+    image_frequency: scene_change
+    narrator_tts_provider: kokoro
+    narrator_tts_voice: af_heart
+    character_tts_provider: fish
+    image_provider: fal
+
+# MI300X immersive: full local stack — narrator + brain + TTS + images all on GPU
+# Uses the lighter 122B narrator to leave room for Flux Dev images.
+# DPX partitioning recommended: 96GB for LLM, 96GB for images.
+#
+# VRAM budget (DPX mode, 2x 96GB partitions):
+#   Partition 1: Narrator (~68GB Q4) + Brain (~15GB) = ~83GB
+#   Partition 2: Flux Dev (~24GB) + Fish Speech (~5GB) = ~29GB
+#   Kokoro: CPU (KOKORO_DEVICE=cpu)
+mi300x_immersive:
+  narrator:
+    provider: ollama
+    model: qwen3.5:122b-a10b
+    context_size: 65000
+    tools: full
+  brain:
+    provider: ollama
+    model: gemma4:26b
+    context_size: 16000
+    fallback_to_ollama: false
+  memory:
+    buffer_size: 40
+    verbatim_size: 12
+    condensed_size: 16
+    compaction_threshold: 10
+  immersion:
+    tts_enabled: true
+    image_enabled: true
+    image_frequency: every
+    narrator_tts_provider: kokoro
+    narrator_tts_voice: af_heart
+    character_tts_provider: fish
+    image_provider: local
+    image_model: black-forest-labs/FLUX.1-dev
+    image_steps: 20
+    image_guidance: 3.5

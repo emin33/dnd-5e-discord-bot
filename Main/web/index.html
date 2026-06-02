@@ -3,293 +3,232 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>D&D 5e Voice Session</title>
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-
-    body {
-      font-family: 'Segoe UI', system-ui, sans-serif;
-      background: #1a1a2e;
-      color: #e0d8c8;
-      height: 100vh;
-      display: flex;
-      flex-direction: column;
-    }
-
-    /* Header */
-    header {
-      background: #16213e;
-      border-bottom: 2px solid #c8a96e;
-      padding: 12px 24px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-    }
-
-    header h1 {
-      font-size: 1.3rem;
-      color: #c8a96e;
-      font-variant: small-caps;
-      letter-spacing: 1px;
-    }
-
-    .status-badge {
-      padding: 4px 12px;
-      border-radius: 12px;
-      font-size: 0.8rem;
-      font-weight: 600;
-    }
-
-    .status-disconnected { background: #5c2020; color: #f0a0a0; }
-    .status-connecting { background: #5c4a20; color: #f0d0a0; }
-    .status-connected { background: #205c20; color: #a0f0a0; }
-
-    /* Main layout */
-    main {
-      flex: 1;
-      display: flex;
-      overflow: hidden;
-    }
-
-    /* Narration log */
-    .narration-panel {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      border-right: 1px solid #333;
-    }
-
-    .narration-log {
-      flex: 1;
-      overflow-y: auto;
-      padding: 16px;
-    }
-
-    .narration-entry {
-      margin-bottom: 12px;
-      padding: 10px 14px;
-      border-radius: 8px;
-      line-height: 1.5;
-    }
-
-    .narration-narrative {
-      background: #2a2a3e;
-      border-left: 3px solid #c8a96e;
-    }
-
-    .narration-mechanics {
-      background: #1e2a3e;
-      border-left: 3px solid #4a90d9;
-      font-family: 'Courier New', monospace;
-      font-size: 0.9rem;
-    }
-
-    .narration-player {
-      background: #2a3e2a;
-      border-left: 3px solid #6abf6a;
-    }
-
-    .narration-system {
-      background: #3e2a2a;
-      border-left: 3px solid #bf6a6a;
-      font-style: italic;
-    }
-
-    /* Combat panel */
-    .combat-panel {
-      width: 320px;
-      background: #16213e;
-      display: flex;
-      flex-direction: column;
-      display: none;
-    }
-
-    .combat-panel.active { display: flex; }
-
-    .combat-header {
-      padding: 12px;
-      background: #0f1a30;
-      border-bottom: 1px solid #333;
-      text-align: center;
-    }
-
-    .combat-header h2 {
-      font-size: 1rem;
-      color: #c8a96e;
-    }
-
-    .combatant-list {
-      flex: 1;
-      overflow-y: auto;
-      padding: 8px;
-    }
-
-    .combatant {
-      padding: 8px 10px;
-      margin-bottom: 4px;
-      border-radius: 6px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      font-size: 0.85rem;
-    }
-
-    .combatant.active {
-      background: #2a3e5e;
-      border: 1px solid #c8a96e;
-    }
-
-    .combatant.player { color: #a0d0a0; }
-    .combatant.npc { color: #d0a0a0; }
-
-    .hp-bar {
-      width: 60px;
-      height: 6px;
-      background: #333;
-      border-radius: 3px;
-      overflow: hidden;
-    }
-
-    .hp-fill {
-      height: 100%;
-      border-radius: 3px;
-      transition: width 0.3s;
-    }
-
-    .hp-healthy { background: #4caf50; }
-    .hp-wounded { background: #ff9800; }
-    .hp-critical { background: #f44336; }
-
-    /* Action buttons */
-    .action-buttons {
-      padding: 12px;
-      border-top: 1px solid #333;
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 6px;
-    }
-
-    .action-btn {
-      padding: 8px;
-      border: 1px solid #555;
-      border-radius: 6px;
-      background: #1a2a4e;
-      color: #e0d8c8;
-      cursor: pointer;
-      font-size: 0.8rem;
-      font-weight: 600;
-      transition: all 0.15s;
-    }
-
-    .action-btn:hover {
-      background: #2a3a5e;
-      border-color: #c8a96e;
-    }
-
-    .action-btn:active { transform: scale(0.97); }
-
-    .action-btn.attack { border-color: #d44; }
-    .action-btn.spell { border-color: #94f; }
-    .action-btn.defensive { border-color: #4a9; }
-    .action-btn.end-turn {
-      grid-column: 1 / -1;
-      background: #2a2a2a;
-      border-color: #666;
-    }
-
-    /* Voice controls */
-    footer {
-      background: #16213e;
-      border-top: 2px solid #333;
-      padding: 12px 24px;
-      display: flex;
-      align-items: center;
-      gap: 16px;
-    }
-
-    .mic-btn {
-      width: 48px;
-      height: 48px;
-      border-radius: 50%;
-      border: 2px solid #c8a96e;
-      background: #1a2a4e;
-      color: #c8a96e;
-      font-size: 1.2rem;
-      cursor: pointer;
-      transition: all 0.2s;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-
-    .mic-btn.listening {
-      background: #4a2020;
-      border-color: #f44;
-      animation: pulse 1.5s infinite;
-    }
-
-    @keyframes pulse {
-      0%, 100% { box-shadow: 0 0 0 0 rgba(244, 68, 68, 0.4); }
-      50% { box-shadow: 0 0 0 8px rgba(244, 68, 68, 0); }
-    }
-
-    .voice-status {
-      font-size: 0.85rem;
-      color: #888;
-    }
-
-    .voice-status.speaking { color: #c8a96e; }
-    .voice-status.listening { color: #f44; }
-  </style>
+  <title>D&D 5e - Voice Dungeon</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Crimson+Text:ital,wght@0,400;0,600;1,400&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
-  <header>
-    <h1>D&D 5e Voice Session</h1>
-    <span id="connection-status" class="status-badge status-disconnected">
-      Disconnected
-    </span>
-  </header>
 
-  <main>
-    <!-- Narration log -->
-    <div class="narration-panel">
-      <div id="narration-log" class="narration-log">
-        <div class="narration-entry narration-system">
-          Connecting to voice session...
+  <!-- ====================== SCREEN: CAMPAIGNS ====================== -->
+  <div id="screen-campaigns" class="screen active">
+    <div class="screen-scroll">
+      <div class="hero">
+        <div class="hero-sigil"></div>
+        <h1 class="hero-title">Voice Dungeon</h1>
+        <p class="hero-sub">Dungeons & Dragons 5th Edition</p>
+      </div>
+
+      <section class="section">
+        <div class="section-head">
+          <h2>Choose Your Campaign</h2>
+          <button class="btn btn-ghost" onclick="toggleCreateCampaign()">+ New Campaign</button>
+        </div>
+
+        <!-- Create campaign (collapsed) -->
+        <div id="create-campaign-panel" class="create-panel collapsed">
+          <input type="text" id="inp-campaign-name" class="inp" placeholder="Campaign name" />
+          <textarea id="inp-campaign-setting" class="inp" rows="2" placeholder="World setting (e.g. dark gothic horror, classic high fantasy...)"></textarea>
+          <div class="btn-row">
+            <button class="btn btn-accent" onclick="createCampaign()">Create</button>
+            <button class="btn btn-ghost" onclick="toggleCreateCampaign()">Cancel</button>
+          </div>
+        </div>
+
+        <div id="campaign-grid" class="card-grid">
+          <div class="placeholder">Loading...</div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <!-- ====================== SCREEN: LOBBY ========================== -->
+  <div id="screen-lobby" class="screen">
+    <div class="screen-scroll">
+      <button class="back-link" onclick="goToCampaigns()">&larr; Campaigns</button>
+
+      <div class="lobby-header">
+        <h1 id="lobby-campaign-name" class="lobby-title">Campaign</h1>
+        <p id="lobby-campaign-setting" class="lobby-setting"></p>
+      </div>
+
+      <section class="section">
+        <div class="section-head">
+          <h2>Your Character</h2>
+        </div>
+        <div id="character-grid" class="card-grid">
+          <div class="placeholder">Loading characters...</div>
+        </div>
+        <div class="btn-row" style="margin-top:12px">
+          <button class="btn btn-outline" onclick="startCharacterWizard()">Create New Character</button>
+          <button class="btn btn-outline" onclick="quickJoin()">Quick Join (Template)</button>
+        </div>
+      </section>
+
+      <div class="lobby-launch">
+        <input type="text" id="inp-player-name" class="inp inp-inline" placeholder="Display name (optional)" />
+        <button id="btn-launch" class="btn btn-launch" onclick="launchGame()" disabled>
+          Begin Adventure
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ====================== SCREEN: CHARACTER WIZARD =============== -->
+  <div id="screen-wizard" class="screen">
+    <div class="screen-scroll">
+      <button class="back-link" onclick="cancelWizard()">&larr; Back to lobby</button>
+
+      <div class="wizard">
+        <div class="wizard-progress">
+          <div class="wiz-step" data-step="1"><span>1</span> Name</div>
+          <div class="wiz-step" data-step="2"><span>2</span> Race</div>
+          <div class="wiz-step" data-step="3"><span>3</span> Class</div>
+          <div class="wiz-step" data-step="4"><span>4</span> Abilities</div>
+          <div class="wiz-step" data-step="5"><span>5</span> Confirm</div>
+        </div>
+
+        <!-- Step 1: Name -->
+        <div class="wiz-panel" data-panel="1">
+          <h2>Name Your Adventurer</h2>
+          <input type="text" id="wiz-name" class="inp inp-big" placeholder="e.g. Thorn Ironforge" autofocus />
+          <button class="btn btn-accent btn-wide" onclick="wizNext(2)">Continue</button>
+        </div>
+
+        <!-- Step 2: Race -->
+        <div class="wiz-panel" data-panel="2" style="display:none">
+          <h2>Choose a Race</h2>
+          <div id="wiz-race-grid" class="pick-grid"></div>
+        </div>
+
+        <!-- Step 3: Class -->
+        <div class="wiz-panel" data-panel="3" style="display:none">
+          <h2>Choose a Class</h2>
+          <div id="wiz-class-grid" class="pick-grid"></div>
+        </div>
+
+        <!-- Step 4: Abilities -->
+        <div class="wiz-panel" data-panel="4" style="display:none">
+          <h2>Ability Scores</h2>
+          <div class="ability-toggle">
+            <button class="btn btn-pill active" data-method="standard_array" onclick="setAbilityMethod('standard_array')">Standard Array</button>
+            <button class="btn btn-pill" data-method="roll" onclick="setAbilityMethod('roll')">Roll 4d6</button>
+          </div>
+          <p class="muted" id="ability-desc">15, 14, 13, 12, 10, 8 &mdash; auto-assigned optimally for your class.</p>
+          <button class="btn btn-accent btn-wide" onclick="wizNext(5)">Continue</button>
+        </div>
+
+        <!-- Step 5: Confirm -->
+        <div class="wiz-panel" data-panel="5" style="display:none">
+          <h2>Confirm Your Character</h2>
+          <div id="wiz-preview" class="char-preview"></div>
+          <div class="btn-row center">
+            <button class="btn btn-accent btn-wide" onclick="confirmCharacter()">Create Character</button>
+            <button class="btn btn-ghost" onclick="cancelWizard()">Cancel</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ====================== SCREEN: GAME =========================== -->
+  <div id="screen-game" class="screen">
+    <!-- Top bar -->
+    <div class="game-bar">
+      <div class="game-bar-left">
+        <span class="game-logo">Voice Dungeon</span>
+        <span class="game-tag" id="game-tag-campaign"></span>
+      </div>
+      <div class="game-bar-right">
+        <span class="badge" id="game-badge">Text Mode</span>
+        <button class="btn btn-ghost btn-sm" onclick="endGame()">End Session</button>
+      </div>
+    </div>
+
+    <!-- Main area -->
+    <div class="game-body">
+      <!-- Narration -->
+      <div class="narration-col">
+        <div id="narration-log" class="narration-log"></div>
+        <div class="input-bar">
+          <input type="text" id="inp-action" class="inp inp-action"
+                 placeholder="What do you do?"
+                 onkeydown="if(event.key==='Enter')sendAction()"
+                 autocomplete="off" />
+          <button id="btn-send" class="btn btn-send" onclick="sendAction()">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- Sidebar -->
+      <div class="game-sidebar">
+        <!-- Character sheet -->
+        <div class="sheet" id="char-sheet">
+          <div class="sheet-name" id="sh-name">--</div>
+          <div class="sheet-sub" id="sh-sub">--</div>
+
+          <div class="sheet-vitals">
+            <div class="vital">
+              <div class="vital-label">HP</div>
+              <div class="vital-val" id="sh-hp">--</div>
+              <div class="vital-bar"><div class="vital-fill" id="sh-hp-bar"></div></div>
+            </div>
+            <div class="vital">
+              <div class="vital-label">AC</div>
+              <div class="vital-val" id="sh-ac">--</div>
+            </div>
+            <div class="vital">
+              <div class="vital-label">LVL</div>
+              <div class="vital-val" id="sh-lvl">--</div>
+            </div>
+          </div>
+
+          <div class="sheet-abilities" id="sh-abilities">
+            <div class="ab"><div class="ab-label">STR</div><div class="ab-val" id="sh-str">--</div></div>
+            <div class="ab"><div class="ab-label">DEX</div><div class="ab-val" id="sh-dex">--</div></div>
+            <div class="ab"><div class="ab-label">CON</div><div class="ab-val" id="sh-con">--</div></div>
+            <div class="ab"><div class="ab-label">INT</div><div class="ab-val" id="sh-int">--</div></div>
+            <div class="ab"><div class="ab-label">WIS</div><div class="ab-val" id="sh-wis">--</div></div>
+            <div class="ab"><div class="ab-label">CHA</div><div class="ab-val" id="sh-cha">--</div></div>
+          </div>
+
+          <div class="sheet-slots" id="sh-slots"></div>
+        </div>
+
+        <!-- Combat tracker (hidden until combat) -->
+        <div class="combat-tracker" id="combat-tracker">
+          <div class="combat-head">Combat &mdash; Round <span id="combat-round">1</span></div>
+          <div id="combatant-list" class="combatant-list"></div>
+          <div id="combat-actions" class="combat-actions" style="display:none">
+            <button class="cbtn atk" onclick="combatAction('attack')">Attack</button>
+            <button class="cbtn spl" onclick="combatAction('cast_spell')">Spell</button>
+            <button class="cbtn def" onclick="combatAction('dodge')">Dodge</button>
+            <button class="cbtn def" onclick="combatAction('dash')">Dash</button>
+            <button class="cbtn def" onclick="combatAction('disengage')">Disengage</button>
+            <button class="cbtn def" onclick="combatAction('hide')">Hide</button>
+            <button class="cbtn end" onclick="combatAction('end_turn')">End Turn</button>
+          </div>
         </div>
       </div>
     </div>
 
-    <!-- Combat panel (hidden until combat starts) -->
-    <div id="combat-panel" class="combat-panel">
-      <div class="combat-header">
-        <h2>Combat - Round <span id="combat-round">1</span></h2>
-      </div>
-      <div id="combatant-list" class="combatant-list"></div>
-      <div id="action-buttons" class="action-buttons" style="display: none;">
-        <button class="action-btn attack" onclick="sendAction('attack')">Attack</button>
-        <button class="action-btn spell" onclick="sendAction('cast_spell')">Cast Spell</button>
-        <button class="action-btn defensive" onclick="sendAction('dodge')">Dodge</button>
-        <button class="action-btn defensive" onclick="sendAction('dash')">Dash</button>
-        <button class="action-btn defensive" onclick="sendAction('disengage')">Disengage</button>
-        <button class="action-btn defensive" onclick="sendAction('hide')">Hide</button>
-        <button class="action-btn end-turn" onclick="sendAction('end_turn')">End Turn</button>
+    <!-- Voice footer -->
+    <div class="voice-bar">
+      <button id="mic-btn" class="mic-btn" onclick="toggleMic()" title="Toggle microphone">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+      </button>
+      <div class="voice-info">
+        <div id="voice-status" class="voice-label">Text mode &mdash; type your actions below</div>
+        <div id="voice-transcript" class="voice-transcript"></div>
       </div>
     </div>
-  </main>
+  </div>
 
-  <footer>
-    <button id="mic-btn" class="mic-btn" onclick="toggleMic()">
-      <span id="mic-icon">&#127908;</span>
-    </button>
-    <div>
-      <div id="voice-status" class="voice-status">Click to connect</div>
-      <div id="transcription" style="font-size: 0.75rem; color: #666; margin-top: 2px;"></div>
-    </div>
-  </footer>
-
-  <!-- LiveKit Client SDK -->
-  <script src="https://cdn.jsdelivr.net/npm/livekit-client@2/dist/livekit-client.umd.js"></script>
-  <script src="app.js"></script>
+  <!-- LiveKit (optional, non-blocking) -->
+  <script src="https://cdn.jsdelivr.net/npm/livekit-client@2/dist/livekit-client.umd.js"
+          onerror="window._noLiveKit=true"></script>
+  <script src="/static/app.js"></script>
 </body>
 </html>

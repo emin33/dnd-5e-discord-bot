@@ -210,7 +210,14 @@ class InventoryRepository:
     async def transfer_item(
         self, item_id: str, from_character_id: str, to_character_id: str, quantity: int = 1
     ) -> Optional[InventoryItem]:
-        """Transfer an item between characters."""
+        """Transfer an item between characters atomically.
+
+        Previously called `update_item()` + `add_item()` which each commit
+        independently — a crash between them would silently destroy items
+        (source decremented, recipient never credited). Now wraps the whole
+        transfer in one savepoint, using raw db.execute calls so no helper
+        commits mid-flight.
+        """
         db = await self._get_db()
 
         item = await self.get_item_by_id(item_id)
@@ -225,34 +232,68 @@ class InventoryRepository:
             return None
 
         if item.equipped:
-            # Unequip first
+            # Unequip first (also dropped on the wire)
             item.equipped = False
             item.attuned = False
 
-        if quantity >= item.quantity:
-            # Transfer entire stack
-            item.character_id = to_character_id
-            await db.execute(
-                "UPDATE character_inventory SET character_id = ?, equipped = 0, attuned = 0 WHERE id = ?",
-                (to_character_id, item_id),
-            )
-        else:
-            # Split stack
-            item.quantity -= quantity
-            await self.update_item(item)
+        async with await db.transaction():
+            if quantity >= item.quantity:
+                # Transfer entire stack
+                item.character_id = to_character_id
+                await db.execute(
+                    "UPDATE character_inventory SET character_id = ?, equipped = 0, attuned = 0 WHERE id = ?",
+                    (to_character_id, item_id),
+                )
+            else:
+                # Split stack: decrement source, create-or-merge recipient stack.
+                item.quantity -= quantity
+                await db.execute(
+                    "UPDATE character_inventory SET quantity = ? WHERE id = ?",
+                    (item.quantity, item_id),
+                )
 
-            # Create new item for recipient
-            new_item = InventoryItem(
-                character_id=to_character_id,
-                item_index=item.item_index,
-                item_name=item.item_name,
-                quantity=quantity,
-                attunement_required=item.attunement_required,
-            )
-            await self.add_item(new_item)
-            item = new_item
+                # Try to merge with an existing unequipped stack at the recipient
+                # (mirrors add_item's stack-merge behavior, but inline so we don't
+                # trigger that helper's own commit).
+                existing_recipient = await db.fetch_one(
+                    "SELECT id, quantity FROM character_inventory "
+                    "WHERE character_id = ? AND item_index = ? AND equipped = 0",
+                    (to_character_id, item.item_index),
+                )
+                if existing_recipient:
+                    recipient_id, recipient_qty = existing_recipient
+                    await db.execute(
+                        "UPDATE character_inventory SET quantity = ? WHERE id = ?",
+                        (recipient_qty + quantity, recipient_id),
+                    )
+                    item = await self.get_item_by_id(recipient_id)
+                else:
+                    new_item = InventoryItem(
+                        character_id=to_character_id,
+                        item_index=item.item_index,
+                        item_name=item.item_name,
+                        quantity=quantity,
+                        attunement_required=item.attunement_required,
+                    )
+                    await db.execute(
+                        """
+                        INSERT INTO character_inventory
+                        (id, character_id, item_index, item_name, quantity, equipped, attunement_required, attuned, notes, added_at)
+                        VALUES (?, ?, ?, ?, ?, 0, ?, 0, ?, ?)
+                        """,
+                        (
+                            new_item.id,
+                            new_item.character_id,
+                            new_item.item_index,
+                            new_item.item_name,
+                            new_item.quantity,
+                            1 if new_item.attunement_required else 0,
+                            new_item.notes,
+                            new_item.added_at.isoformat(),
+                        ),
+                    )
+                    item = new_item
 
-        await db.commit()
         return item
 
     def _row_to_item(self, row) -> InventoryItem:

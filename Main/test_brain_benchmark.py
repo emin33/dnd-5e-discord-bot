@@ -20,6 +20,17 @@ import os
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+# The report uses Unicode box-drawing chars (─, ✓, etc.). Windows' default
+# console is cp1252 and raises UnicodeEncodeError on print_report. Force UTF-8
+# on stdout/stderr so the benchmark renders cross-platform.
+for _stream in (sys.stdout, sys.stderr):
+    _reconfigure = getattr(_stream, "reconfigure", None)
+    if _reconfigure:
+        try:
+            _reconfigure(encoding="utf-8")
+        except Exception:
+            pass
+
 from dataclasses import dataclass, field, asdict
 from typing import Optional
 
@@ -218,7 +229,7 @@ TEST_CASES = [
     {
         "action": "I try to pick the lock on the chest.",
         "expected_type": "skill_check",
-        "expected_skill": "sleight_of_hand",
+        "expected_skill": "sleight-of-hand",
         "expected_needs_roll": True,
         "category": "TRIAGE",
         "variant": "ranger_full",
@@ -282,7 +293,7 @@ TEST_CASES = [
     {
         "action": "I try to calm the spooked horse before it bolts.",
         "expected_type": "skill_check",
-        "expected_skill": "animal_handling",
+        "expected_skill": "animal-handling",
         "expected_needs_roll": True,
         "category": "TRIAGE",
         "variant": "ranger_full",
@@ -832,8 +843,8 @@ async def run_benchmark(model: str, category_filter: Optional[str] = None) -> Be
             case_result.roll_correct = triage.needs_roll == case.get("expected_needs_roll", False)
 
             if case.get("expected_skill") and triage.skill:
-                actual = triage.skill.lower().replace(" ", "_")
-                expected = case["expected_skill"].lower().replace(" ", "_")
+                actual = triage.skill.lower().replace(" ", "-").replace("_", "-")
+                expected = case["expected_skill"].lower().replace(" ", "-").replace("_", "-")
                 case_result.skill_correct = (
                     actual == expected or expected in actual or actual in expected
                 )
@@ -989,6 +1000,74 @@ def print_report(result: BenchmarkResult):
     print(f"\nResults saved to {outpath}")
 
 
+def print_comparison(results: list[BenchmarkResult]):
+    """Print side-by-side comparison of multiple model benchmark results."""
+    print(f"\n{'=' * 80}")
+    print(f"MODEL COMPARISON")
+    print(f"{'=' * 80}")
+
+    # Header
+    col_w = 20
+    header = f"{'Metric':<30s}"
+    for r in results:
+        header += f"{r.model:>{col_w}s}"
+    print(header)
+    print("-" * (30 + col_w * len(results)))
+
+    # Triage
+    row = f"{'Triage type accuracy':<30s}"
+    for r in results:
+        row += f"{r.type_accuracy:>{col_w}.0%}"
+    print(row)
+
+    row = f"{'Triage roll decision':<30s}"
+    for r in results:
+        row += f"{r.roll_accuracy:>{col_w}.0%}"
+    print(row)
+
+    row = f"{'Triage skill selection':<30s}"
+    for r in results:
+        row += f"{r.skill_accuracy:>{col_w}.0%}"
+    print(row)
+
+    row = f"{'JSON parse failures':<30s}"
+    for r in results:
+        row += f"{r.json_failures:>{col_w}d}"
+    print(row)
+
+    # PGI
+    row = f"{'PGI outcome accuracy':<30s}"
+    for r in results:
+        row += f"{r.pgi_accuracy:>{col_w}.0%}"
+    print(row)
+
+    row = f"{'PGI code accuracy':<30s}"
+    for r in results:
+        row += f"{r.pgi_code_accuracy:>{col_w}.0%}"
+    print(row)
+
+    # Timing
+    row = f"{'Total time':<30s}"
+    for r in results:
+        row += f"{r.total_time:>{col_w - 1}.1f}s"
+    print(row)
+
+    row = f"{'Avg time/case':<30s}"
+    for r in results:
+        avg = r.total_time / len(r.cases) if r.cases else 0
+        row += f"{avg:>{col_w - 1}.1f}s"
+    print(row)
+
+    # Winner
+    print(f"\n{'─' * 40}")
+    best_triage = max(results, key=lambda r: r.type_accuracy)
+    best_pgi = max(results, key=lambda r: r.pgi_accuracy)
+    fastest = min(results, key=lambda r: r.total_time)
+    print(f"  Best triage:  {best_triage.model} ({best_triage.type_accuracy:.0%})")
+    print(f"  Best PGI:     {best_pgi.model} ({best_pgi.pgi_accuracy:.0%})")
+    print(f"  Fastest:      {fastest.model} ({fastest.total_time:.1f}s)")
+
+
 async def main():
     parser = argparse.ArgumentParser(description="Brain + PGI Pipeline Benchmark")
     parser.add_argument(
@@ -996,10 +1075,16 @@ async def main():
         help="Model to benchmark (default: gemma4:26b)",
     )
     parser.add_argument(
+        "--compare", nargs="+", metavar="MODEL",
+        help="Compare multiple models (e.g. --compare gemma4:e4b qwen3.5:9b)",
+    )
+    parser.add_argument(
         "--category", default=None, choices=["TRIAGE", "PGI", "PIPELINE"],
         help="Run only a specific category of test cases",
     )
     args = parser.parse_args()
+
+    models = args.compare if args.compare else [args.model]
 
     cases = TEST_CASES
     if args.category:
@@ -1007,14 +1092,32 @@ async def main():
 
     variants_used = {c.get("variant", "ranger_full") for c in cases}
 
-    print(f"Brain + PGI Pipeline Benchmark")
-    print(f"Model: {args.model}")
-    print(f"Cases: {len(cases)} ({args.category or 'ALL'})")
-    print(f"Variants: {', '.join(sorted(variants_used))}")
-    print()
+    if len(models) > 1:
+        print(f"Brain + PGI Pipeline Benchmark — COMPARISON MODE")
+        print(f"Models: {', '.join(models)}")
+        print(f"Cases: {len(cases)} ({args.category or 'ALL'})")
+        print(f"Variants: {', '.join(sorted(variants_used))}")
+        print()
 
-    result = await run_benchmark(args.model, args.category)
-    print_report(result)
+        results = []
+        for model in models:
+            print(f"\n{'=' * 80}")
+            print(f"  Running: {model}")
+            print(f"{'=' * 80}\n")
+            result = await run_benchmark(model, args.category)
+            print_report(result)
+            results.append(result)
+
+        print_comparison(results)
+    else:
+        print(f"Brain + PGI Pipeline Benchmark")
+        print(f"Model: {models[0]}")
+        print(f"Cases: {len(cases)} ({args.category or 'ALL'})")
+        print(f"Variants: {', '.join(sorted(variants_used))}")
+        print()
+
+        result = await run_benchmark(models[0], args.category)
+        print_report(result)
 
 
 if __name__ == "__main__":

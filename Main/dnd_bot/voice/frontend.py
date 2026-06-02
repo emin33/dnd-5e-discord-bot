@@ -14,7 +14,7 @@ import structlog
 
 from ..game.frontend import GameFrontend, GameEvent, GameEventType
 from ..game.combat.actions import CombatAction, CombatActionType, TurnContext
-from .tts import RivaTTS, TTSSentenceQueue
+from .tts import TTSSentenceQueue
 
 if TYPE_CHECKING:
     from ..game.session import GameSession
@@ -140,7 +140,7 @@ class VoiceFrontend:
 
     def __init__(
         self,
-        tts: RivaTTS,
+        tts,  # Any TTS provider (duck-typed: synthesize, synthesize_async, sample_rate)
         speak_fn: Callable[[str], Awaitable[None]],
         orchestrator: Optional[DMOrchestrator] = None,
         session: Optional[GameSession] = None,

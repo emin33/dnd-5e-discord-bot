@@ -66,10 +66,20 @@ class GameEvent:
         )
 
     @staticmethod
-    def narrative_complete(narrative: str) -> GameEvent:
+    def narrative_complete(
+        narrative: str,
+        proposed_effects: list = None,
+        scene_entities: list = None,
+        player_characters: list = None,
+    ) -> GameEvent:
         return GameEvent(
             type=GameEventType.NARRATIVE_COMPLETE,
-            data={"narrative": narrative},
+            data={
+                "narrative": narrative,
+                "proposed_effects": proposed_effects or [],
+                "scene_entities": scene_entities or [],
+                "player_characters": player_characters or [],
+            },
         )
 
     @staticmethod

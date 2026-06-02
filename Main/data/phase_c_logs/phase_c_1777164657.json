@@ -1,0 +1,96 @@
+{
+  "profile": "deepseek_v4_pro",
+  "elapsed_total_s": 321.76500000001397,
+  "scenarios": [
+    {
+      "name": "trash_mob_attack_round_3",
+      "expected": "routine",
+      "predicted": null,
+      "predicted_action_type": null,
+      "elapsed_s": 120.01500000001397,
+      "error": "LLM call timed out after 120.0s. Ollama may be overloaded or the model may be stuck.",
+      "raw": null,
+      "notes": "Routine combat swing in an ongoing fight. No new beat."
+    },
+    {
+      "name": "small_talk_with_guard",
+      "expected": "routine",
+      "predicted": null,
+      "predicted_action_type": null,
+      "elapsed_s": 120.01599999997416,
+      "error": "LLM call timed out after 120.0s. Ollama may be overloaded or the model may be stuck.",
+      "raw": null,
+      "notes": "Casual social with a low-stakes, undescribed background NPC."
+    },
+    {
+      "name": "first_meeting_with_named_mentor",
+      "expected": "notable",
+      "predicted": "notable",
+      "predicted_action_type": "social",
+      "elapsed_s": 76.42200000002049,
+      "error": null,
+      "raw": {
+        "action_type": "social",
+        "reasoning": "The player is initiating a conversation with a new NPC to establish context. No skill check is required yet as they are simply introducing themselves and stating their purpose.",
+        "narrative_significance": "notable",
+        "narrative_direction": "This is the first meeting with Master Caldwell. Describe the atmosphere of the Silver Spire library\u2014the smell of old parchment and the quiet dignity of the space. Caldwell should react to the party's presence with scholarly curiosity or perhaps a hint of skepticism, given they were sent by the council. Use this moment to establish his personality as a renowned, perhaps slightly eccentric, scholar."
+      },
+      "notes": "First meeting with a major NPC. Their first impression matters."
+    },
+    {
+      "name": "strange_omen_appears",
+      "expected": "notable",
+      "predicted": "notable",
+      "predicted_action_type": "exploration",
+      "elapsed_s": 1.639999999984866,
+      "error": null,
+      "raw": {
+        "action_type": "exploration",
+        "reasoning": "The player is observing something that is already visible and being pointed out by NPCs. There is no hidden information or specialized knowledge required to see what the villagers are looking at, so no roll is needed.",
+        "narrative_significance": "notable",
+        "narrative_direction": "Describe the unnatural movement in the sky. Emphasize the unsettling, bruised purple color of the horizon and the sense of dread or confusion among the villagers as they watch the phenomenon."
+      },
+      "notes": "An atmospheric scene change with mystery. Notable, not climactic."
+    },
+    {
+      "name": "boss_fight_starts",
+      "expected": "climactic",
+      "predicted": "climactic",
+      "predicted_action_type": "attack",
+      "elapsed_s": 1.312999999994645,
+      "error": null,
+      "raw": {
+        "action_type": "attack",
+        "reasoning": "The player is initiating combat by targeting a specific hostile creature (Lady Veshra) with a weapon.",
+        "narrative_significance": "climactic",
+        "target_name": "Lady Veshra",
+        "is_creature_target": true
+      },
+      "notes": "The campaign's BBEG fight begins. Peak narrative moment."
+    },
+    {
+      "name": "final_choice",
+      "expected": "climactic",
+      "predicted": "climactic",
+      "predicted_action_type": "skill_check",
+      "elapsed_s": 2.359000000025844,
+      "error": null,
+      "raw": {
+        "action_type": "skill_check",
+        "reasoning": "The player is performing a high-stakes physical action against a significant object (the artifact) to resolve a major plot point. This requires a strength-based check to see if the artifact is destroyed or if it resists/shatters in a way that causes unintended consequences.",
+        "narrative_significance": "climactic",
+        "needs_roll": true,
+        "skill": "none",
+        "ability": "strength",
+        "dc": 15,
+        "on_success": [
+          "The artifact cracks and explodes into useless shards, its dark influence severed from the world forever."
+        ],
+        "on_failure": [
+          "The artifact resists the blow, vibrating with a sickening energy that sends a shockwave through your arms, leaving its dark power intact and potentially even more volatile."
+        ]
+      },
+      "notes": "Campaign-defining moral choice. Peak weight."
+    }
+  ]
+}

@@ -120,7 +120,7 @@ class TTSSentenceQueue:
     for TTS synthesis. Used by VoiceFrontend to stream narration.
     """
 
-    def __init__(self, tts: RivaTTS):
+    def __init__(self, tts):
         self.tts = tts
         self._buffer: str = ""
         self._sentence_queue: asyncio.Queue[str | None] = asyncio.Queue()

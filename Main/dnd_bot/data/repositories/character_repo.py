@@ -1,5 +1,6 @@
 """Character repository for database operations."""
 
+import time
 from typing import Optional
 import json
 
@@ -17,6 +18,22 @@ from ...models import (
     SpellSlots,
 )
 from ..database import Database, get_database
+
+
+# Audit #55: hot-path cache for get_by_user_and_campaign. Every slash command
+# refetches the full Character (with proficiencies, slots, conditions, spells)
+# even when just reading one field. A 5-second TTL plus clear-on-write cuts
+# hundreds of redundant queries per session without staleness risk:
+# - reads return a deep copy so caller mutations can't poison cached state
+# - every write path calls `_invalidate_character_cache()` so the next read
+#   refetches fresh
+_get_cache: dict[tuple[int, str], tuple[Character, float]] = {}
+_CACHE_TTL_SECONDS = 5.0
+
+
+def _invalidate_character_cache() -> None:
+    """Clear the entire character read-cache. Called by every mutating repo method."""
+    _get_cache.clear()
 
 
 class CharacterRepository:
@@ -49,8 +66,9 @@ class CharacterRepository:
                     hit_dice_type, hit_dice_total, hit_dice_remaining,
                     death_save_successes, death_save_failures,
                     spellcasting_ability, concentration_spell_id,
-                    is_active
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    is_active,
+                    description, portrait_url, voice_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     character.id,
@@ -83,6 +101,9 @@ class CharacterRepository:
                     character.spellcasting_ability.value if character.spellcasting_ability else None,
                     character.concentration_spell_id,
                     1 if character.is_active else 0,
+                    character.description,
+                    character.portrait_url,
+                    character.voice_id,
                 ),
             )
 
@@ -126,6 +147,25 @@ class CharacterRepository:
                         (character.id, level, maximum, current),
                     )
 
+            # Insert known spells. `prepared_spells` is a subset of `known_spells`
+            # (you can't prepare a spell you don't know). is_prepared is set
+            # accordingly so loads can split the two lists from one table.
+            import uuid as _uuid
+            prepared_set = set(character.prepared_spells)
+            for spell_index in character.known_spells:
+                await db.execute(
+                    """
+                    INSERT INTO character_spell (id, character_id, spell_index, is_prepared)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (
+                        str(_uuid.uuid4()),
+                        character.id,
+                        spell_index,
+                        1 if spell_index in prepared_set else 0,
+                    ),
+                )
+
             # Create currency record
             await db.execute(
                 """
@@ -135,6 +175,9 @@ class CharacterRepository:
                 (character.id,),
             )
 
+        # create() uses `async with await db.transaction()` (no explicit
+        # commit() call) so the cache invalidation needs to be added here.
+        _invalidate_character_cache()
         return character
 
     async def get_by_id(self, character_id: str) -> Optional[Character]:
@@ -154,7 +197,20 @@ class CharacterRepository:
     async def get_by_user_and_campaign(
         self, user_id: int, campaign_id: str
     ) -> Optional[Character]:
-        """Get a character by user and campaign."""
+        """Get a character by user and campaign.
+
+        Uses a short TTL cache (audit #55). Returns a deep copy on cache hit
+        so caller mutations don't affect the cached snapshot.
+        """
+        key = (user_id, campaign_id)
+        now = time.monotonic()
+        entry = _get_cache.get(key)
+        if entry is not None:
+            cached, expiry = entry
+            if expiry > now:
+                return cached.model_copy(deep=True)
+            _get_cache.pop(key, None)
+
         db = await self._get_db()
 
         row = await db.fetch_one(
@@ -165,7 +221,10 @@ class CharacterRepository:
         if not row:
             return None
 
-        return await self._row_to_character(db, row)
+        character = await self._row_to_character(db, row)
+        _get_cache[key] = (character, now + _CACHE_TTL_SECONDS)
+        # Return a deep copy so the cached snapshot stays pristine.
+        return character.model_copy(deep=True)
 
     async def get_all_by_campaign(self, campaign_id: str) -> list[Character]:
         """Get all characters in a campaign."""
@@ -214,6 +273,23 @@ class CharacterRepository:
             (current, temporary, character_id),
         )
         await db.commit()
+        _invalidate_character_cache()
+        return True
+
+    async def update_concentration(
+        self, character_id: str, spell_id: Optional[str]
+    ) -> bool:
+        """Set (or clear) the character's concentration spell. Targeted write so
+        combat slot/concentration persistence doesn't clobber other fields
+        (audit #3)."""
+        db = await self._get_db()
+
+        await db.execute(
+            "UPDATE character SET concentration_spell_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (spell_id, character_id),
+        )
+        await db.commit()
+        _invalidate_character_cache()
         return True
 
     async def update_death_saves(
@@ -231,6 +307,7 @@ class CharacterRepository:
             (successes, failures, character_id),
         )
         await db.commit()
+        _invalidate_character_cache()
         return True
 
     async def update_spell_slot(
@@ -253,6 +330,7 @@ class CharacterRepository:
             (current, character_id, slot_level),
         )
         await db.commit()
+        _invalidate_character_cache()
         return True
 
     async def add_condition(
@@ -278,6 +356,7 @@ class CharacterRepository:
             ),
         )
         await db.commit()
+        _invalidate_character_cache()
         return True
 
     async def remove_condition(self, character_id: str, condition_name: str) -> bool:
@@ -289,6 +368,7 @@ class CharacterRepository:
             (character_id, condition_name),
         )
         await db.commit()
+        _invalidate_character_cache()
         return True
 
     async def update(self, character: Character) -> bool:
@@ -360,30 +440,81 @@ class CharacterRepository:
                 ),
             )
 
-        # Sync prepared spells
-        await db.execute(
-            "UPDATE character_spell SET is_prepared = 0 WHERE character_id = ?",
+        # Sync spells. Truth is `character.known_spells` (everything that should
+        # exist in character_spell) and `character.prepared_spells` (subset with
+        # is_prepared = 1). Reconcile both: insert missing, delete removed, flip
+        # is_prepared for the rest.
+        import uuid
+
+        existing_rows = await db.fetch_all(
+            "SELECT spell_index FROM character_spell WHERE character_id = ?",
             (character.id,),
         )
-        for spell_index in character.prepared_spells:
-            # Insert or update
-            existing = await db.fetch_one(
-                "SELECT 1 FROM character_spell WHERE character_id = ? AND spell_index = ?",
+        existing_known = {r[0] for r in existing_rows}
+        wanted_known = set(character.known_spells)
+        prepared_set = set(character.prepared_spells)
+
+        # Remove spells the character no longer knows
+        for spell_index in existing_known - wanted_known:
+            await db.execute(
+                "DELETE FROM character_spell WHERE character_id = ? AND spell_index = ?",
                 (character.id, spell_index),
             )
-            if existing:
-                await db.execute(
-                    "UPDATE character_spell SET is_prepared = 1 WHERE character_id = ? AND spell_index = ?",
-                    (character.id, spell_index),
-                )
-            else:
-                import uuid
-                await db.execute(
-                    "INSERT INTO character_spell (id, character_id, spell_index, is_prepared) VALUES (?, ?, ?, 1)",
-                    (str(uuid.uuid4()), character.id, spell_index),
-                )
+
+        # Insert newly-known spells
+        for spell_index in wanted_known - existing_known:
+            await db.execute(
+                "INSERT INTO character_spell (id, character_id, spell_index, is_prepared) VALUES (?, ?, ?, ?)",
+                (
+                    str(uuid.uuid4()),
+                    character.id,
+                    spell_index,
+                    1 if spell_index in prepared_set else 0,
+                ),
+            )
+
+        # Update is_prepared for all wanted spells in one pass (handles flips both ways)
+        for spell_index in wanted_known:
+            await db.execute(
+                "UPDATE character_spell SET is_prepared = ? WHERE character_id = ? AND spell_index = ?",
+                (1 if spell_index in prepared_set else 0, character.id, spell_index),
+            )
 
         await db.commit()
+        _invalidate_character_cache()
+        return True
+
+    async def update_description(self, character_id: str, description: str) -> bool:
+        """Update character appearance description."""
+        db = await self._get_db()
+        await db.execute(
+            "UPDATE character SET description = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (description, character_id),
+        )
+        await db.commit()
+        _invalidate_character_cache()
+        return True
+
+    async def update_portrait(self, character_id: str, portrait_url: str) -> bool:
+        """Update character portrait URL."""
+        db = await self._get_db()
+        await db.execute(
+            "UPDATE character SET portrait_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (portrait_url, character_id),
+        )
+        await db.commit()
+        _invalidate_character_cache()
+        return True
+
+    async def update_voice_id(self, character_id: str, voice_id: str) -> bool:
+        """Update character TTS voice ID."""
+        db = await self._get_db()
+        await db.execute(
+            "UPDATE character SET voice_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (voice_id, character_id),
+        )
+        await db.commit()
+        _invalidate_character_cache()
         return True
 
     async def delete(self, character_id: str) -> bool:
@@ -395,6 +526,7 @@ class CharacterRepository:
             (character_id,),
         )
         await db.commit()
+        _invalidate_character_cache()
         return True
 
     async def _row_to_character(self, db: Database, row) -> Character:
@@ -520,6 +652,11 @@ class CharacterRepository:
             skill_expertise=skill_expertise,
             conditions=conditions,
             is_active=bool(row[29]),
+            # Immersion fields (added by migration 005; columns 30/31 are
+            # created_at/updated_at from migration 001).
+            description=row[32] or "",
+            portrait_url=row[33],
+            voice_id=row[34],
         )
 
 

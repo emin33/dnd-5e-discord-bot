@@ -87,7 +87,13 @@ class CombatManager:
     # ==================== Combatant Management ====================
 
     def add_player(self, character: Character) -> Combatant:
-        """Add a player character to combat."""
+        """Add a player character to combat.
+
+        Translates pre-existing `character.conditions` into combatant
+        `effects` so a poisoned/frightened/exhausted PC entering combat
+        doesn't reset to clean. `sync_to_character` rebuilds the conditions
+        list on the way out (audit #9).
+        """
         # Build ability scores dict from Character.abilities
         ability_scores = {
             "str": character.abilities.strength,
@@ -103,6 +109,32 @@ class CombatManager:
         for ability in AbilityScore:
             save_bonuses[ability.value] = character.get_save_modifier(ability)
 
+        # Carry pre-combat conditions into combat as CombatEffects so they
+        # affect dice rolls, saves, etc. during the encounter.
+        current_round = max(1, self.combat.current_round)
+        carried_effects: list[CombatEffect] = []
+        for cond in character.conditions:
+            rounds_remaining: Optional[int] = None
+            if cond.expires_round is not None:
+                # expires_round is relative to the combat that set it. If we're
+                # entering a fresh combat, treat past values as expired.
+                delta = cond.expires_round - current_round
+                if delta <= 0:
+                    continue
+                rounds_remaining = delta
+            # Exhaustion uses `stacks`; CombatEffect has no stack field, so emit
+            # one effect per stack and re-aggregate in sync_to_character.
+            for _ in range(max(1, cond.stacks)):
+                carried_effects.append(CombatEffect(
+                    name=cond.condition.value,
+                    effect_type="condition",
+                    condition=cond.condition,
+                    rounds_remaining=rounds_remaining,
+                    duration_rounds=rounds_remaining,
+                    created_round=current_round,
+                    source_spell_index=cond.source or None,
+                ))
+
         combatant = Combatant(
             id=str(uuid.uuid4()),
             combat_id=self.combat.id,
@@ -112,18 +144,28 @@ class CombatManager:
             initiative_bonus=character.initiative_bonus,
             hp_max=character.hp.maximum,
             hp_current=character.hp.current,
+            hp_temp=character.hp.temporary,
             armor_class=character.armor_class,
             speed=character.speed,
             ability_scores=ability_scores,
             save_bonuses=save_bonuses,
             proficiency_bonus=character.proficiency_bonus,
+            effects=carried_effects,
         )
+        # Carry death-save progress into combat (e.g. a PC who entered the
+        # encounter already at 0 HP and dying). Set the fields rather than
+        # passing the object — Character.death_saves and Combatant.death_saves
+        # are distinct DeathSaves classes (see audit #59). audit #9 (entry side).
+        combatant.death_saves.successes = character.death_saves.successes
+        combatant.death_saves.failures = character.death_saves.failures
         self.combat.add_combatant(combatant)
 
         logger.info(
             "player_added_to_combat",
             combat_id=self.combat.id,
             character=character.name,
+            carried_conditions=len(carried_effects),
+            carried_temp_hp=combatant.hp_temp,
         )
 
         return combatant
@@ -696,17 +738,51 @@ class CombatManager:
 
         Call this to persist combat changes (HP, conditions, death saves)
         back to the character for database storage.
+
+        Conditions are rebuilt from `combatant.effects` (where
+        `effect.condition is not None`). Multiple effects with the same
+        condition collapse into one CharacterCondition with `stacks` set —
+        this preserves exhaustion stacking that add_player exploded into
+        per-stack effects. Audit #9.
         """
+        from ...models import CharacterCondition
+
         character.hp.current = combatant.hp_current
         character.hp.temporary = combatant.hp_temp
         character.death_saves.successes = combatant.death_saves.successes
         character.death_saves.failures = combatant.death_saves.failures
+
+        # Aggregate effects-with-condition by condition type so duplicates
+        # (e.g., exhaustion stacks) become a single CharacterCondition.
+        by_condition: dict = {}
+        current_round = self.combat.current_round
+        for effect in combatant.effects:
+            if effect.condition is None:
+                continue
+            existing = by_condition.get(effect.condition)
+            if existing is None:
+                expires_round = None
+                if effect.rounds_remaining is not None and effect.rounds_remaining > 0:
+                    expires_round = current_round + effect.rounds_remaining
+                by_condition[effect.condition] = CharacterCondition(
+                    condition=effect.condition,
+                    source=effect.source_spell_index or "combat",
+                    expires_round=expires_round,
+                    combat_id=self.combat.id,
+                    stacks=1,
+                )
+            else:
+                # Same condition, additional stack (mainly for exhaustion).
+                existing.stacks = min(6, existing.stacks + 1)
+
+        character.conditions = list(by_condition.values())
 
         logger.debug(
             "combatant_synced_to_character",
             combatant=combatant.name,
             character=character.name,
             hp=f"{character.hp.current}/{character.hp.maximum}",
+            conditions=len(character.conditions),
         )
 
     def sync_from_character(self, character: Character) -> bool:

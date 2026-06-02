@@ -156,6 +156,7 @@ class DiscordTextFrontend:
     - Narrative streaming via progressive message edits
     - Final narrative as gold embeds
     - Combat turns via button views (CombatActionView)
+    - Immersion: TTS audio + scene images (background tasks)
     """
 
     def __init__(self, channel: discord.TextChannel):
@@ -166,6 +167,7 @@ class DiscordTextFrontend:
         self._stream_buf: list[str] = []
         self._last_edit: float = 0.0
         self._mechanics_sent: bool = False
+
 
     @property
     def frontend_type(self) -> str:
@@ -280,6 +282,146 @@ class DiscordTextFrontend:
         except Exception:
             pass  # Best effort streaming
 
+    async def _get_immersion_settings(self):
+        """Load immersion settings. Profile is the source of truth.
+
+        Guild DB settings only store overrides from slash commands.
+        If the profile has an immersion section, it takes precedence.
+        """
+        try:
+            from ...config import get_profile
+            from ...models.immersion import GuildImmersionSettings
+
+            profile = get_profile()
+            immersion_cfg = profile.immersion
+
+            guild_id = 0
+            guild = getattr(self._channel, 'guild', None)
+            if guild:
+                guild_id = guild.id
+
+            # Profile immersion section is the source of truth
+            settings = GuildImmersionSettings(
+                guild_id=guild_id,
+                tts_enabled=immersion_cfg.tts_enabled,
+                image_enabled=immersion_cfg.image_enabled,
+                image_frequency=immersion_cfg.image_frequency,
+                narrator_tts_provider=immersion_cfg.narrator_tts_provider,
+                narrator_tts_voice=immersion_cfg.narrator_tts_voice,
+                character_tts_provider=immersion_cfg.character_tts_provider,
+            )
+
+            return settings
+        except Exception as e:
+            logger.warning("immersion_settings_load_failed", error=str(e))
+            return None
+
+    async def _generate_and_send_audio(self, event: GameEvent) -> None:
+        """Background task: TTS pipeline -> MP3 upload."""
+        try:
+            from ...immersion.prose_parser import parse_narrative_async
+            from ...immersion.voice_resolver import resolve_voices
+            from ...immersion.tts_assembler import assemble_audio
+
+            narrative = event.data["narrative"]
+            proposed_effects = event.data.get("proposed_effects", [])
+            player_characters = event.data.get("player_characters", [])
+
+            # Get scene registry from the channel's session
+            scene_registry = None
+            try:
+                from ...game.session import get_session_manager
+                from ...game.scene.registry import get_scene_registry
+                sm = get_session_manager()
+                session = sm.get_session(self._channel.id)
+                if session:
+                    scene_registry = get_scene_registry(
+                        session.campaign_id, session.session_key
+                    )
+            except Exception:
+                pass
+
+            settings = await self._get_immersion_settings()
+
+            # Parse -> Resolve -> Assemble
+            segments = await parse_narrative_async(
+                narrative, proposed_effects, scene_registry, player_characters
+            )
+            if not segments:
+                return
+
+            for s in segments:
+                logger.debug(
+                    "tts_segment_parsed",
+                    type=s.segment_type.value,
+                    speaker=s.speaker_name,
+                    text_preview=s.text[:50],
+                )
+
+            segments = await resolve_voices(
+                segments, scene_registry, settings, player_characters
+            )
+
+            for s in segments:
+                logger.info(
+                    "tts_segment_resolved",
+                    type=s.segment_type.value,
+                    speaker=s.speaker_name,
+                    provider=s.voice_provider,
+                    voice_id=s.voice_id,
+                )
+
+            mp3_buf = await assemble_audio(segments, settings)
+            if mp3_buf:
+                ext = "mp3" if mp3_buf.getvalue()[:3] != b'RIF' else "wav"
+                file = discord.File(mp3_buf, filename=f"narration.{ext}")
+                await self._channel.send(file=file)
+
+        except Exception as e:
+            logger.warning("immersion_tts_failed", error=str(e))
+
+    async def _generate_and_send_image(self, event: GameEvent) -> None:
+        """Background task: image generation pipeline -> embed upload."""
+        try:
+            from ...immersion.image_coordinator import maybe_generate_image
+
+            settings = await self._get_immersion_settings()
+            narrative = event.data["narrative"]
+            proposed_effects = event.data.get("proposed_effects", [])
+            player_characters = event.data.get("player_characters", [])
+
+            # Get scene registry
+            scene_registry = None
+            try:
+                from ...game.session import get_session_manager
+                from ...game.scene.registry import get_scene_registry
+                sm = get_session_manager()
+                session = sm.get_session(self._channel.id)
+                if session:
+                    scene_registry = get_scene_registry(
+                        session.campaign_id, session.session_key
+                    )
+            except Exception:
+                pass
+
+            image_bytes = await maybe_generate_image(
+                narrative=narrative,
+                proposed_effects=proposed_effects,
+                settings=settings,
+                scene_registry=scene_registry,
+                characters=player_characters,
+            )
+
+            if image_bytes:
+                import io
+                file = discord.File(io.BytesIO(image_bytes), filename="scene.png")
+                embed = discord.Embed(color=discord.Color.dark_gold())
+                embed.set_image(url="attachment://scene.png")
+                await self._channel.send(embed=embed, file=file)
+
+        except Exception as e:
+            logger.warning("immersion_image_failed", error=str(e))
+
     async def _handle_narrative_complete(self, event: GameEvent) -> None:
         narrative = event.data["narrative"]
 
@@ -311,6 +453,24 @@ class DiscordTextFrontend:
                     color=discord.Color.dark_gold(),
                 )
             )
+
+        # Fire immersion pipelines in background (non-blocking)
+        import asyncio
+        settings = await self._get_immersion_settings()
+        if settings:
+            logger.info(
+                "immersion_check",
+                tts=settings.tts_enabled,
+                images=settings.image_enabled,
+                narrator=settings.narrator_tts_provider,
+                characters=settings.character_tts_provider,
+            )
+            if settings.tts_enabled:
+                logger.info("immersion_tts_starting")
+                asyncio.create_task(self._generate_and_send_audio(event))
+            if settings.image_enabled:
+                logger.info("immersion_image_starting")
+                asyncio.create_task(self._generate_and_send_image(event))
 
     async def _handle_combat_start(self, event: GameEvent) -> None:
         combat = event.data["combat"]

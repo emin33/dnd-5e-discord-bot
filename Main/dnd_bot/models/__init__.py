@@ -49,6 +49,13 @@ from .inventory import (
     ItemInfo,
     ItemRarity,
 )
+from .immersion import (
+    GuildImmersionSettings,
+    ImageFrequency,
+    NarrativeSegment,
+    SegmentType,
+    VoiceCatalogEntry,
+)
 from .npc import (
     Disposition,
     EntityType,
@@ -109,6 +116,12 @@ __all__ = [
     "ItemCategory",
     "ItemInfo",
     "ItemRarity",
+    # Immersion
+    "GuildImmersionSettings",
+    "ImageFrequency",
+    "NarrativeSegment",
+    "SegmentType",
+    "VoiceCatalogEntry",
     # NPC
     "Disposition",
     "EntityType",

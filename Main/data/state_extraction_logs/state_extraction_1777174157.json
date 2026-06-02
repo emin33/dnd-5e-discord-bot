@@ -1,0 +1,746 @@
+{
+  "profile": "deepseek_v4_pro",
+  "elapsed_total_s": 6.5,
+  "scenarios": [
+    {
+      "name": "atmosphere_only",
+      "delta": {
+        "time_change": null,
+        "location_change": null,
+        "location_description": null,
+        "new_connections": [],
+        "npc_updates": [],
+        "new_npcs": [],
+        "removed_npcs": [],
+        "new_quests": [],
+        "quest_updates": [],
+        "new_events": [],
+        "new_facts": [],
+        "flag_changes": {},
+        "phase_change": null
+      },
+      "elapsed_s": 0.48399999999946886,
+      "error": null,
+      "checks": [
+        {
+          "name": "empty_delta",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.new_connections",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.new_facts",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.new_events",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.new_npcs",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.new_quests",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.npc_updates",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.removed_npcs",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.quest_updates",
+          "passed": true,
+          "detail": ""
+        }
+      ]
+    },
+    {
+      "name": "location_format_short_name_available",
+      "delta": {
+        "time_change": null,
+        "location_change": "the Rusty Compass",
+        "location_description": "A warm, smoky tavern with a half-full common room.",
+        "new_connections": [
+          "the common room"
+        ],
+        "npc_updates": [],
+        "new_npcs": [],
+        "removed_npcs": [],
+        "new_quests": [],
+        "quest_updates": [],
+        "new_events": [],
+        "new_facts": [],
+        "flag_changes": {},
+        "phase_change": null
+      },
+      "elapsed_s": 0.6720000000004802,
+      "error": null,
+      "checks": [
+        {
+          "name": "location_change",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "location_change.format",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "new_connections[0].format",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.new_connections",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.new_facts",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.new_events",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.new_npcs",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.new_quests",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.npc_updates",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.removed_npcs",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.quest_updates",
+          "passed": true,
+          "detail": ""
+        }
+      ]
+    },
+    {
+      "name": "location_format_invent_short_name",
+      "delta": {
+        "time_change": null,
+        "location_change": "shrine clearing",
+        "location_description": "A wide clearing dominated by an ancient stone shrine with mossy carvings and toppled pillars.",
+        "new_connections": [],
+        "npc_updates": [],
+        "new_npcs": [],
+        "removed_npcs": [],
+        "new_quests": [],
+        "quest_updates": [],
+        "new_events": [],
+        "new_facts": [
+          "An ancient stone shrine exists in the clearing."
+        ],
+        "flag_changes": {},
+        "phase_change": null
+      },
+      "elapsed_s": 0.7029999999995198,
+      "error": null,
+      "checks": [
+        {
+          "name": "location_change.format",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.new_connections",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.new_facts",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.new_events",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.new_npcs",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.new_quests",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.npc_updates",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.removed_npcs",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.quest_updates",
+          "passed": true,
+          "detail": ""
+        }
+      ]
+    },
+    {
+      "name": "npc_location_anchored_to_current_state",
+      "delta": {
+        "time_change": null,
+        "location_change": null,
+        "location_description": null,
+        "new_connections": [],
+        "npc_updates": [],
+        "new_npcs": [
+          {
+            "name": "Borin",
+            "location": "the rusty compass",
+            "disposition": "friendly",
+            "description": "A dwarf polishing mugs behind the bar.",
+            "alive": true,
+            "notes": "",
+            "important": false
+          }
+        ],
+        "removed_npcs": [],
+        "new_quests": [],
+        "quest_updates": [],
+        "new_events": [],
+        "new_facts": [],
+        "flag_changes": {},
+        "phase_change": null
+      },
+      "elapsed_s": 0.7190000000000509,
+      "error": null,
+      "checks": [
+        {
+          "name": "new_npcs[0].location.format",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.new_connections",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.new_facts",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.new_events",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.new_npcs",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.new_quests",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.npc_updates",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.removed_npcs",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.quest_updates",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "new_npcs[borin].present",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "npc_location[borin]",
+          "passed": true,
+          "detail": ""
+        }
+      ]
+    },
+    {
+      "name": "existing_npc_not_recreated",
+      "delta": {
+        "time_change": null,
+        "location_change": null,
+        "location_description": null,
+        "new_connections": [],
+        "npc_updates": [],
+        "new_npcs": [],
+        "removed_npcs": [],
+        "new_quests": [],
+        "quest_updates": [],
+        "new_events": [],
+        "new_facts": [],
+        "flag_changes": {},
+        "phase_change": null
+      },
+      "elapsed_s": 0.35900000000037835,
+      "error": null,
+      "checks": [
+        {
+          "name": "types.new_connections",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.new_facts",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.new_events",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.new_npcs",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.new_quests",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.npc_updates",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.removed_npcs",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.quest_updates",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "forbid_new_npcs[aldric]",
+          "passed": true,
+          "detail": ""
+        }
+      ]
+    },
+    {
+      "name": "introduce_new_named_npc",
+      "delta": {
+        "time_change": null,
+        "location_change": null,
+        "location_description": null,
+        "new_connections": [],
+        "npc_updates": [],
+        "new_npcs": [
+          {
+            "name": "Sela",
+            "location": "the rusty compass",
+            "disposition": "neutral",
+            "description": "A weather-beaten ranger wearing a green cloak with a bow.",
+            "alive": true,
+            "notes": "",
+            "important": false
+          }
+        ],
+        "removed_npcs": [],
+        "new_quests": [],
+        "quest_updates": [],
+        "new_events": [],
+        "new_facts": [
+          "The party is known to have traveled from the south road."
+        ],
+        "flag_changes": {},
+        "phase_change": null
+      },
+      "elapsed_s": 0.9219999999995707,
+      "error": null,
+      "checks": [
+        {
+          "name": "new_npcs[0].location.format",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.new_connections",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.new_facts",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.new_events",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.new_npcs",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.new_quests",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.npc_updates",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.removed_npcs",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.quest_updates",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "new_npcs[sela].present",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "forbid_new_npcs[aldric]",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "npc_location[sela]",
+          "passed": true,
+          "detail": ""
+        }
+      ]
+    },
+    {
+      "name": "location_change_via_movement",
+      "delta": {
+        "time_change": null,
+        "location_change": "the town square",
+        "location_description": "A wide area featuring a dark, silent central fountain.",
+        "new_connections": [
+          "the rusty compass"
+        ],
+        "npc_updates": [],
+        "new_npcs": [],
+        "removed_npcs": [],
+        "new_quests": [],
+        "quest_updates": [],
+        "new_events": [],
+        "new_facts": [
+          "The town square has a central fountain."
+        ],
+        "flag_changes": {},
+        "phase_change": "exploration"
+      },
+      "elapsed_s": 0.8440000000000509,
+      "error": null,
+      "checks": [
+        {
+          "name": "location_change",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "location_change.format",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "new_connections[0].format",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.new_connections",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.new_facts",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.new_events",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.new_npcs",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.new_quests",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.npc_updates",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.removed_npcs",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.quest_updates",
+          "passed": true,
+          "detail": ""
+        }
+      ]
+    },
+    {
+      "name": "time_change_to_night",
+      "delta": {
+        "time_change": "night",
+        "location_change": null,
+        "location_description": null,
+        "new_connections": [],
+        "npc_updates": [],
+        "new_npcs": [],
+        "removed_npcs": [],
+        "new_quests": [],
+        "quest_updates": [],
+        "new_events": [],
+        "new_facts": [
+          "The sun has fully set."
+        ],
+        "flag_changes": {},
+        "phase_change": null
+      },
+      "elapsed_s": 0.5309999999999491,
+      "error": null,
+      "checks": [
+        {
+          "name": "types.new_connections",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.new_facts",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.new_events",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.new_npcs",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.new_quests",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.npc_updates",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.removed_npcs",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.quest_updates",
+          "passed": true,
+          "detail": ""
+        }
+      ]
+    },
+    {
+      "name": "single_fact_should_be_list",
+      "delta": {
+        "time_change": null,
+        "location_change": null,
+        "location_description": null,
+        "new_connections": [],
+        "npc_updates": [],
+        "new_npcs": [],
+        "removed_npcs": [],
+        "new_quests": [],
+        "quest_updates": [],
+        "new_events": [],
+        "new_facts": [
+          "The bridge over the Thorn River was destroyed last week.",
+          "The ferry is the only way to cross the Thorn River."
+        ],
+        "flag_changes": {
+          "thorn_river_bridge_destroyed": true
+        },
+        "phase_change": null
+      },
+      "elapsed_s": 0.7190000000000509,
+      "error": null,
+      "checks": [
+        {
+          "name": "types.new_connections",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.new_facts",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.new_events",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.new_npcs",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.new_quests",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.npc_updates",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.removed_npcs",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.quest_updates",
+          "passed": true,
+          "detail": ""
+        }
+      ]
+    },
+    {
+      "name": "weather_is_not_a_fact",
+      "delta": {
+        "time_change": null,
+        "location_change": null,
+        "location_description": null,
+        "new_connections": [],
+        "npc_updates": [],
+        "new_npcs": [],
+        "removed_npcs": [],
+        "new_quests": [],
+        "quest_updates": [],
+        "new_events": [],
+        "new_facts": [
+          "It is raining steadily.",
+          "The road has turned to mud."
+        ],
+        "flag_changes": {},
+        "phase_change": null
+      },
+      "elapsed_s": 0.5470000000004802,
+      "error": null,
+      "checks": [
+        {
+          "name": "types.new_connections",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.new_facts",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.new_events",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.new_npcs",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.new_quests",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.npc_updates",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.removed_npcs",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "types.quest_updates",
+          "passed": true,
+          "detail": ""
+        }
+      ]
+    }
+  ]
+}

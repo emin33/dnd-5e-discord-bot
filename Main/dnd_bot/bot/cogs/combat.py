@@ -29,6 +29,7 @@ from ..embeds.combat_embed import (
     build_attack_result_embed,
 )
 from ...game.mechanics.dice import get_roller
+from ..views.campaign_lobby import get_active_campaign_id
 
 logger = structlog.get_logger()
 
@@ -48,25 +49,46 @@ class CombatCog(commands.Cog):
     async def _sync_player_characters(
         self,
         manager: CombatManager,
-        campaign_id: str = "default",
     ) -> None:
         """
         Sync all player combatant HP/state back to the database.
 
-        Call this after damage, healing, or combat end.
+        Call this after damage, healing, or combat end. Looks up each
+        player character by `combatant.character_id`.
+
+        Stage A.2 (single authority): sync onto the session-OWNED Character —
+        the same object N1 mutates and the narrator party snapshot reads — so
+        combat results land on the canonical instance, not a throwaway fresh
+        copy that then loses out to (or contradicts) the live one. Falls back
+        to a fresh fetch only when no session is resolvable (tests / non-Discord).
         """
+        from ...game.session import get_session_manager
+
         repo = await get_character_repo()
+        session = get_session_manager().get_session(manager.combat.channel_id)
+        live_by_id = {}
+        if session:
+            live_by_id = {
+                p.character.id: p.character
+                for p in session.players.values()
+                if p.character
+            }
+
         for combatant in manager.get_player_combatants():
-            if combatant.character_id:
+            if not combatant.character_id:
+                continue
+            character = live_by_id.get(combatant.character_id)
+            if character is None:
                 character = await repo.get_by_id(combatant.character_id)
-                if character:
-                    manager.sync_to_character(combatant, character)
-                    await repo.update(character)
-                    logger.debug(
-                        "character_synced_after_combat",
-                        character=character.name,
-                        hp=f"{character.hp.current}/{character.hp.maximum}",
-                    )
+            if character:
+                manager.sync_to_character(combatant, character)
+                await repo.update(character)
+                logger.debug(
+                    "character_synced_after_combat",
+                    character=character.name,
+                    hp=f"{character.hp.current}/{character.hp.maximum}",
+                    from_session=combatant.character_id in live_by_id,
+                )
 
     @combat.command(name="start", description="Start a new combat encounter")
     async def combat_start(
@@ -138,12 +160,6 @@ class CombatCog(commands.Cog):
             "Player to add (uses their character)",
             required=False,
         ),
-        campaign_id: discord.Option(
-            str,
-            "Campaign ID",
-            required=False,
-            default="default",
-        ),
     ):
         """Add a player character to the combat."""
         manager = get_combat_for_channel(ctx.channel_id)
@@ -165,6 +181,15 @@ class CombatCog(commands.Cog):
         target = member or ctx.author
 
         # Get character
+        # Resolve the active campaign from the guild's lobby state (audit #52).
+        campaign_id = get_active_campaign_id(ctx.guild_id)
+        if not campaign_id:
+            await ctx.respond(
+                "No active campaign in this guild. Use `/campaign create` first.",
+                ephemeral=True,
+            )
+            return
+
         repo = await get_character_repo()
         character = await repo.get_by_user_and_campaign(target.id, campaign_id)
 
@@ -621,8 +646,11 @@ class CombatCog(commands.Cog):
                 is_critical=is_critical,
             )
 
-            # Use the attacker's action
-            manager.use_action(attacker.id)
+        # Use the attacker's action — attacking IS the action regardless of
+        # whether the swing connected (5e PHB p.192). Previously this was inside
+        # the `if is_hit` block, letting a player retry `/combat attack` until
+        # they finally rolled high enough.
+        manager.use_action(attacker.id)
 
         embed = build_attack_result_embed(
             attacker_name=attacker.name,
@@ -795,12 +823,6 @@ class CombatCog(commands.Cog):
             "Character name (defaults to your character)",
             required=False,
         ),
-        campaign_id: discord.Option(
-            str,
-            "Campaign ID",
-            required=False,
-            default="default",
-        ),
     ):
         """Roll a death saving throw for an unconscious character."""
         manager = get_combat_for_channel(ctx.channel_id)
@@ -815,9 +837,12 @@ class CombatCog(commands.Cog):
         if target:
             combatant = manager.get_combatant_by_name(target)
         else:
-            # Try to find user's character
-            repo = await get_character_repo()
-            character = await repo.get_by_user_and_campaign(ctx.author.id, campaign_id)
+            # Try to find user's character — resolve active campaign first.
+            campaign_id = get_active_campaign_id(ctx.guild_id)
+            character = None
+            if campaign_id:
+                repo = await get_character_repo()
+                character = await repo.get_by_user_and_campaign(ctx.author.id, campaign_id)
             if character:
                 combatant = manager.get_combatant_by_name(character.name)
             else:

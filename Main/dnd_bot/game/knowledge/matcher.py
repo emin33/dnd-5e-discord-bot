@@ -89,10 +89,12 @@ class EntityNameMatcher:
         if world_state.current_location:
             _try_add(slugify(world_state.current_location))
 
-        # All alive NPCs in the graph
-        for npc_name, npc_state in world_state.npcs.items():
+        # All alive NPCs in the graph. NPCState.id IS the KG node_id
+        # (cross-layer identity anchor — see bridge._handle_new_npc).
+        # No slugify needed; pass the UUID through directly.
+        for npc_state in world_state.npcs.values():
             if npc_state.alive:
-                _try_add(slugify(npc_name))
+                _try_add(npc_state.id)
 
         # Active quests
         for quest_name, quest_state in world_state.quests.items():

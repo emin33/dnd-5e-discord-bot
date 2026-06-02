@@ -36,51 +36,61 @@ class ExtractionResult(BaseModel):
     combat_initiated: bool = False  # True ONLY if combat actually begins in the narrative
 
 
-EXTRACTION_SYSTEM_PROMPT = """You extract entities from D&D narrative text.
+EXTRACTION_SYSTEM_PROMPT = """You extract entities from D&D narrative prose.
 
-Given narrative text from a Dungeon Master, identify:
+## What counts as an entity
 
-1. **NPCs** - Named characters with distinct identity
-   - Example: "Grimjaw the dwarf", "Mayor Helena", "the hooded stranger"
-   - Include unnamed but notable NPCs like "the innkeeper", "a burly dwarf"
+Three categories — anything else is atmosphere or spell effect, not an entity.
 
-2. **Creatures** - Monsters or beasts (named or unnamed)
-   - Example: "three goblins", "a dire wolf", "the owlbear"
+- **NPC** — a being with identity that can be talked to (named or unnamed but notable: "Grimjaw the dwarf", "the hooded stranger", "the innkeeper").
+- **Creature** — a being that can be fought (named or by type: "three goblins", "a dire wolf", "the owlbear").
+- **Object** — an interactable item or feature: "a locked chest", "a glowing sword", "the ancient altar".
 
-3. **Notable Objects** - Interactable items or features
-   - Example: "a locked chest", "a glowing sword", "the ancient altar"
+NOT entities: spell effects ("writhing vines", "shadow tendrils"), environmental hazards ("the gust of wind"), narrative flavor ("the smell of roasting meat"), atmospheric description.
 
-For each entity, determine:
-- **disposition**: How they seem toward the party
-  - "hostile" - aggressive, attacking, threatening violence
-  - "unfriendly" - antagonistic but not violent yet
-  - "neutral" - indifferent or unknown
-  - "friendly" - welcoming, helpful
+## Disposition — judge by signal, not vibe
 
-- **monster_index**: For ANY entity that could participate in combat, you MUST provide the closest SRD monster match. This is required for combat to work.
-  - Use lowercase with hyphens for multi-word names
-  - Common mappings:
-    - Guards, soldiers, watchmen → "guard"
-    - Thugs, enforcers, brutes → "thug"
-    - Bandits, robbers, highwaymen, hooded figures → "bandit"
-    - Bandit leaders, gang bosses → "bandit-captain"
-    - Assassins, shadowy killers → "assassin"
-    - Mages, wizards, sorcerers, spellcasters → "mage"
-    - Cultists, fanatics, robed figures → "cultist" or "cult-fanatic"
-    - Commoners, villagers, merchants, innkeepers → "commoner"
-    - Knights, paladins, champions → "knight"
-    - Priests, clerics, healers → "priest"
-    - Spies, rogues, scouts → "spy"
-    - Animals: wolves → "wolf", bears → "brown-bear", rats → "giant-rat"
-  - If truly no match exists, use null — but try hard to find one
+Look for what the entity is DOING right now:
 
-Also determine if **combat actually started** in this narrative:
-- combat_initiated = true ONLY if creatures/NPCs are actively attacking the player RIGHT NOW
-- Examples of TRUE: "The goblins charge at you", "The bandit swings his sword", "Arrows fly toward you"
-- Examples of FALSE: "The guards look hostile", "Tensions are rising", "They draw weapons threateningly", "The intruders burst in" (threatening but not attacking the player yet)
-- If the player has a CHOICE to fight or flee, combat has NOT started yet
+- **hostile** — actively attacking. Signals: charging, swinging, casting offensively, firing weapons. NOT signals: drawing weapons, looking angry, moving closer, "looking hostile".
+- **unfriendly** — antagonistic but not yet attacking. Signals: blocking the path, refusing entry, threatening, accusing.
+- **neutral** — indifferent, no stake in the party either way.
+- **friendly** — welcoming, helpful, supportive.
 
-Output valid JSON:
+When in doubt between hostile and unfriendly, pick unfriendly. Hostile requires an attack happening *right now*.
+
+## monster_index — required for combat-capable entities
+
+If the entity could plausibly fight, provide the closest SRD monster index. Format: lowercase with hyphens. Apply the rule that fits the entity's role/equipment/behavior:
+
+- Soldier or guard role → "guard". With elite gear → "veteran".
+- Common enemy with weapon → "thug" or "bandit". Leader → "bandit-captain".
+- Stealthy killer → "assassin". Stealthy scout → "spy".
+- Spellcaster → "mage". Religious caster → "priest" or "cult-fanatic".
+- Heavily armored knight → "knight".
+- Civilian (innkeeper, merchant, villager) → "commoner".
+- Wolf-like → "wolf". Bear → "brown-bear". Rat → "giant-rat".
+
+If no SRD match fits, use null. Do not invent indices.
+
+## combat_initiated
+
+`true` ONLY when the narrative shows an actual attack landing or being executed against the party right now (a swing connecting, an arrow flying, a spell being cast offensively).
+
+`false` when the narrative shows tension, drawing weapons, threats, hostile posture, or even an entrance ("the goblins burst into the room"). Tension is not combat — combat starts when the first blow is thrown.
+
+A useful test: if the player still has a choice to flee, parley, or fight, combat has not started.
+
+## Extraction rules
+
+- Only emit NEW entities or entities whose disposition or status CHANGED.
+- Skip unchanged entities even if mentioned again.
+- `scene_update` is optional — set only when the scene's mood or state shifted.
+- For purely descriptive narrative with no entity changes, return `{"entities": [], "scene_update": null, "hostility_changes": [], "combat_initiated": false}`.
+
+## Output format
+
+```json
 {
     "entities": [
         {
@@ -95,15 +105,7 @@ Output valid JSON:
     "hostility_changes": [],
     "combat_initiated": false
 }
-
-Rules:
-- Only include NEW entities or significantly CHANGED entities
-- If an entity was already introduced and unchanged, skip it
-- scene_update is optional - only include if the scene atmosphere changed
-- combat_initiated should be true ONLY when NPCs/creatures are actively attacking the player
-- Do NOT register magical effects, environmental hazards, or narrative flavor as entities (e.g., "writhing vines", "shadow tendrils", "dark energy" are NOT creatures — they are spell effects or atmosphere)
-- Only register things that are actual beings that can be talked to, fought, or interacted with as objects
-- If purely descriptive with no entities: {"entities": [], "scene_update": null, "hostility_changes": [], "combat_initiated": false}"""
+```"""
 
 
 # Cache the schema
