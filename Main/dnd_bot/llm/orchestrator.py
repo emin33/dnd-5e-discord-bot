@@ -546,11 +546,18 @@ class DMOrchestrator:
         adjudicator: Optional[EffectsAdjudicator] = None,
         rules: Optional[RulesBrain] = None,
         client: Optional[OllamaClient] = None,
+        narrator_client_factory: Optional[Callable[[str], Any]] = None,
     ):
         self.narrator = narrator or get_narrator()
         self.adjudicator = adjudicator or get_adjudicator()
         self.rules = rules or get_rules_brain()
         self.client = client or get_llm_client()
+        # Tier→client resolver for narration. Injectable so a test can pin a
+        # fake narrator client that survives the per-turn tier swap; the
+        # production default routes by narrative significance.
+        self._narrator_client_factory: Callable[[str], Any] = (
+            narrator_client_factory or get_narrator_client_for
+        )
         self.roller = get_roller()
         self._current_session: Optional["GameSession"] = None
         self._scene_registry: Optional[SceneEntityRegistry] = None
@@ -2185,7 +2192,7 @@ class DMOrchestrator:
             force_tier=force_tier,
         )
 
-        client = get_narrator_client_for(tier)
+        client = self._narrator_client_factory(tier)
 
         # Keep self.narrator.client in sync so brain-side helpers that read
         # off the brain (e.g. format builders) see the current tier client.

@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Protocol, runtime_checkable
 import json
 
 import ollama
@@ -18,6 +18,30 @@ logger = structlog.get_logger()
 
 # Debug log file path
 DEBUG_LOG_PATH = Path("data/llm_debug.log")
+
+
+# ── Test-mode guard (mirrors Pydantic-AI's ALLOW_MODEL_REQUESTS) ──────────────
+# When False, any real provider .chat()/.chat_stream() raises instead of hitting
+# the network, so an un-mocked LLM call in a test fails loudly rather than
+# silently doing real I/O. Tests flip this via set_model_requests_allowed(False)
+# and inject fakes at the brain/narrator seams (see tests/fakes.py).
+ALLOW_MODEL_REQUESTS = True
+
+
+def set_model_requests_allowed(allowed: bool) -> None:
+    """Toggle the real-model-request guard (test hook)."""
+    global ALLOW_MODEL_REQUESTS
+    ALLOW_MODEL_REQUESTS = allowed
+
+
+def _guard_real_model_request() -> None:
+    """Raise if a real provider call is attempted while model requests are blocked."""
+    if not ALLOW_MODEL_REQUESTS:
+        raise RuntimeError(
+            "Real LLM provider call blocked: ALLOW_MODEL_REQUESTS is False. "
+            "A test reached an un-mocked client.chat()/.chat_stream() — inject a "
+            "fake brain at this seam (see tests/fakes.py)."
+        )
 
 
 def _write_debug_log(label: str, content: str, thinking: str = None) -> None:
@@ -80,6 +104,19 @@ class ToolCall:
     name: str
     arguments: dict[str, Any]
     id: str = ""
+
+
+@runtime_checkable
+class LLMClient(Protocol):
+    """Structural type for the LLM seam the orchestrator depends on.
+
+    Real providers (OllamaClient, AnthropicClient, DeepSeekClient, …) and the
+    test fakes (ScriptedBrain / FunctionBrain in tests/fakes.py) all satisfy
+    this. ``chat_stream`` is intentionally NOT required — only the Ollama path
+    streams, and callers gate on ``hasattr(client, "chat_stream")``.
+    """
+
+    async def chat(self, messages: list[dict], **kwargs: Any) -> "LLMResponse": ...
 
 
 def _clean_llm_content(content: str) -> str:
@@ -176,6 +213,7 @@ class OllamaClient:
         Returns:
             LLMResponse with content and any tool calls
         """
+        _guard_real_model_request()
         # Route tool-bearing requests through Ollama's OpenAI-compat
         # endpoint to avoid the broken native tool serializer
         # (ollama#14601). Non-tool calls keep the native path because it
@@ -655,6 +693,7 @@ class OllamaClient:
         Returns:
             Complete LLMResponse after streaming finishes
         """
+        _guard_real_model_request()
         loop = asyncio.get_event_loop()
 
         def _sync_stream():
@@ -835,6 +874,7 @@ class GroqClient:
         presence_penalty: Optional[float] = None,
     ) -> LLMResponse:
         """Send a chat request to Groq API. Same interface as OllamaClient."""
+        _guard_real_model_request()
         kwargs: dict[str, Any] = {
             "model": self.model,
             "messages": messages,
@@ -1053,6 +1093,7 @@ class AnthropicClient:
         Note: Claude does not support frequency/presence penalties. These
         params are accepted for interface compatibility but ignored.
         """
+        _guard_real_model_request()
         # Claude uses a separate system parameter, not a system message
         system_parts = []
         chat_messages = []
@@ -1299,6 +1340,7 @@ class GeminiClient:
         Note: Gemini does not support frequency/presence penalties. These
         params are accepted for interface compatibility but ignored.
         """
+        _guard_real_model_request()
         # Separate system instructions from chat messages
         system_parts = []
         chat_messages = []
@@ -1478,6 +1520,7 @@ class OpenRouterClient:
         presence_penalty: Optional[float] = None,
     ) -> LLMResponse:
         """Send a chat request to OpenRouter. Same interface as other clients."""
+        _guard_real_model_request()
         kwargs: dict[str, Any] = {
             "model": self.model,
             "messages": messages,
@@ -1628,6 +1671,7 @@ class DeepSeekClient:
         thinking=disabled to preserve those controls; pass think=True to opt
         back in (and accept those params being dropped).
         """
+        _guard_real_model_request()
         kwargs: dict[str, Any] = {
             "model": self.model,
             "messages": messages,
