@@ -8,9 +8,7 @@ from ...data.srd import get_srd
 from ...game.character.creation import (
     AbilityScoreMethod,
     CharacterCreationState,
-    CharacterCreator,
     PointBuyState,
-    STANDARD_ARRAY,
     get_creator,
 )
 

@@ -4,7 +4,7 @@ import discord
 from discord.ext import commands
 import structlog
 
-from ...models import AbilityScore, Skill, SKILL_ABILITIES
+from ...models import AbilityScore, Skill
 from ...data.repositories.character_repo import get_character_repo
 from ...game.mechanics.dice import get_roller, DiceRoll
 from ..views.campaign_lobby import get_active_campaign_id

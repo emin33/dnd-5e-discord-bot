@@ -1,6 +1,5 @@
 """Session repository for game session persistence."""
 
-from datetime import datetime
 from typing import Optional
 import json
 

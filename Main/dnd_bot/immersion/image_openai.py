@@ -1,7 +1,6 @@
 """OpenAI DALL-E image generation provider."""
 
 import base64
-from typing import Optional
 
 import structlog
 

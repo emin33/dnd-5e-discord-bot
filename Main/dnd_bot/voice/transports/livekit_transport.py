@@ -24,18 +24,17 @@ Requires:
 from __future__ import annotations
 
 import os
-import asyncio
 from typing import Optional
 
 from dotenv import load_dotenv
 from livekit import agents
-from livekit.agents import AgentSession, Agent, RoomInputOptions
+from livekit.agents import AgentSession, Agent
 from livekit.plugins import nvidia, silero
 import structlog
 
 from ..tts import RivaTTS
 from ..frontend import VoiceFrontend
-from ...game.session import get_session_manager, GameSession, SessionState
+from ...game.session import get_session_manager, SessionState
 from ...llm.orchestrator import get_orchestrator
 
 load_dotenv()

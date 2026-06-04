@@ -11,8 +11,6 @@ Requires: FAL_KEY in environment
 from __future__ import annotations
 
 import asyncio
-import base64
-from typing import Optional
 
 import structlog
 
@@ -36,7 +34,6 @@ class FalImageProvider:
 
     async def generate(self, prompt: str, size: str = "1024x1024") -> bytes:
         """Generate an image from a prompt. Returns PNG bytes."""
-        import requests
 
         width, height = 1024, 1024
         if "x" in size:

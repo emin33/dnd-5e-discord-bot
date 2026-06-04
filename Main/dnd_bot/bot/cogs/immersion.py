@@ -5,7 +5,7 @@ from discord.ext import commands
 import structlog
 
 from ...data.repositories.immersion_repo import get_immersion_repo
-from ...models.immersion import GuildImmersionSettings, ImageFrequency
+from ...models.immersion import ImageFrequency
 
 logger = structlog.get_logger()
 

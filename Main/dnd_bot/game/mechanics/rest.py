@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Optional
 import structlog
 
-from ...models import Character, RestType, Condition
+from ...models import Character, Condition
 from .dice import get_roller, DiceRoll
 
 logger = structlog.get_logger()

@@ -13,13 +13,12 @@ from typing import Optional
 import discord
 import structlog
 
-from ...game.frontend import GameFrontend, GameEvent, GameEventType
+from ...game.frontend import GameEvent, GameEventType
 from ...game.combat.actions import CombatAction, ActionResult, TurnContext
 from ..views.combat_actions import CombatActionView, ActionResultEmbed
 from ..embeds.combat_embed import (
     build_combat_tracker_embed,
     build_combat_start_embed,
-    build_combat_end_embed,
 )
 
 logger = structlog.get_logger()
@@ -505,7 +504,6 @@ class DiscordTextFrontend:
 
     async def _handle_combat_end(self, event: GameEvent) -> None:
         victory = event.data.get("victory", True)
-        from ..embeds.combat_embed import build_combat_end_embed
         # We'd need the combat object here - for now just send a message
         msg = ":tada: **Victory!**" if victory else ":skull: **Defeat...**"
         await self._channel.send(msg)

@@ -2,7 +2,6 @@
 
 from datetime import datetime
 from typing import Optional
-import uuid
 
 from ...models import InventoryItem, Currency
 from ..database import Database, get_database

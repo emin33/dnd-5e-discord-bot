@@ -17,7 +17,6 @@ from ...game.character.creation import (
 from ..views.campaign_lobby import (
     CampaignLobbyView,
     set_active_campaign,
-    get_active_campaign_id,
 )
 from ..views.character_creation import (
     NameModal,
@@ -150,7 +149,7 @@ class CampaignCog(commands.Cog):
         char_repo = await get_character_repo()
 
         # Create a copy of the character for this campaign
-        from ...models import Character, HitPoints, HitDice, DeathSaves, SpellSlots
+        from ...models import Character, HitPoints, HitDice, DeathSaves
         import uuid
 
         new_character = Character(
@@ -852,7 +851,7 @@ class CampaignCog(commands.Cog):
         # Generate opening narrative from the AI DM
         try:
             from ...llm.brains.narrator import get_narrator
-            from ...memory import get_memory_manager, save_memory_state
+            from ...memory import get_memory_manager
             narrator = get_narrator()
             opening, opening_effects = await narrator.generate_opening(
                 campaign_name=campaign.name,
@@ -897,7 +896,6 @@ class CampaignCog(commands.Cog):
                 import asyncio as _asyncio
                 try:
                     from ...config import get_profile
-                    from ...models.immersion import GuildImmersionSettings
                     from ...game.frontend import GameEvent
 
                     profile = get_profile()

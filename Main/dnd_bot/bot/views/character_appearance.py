@@ -5,7 +5,6 @@ Players can describe their character's appearance (stored as character.descripti
 and optionally generate a portrait image.
 """
 
-import asyncio
 from typing import Optional, Callable, Awaitable
 
 import discord

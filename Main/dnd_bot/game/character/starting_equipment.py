@@ -4,7 +4,6 @@ D&D 5e characters start with class-based equipment and gold.
 This module handles automatic assignment of starting gear.
 """
 
-from typing import Optional
 import structlog
 
 from ...data.srd import get_srd

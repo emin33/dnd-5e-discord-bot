@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import io
 from typing import Optional
 
 import numpy as np

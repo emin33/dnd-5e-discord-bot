@@ -8,7 +8,6 @@ in context exactly when they're needed.
 Uses lightweight keyword scoring — no vector search needed for 33 sections.
 """
 
-import re
 from typing import Optional
 
 import structlog

@@ -11,7 +11,7 @@ import json
 import structlog
 
 from .blocks import CoreMemory, MessageBuffer, SessionSummary
-from .vector_store import VectorStore, get_vector_store
+from .vector_store import get_vector_store
 from ..llm.client import get_ollama_client
 
 logger = structlog.get_logger()

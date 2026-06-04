@@ -9,7 +9,6 @@ from ...models import (
     AbilityScore,
     AbilityScores,
     Character,
-    CharacterProficiency,
     DeathSaves,
     HitDice,
     HitPoints,

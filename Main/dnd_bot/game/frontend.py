@@ -17,7 +17,7 @@ if TYPE_CHECKING:
         TurnContext,
     )
     from .mechanics.dice import DiceRoll
-    from ..models import Combat, Combatant
+    from ..models import Combat
 
 
 class GameEventType(str, Enum):

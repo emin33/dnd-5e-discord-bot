@@ -5,7 +5,7 @@ import discord
 from discord.ext import commands
 import structlog
 
-from ...models import AbilityScore, AbilityScores, Skill
+from ...models import AbilityScore, AbilityScores
 from ...data.srd import get_srd
 from ...data.repositories.character_repo import get_character_repo
 from ...game.character.creation import (
@@ -17,10 +17,7 @@ from ...game.character.creation import (
 from ...game.character.leveling import (
     get_leveling_manager,
     can_level_up,
-    get_xp_progress,
     get_xp_for_next_level,
-    get_asi_levels,
-    XP_THRESHOLDS,
 )
 from ..views.character_creation import (
     AbilityScoreMethodView,
@@ -35,7 +32,6 @@ from ..views.character_creation import (
 from ..embeds.character_sheet import (
     build_ability_roll_embed,
     build_character_sheet_embed,
-    build_character_summary_embed,
 )
 from ..views.campaign_lobby import get_active_campaign_id
 

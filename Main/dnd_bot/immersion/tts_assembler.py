@@ -14,7 +14,7 @@ from typing import Optional
 import numpy as np
 import structlog
 
-from ..models.immersion import GuildImmersionSettings, NarrativeSegment, SegmentType
+from ..models.immersion import GuildImmersionSettings, NarrativeSegment
 from ..voice.tts_factory import _create_tts
 
 logger = structlog.get_logger()

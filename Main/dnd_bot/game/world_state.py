@@ -10,7 +10,7 @@ hostility math, SRD matching, and combat triggers. WorldState provides the
 narrator's view of reality as a compact YAML snapshot.
 """
 
-from typing import Literal, Optional
+from typing import Optional
 import uuid
 import structlog
 import yaml

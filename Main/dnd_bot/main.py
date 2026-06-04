@@ -1,6 +1,5 @@
 """Main entry point for the D&D 5e Discord bot."""
 
-import asyncio
 import sys
 from pathlib import Path
 

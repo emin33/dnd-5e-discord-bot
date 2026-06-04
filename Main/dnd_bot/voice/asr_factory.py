@@ -5,7 +5,6 @@ Lazy singleton, factory dispatch on provider string, _reset for profile switchin
 
 from __future__ import annotations
 
-from typing import Optional
 
 import structlog
 

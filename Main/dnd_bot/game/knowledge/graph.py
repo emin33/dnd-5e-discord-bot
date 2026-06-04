@@ -10,12 +10,8 @@ import yaml
 from .models import (
     AddEdge,
     AddNode,
-    DEFAULT_WEIGHTS,
     Entity,
-    EntityType,
     GraphOperation,
-    Relationship,
-    RelationType,
     RemoveEdge,
     RemoveNode,
     UpdateNode,

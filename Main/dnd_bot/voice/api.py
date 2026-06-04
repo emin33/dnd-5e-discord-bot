@@ -279,7 +279,6 @@ async def create_character(req: CreateCharacterRequest):
     from ..game.character.creation import (
         CharacterCreator,
         CharacterCreationState,
-        AbilityScoreMethod,
         STANDARD_ARRAY,
     )
     from ..models import AbilityScore

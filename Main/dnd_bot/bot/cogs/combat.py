@@ -13,7 +13,6 @@ from ...game.combat.manager import (
     clear_combat_for_channel,
 )
 from ...game.combat.coordinator import (
-    CombatTurnCoordinator,
     get_coordinator,
     clear_coordinator,
 )

@@ -8,11 +8,11 @@ from __future__ import annotations
 
 import asyncio
 import re
-from typing import Any, Callable, Awaitable, Optional, TYPE_CHECKING
+from typing import Callable, Awaitable, Optional, TYPE_CHECKING
 
 import structlog
 
-from ..game.frontend import GameFrontend, GameEvent, GameEventType
+from ..game.frontend import GameEvent, GameEventType
 from ..game.combat.actions import CombatAction, CombatActionType, TurnContext
 from .tts import TTSSentenceQueue
 

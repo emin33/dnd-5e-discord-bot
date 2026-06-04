@@ -7,15 +7,15 @@ from typing import Any, Callable, Optional
 import asyncio
 import structlog
 
-from ..models import Character, GameState, Combat
+from ..models import Character
 from ..memory import MemoryManager, get_memory_manager_sync
-from ..llm.orchestrator import DMOrchestrator, get_orchestrator, DMResponse
+from ..llm.orchestrator import get_orchestrator, DMResponse
 from ..llm.brains.base import BrainContext
 from .frontend import GameFrontend, GameEvent
 from ..data.repositories import get_character_repo, get_session_repo
 from ..data.repositories.npc_repo import get_npc_repo
 from ..models.npc import EntityType, Disposition, SceneEntity
-from .combat.manager import CombatManager, get_combat_for_channel, get_combat_by_key
+from .combat.manager import CombatManager, get_combat_by_key
 from .scene.registry import get_scene_registry, clear_scene_registry
 from .world_state import WorldState
 

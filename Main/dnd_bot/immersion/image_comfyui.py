@@ -12,7 +12,6 @@ Requires: ComfyUI running locally with a checkpoint downloaded.
 import asyncio
 import json
 import uuid
-from typing import Optional
 
 import structlog
 

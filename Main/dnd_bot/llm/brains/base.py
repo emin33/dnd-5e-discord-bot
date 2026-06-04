@@ -2,7 +2,7 @@
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Optional
 
 from ..client import LLMResponse, OllamaClient
 from ..validators.rule_injector import get_rule_injector

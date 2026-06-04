@@ -2,14 +2,12 @@
 
 import time
 from typing import Optional
-import json
 
 from ...models import (
     AbilityScore,
     AbilityScores,
     Character,
     CharacterCondition,
-    CharacterProficiency,
     Condition,
     DeathSaves,
     HitDice,

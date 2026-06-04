@@ -8,7 +8,7 @@ in a separate, deterministic pass.
 from dataclasses import dataclass
 from typing import Optional
 
-from ..client import OllamaClient, get_llm_client, get_narrator_client
+from ..client import OllamaClient, get_narrator_client
 from .base import Brain, BrainContext, BrainResult
 from ...config import get_settings
 

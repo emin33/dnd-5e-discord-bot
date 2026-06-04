@@ -1,7 +1,7 @@
 """Combat and combatant data models."""
 
 from datetime import datetime
-from typing import Optional, Any
+from typing import Optional
 import uuid
 
 from pydantic import BaseModel, Field

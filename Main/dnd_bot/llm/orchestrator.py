@@ -15,11 +15,11 @@ import structlog
 
 from .client import get_llm_client, get_narrator_client_for, OllamaClient, AnthropicClient, _write_debug_log
 from .narrative_signals import select_narrator_tier
-from .brains.base import BrainContext, BrainResult
-from .brains.narrator import NarratorBrain, MechanicalOutcome, get_narrator
+from .brains.base import BrainContext
+from .brains.narrator import NarratorBrain, get_narrator
 from .brains.adjudicator import EffectsAdjudicator, get_adjudicator
 from .brains.rules import RulesBrain, get_rules_brain
-from .intents import validate_narrator_format, strip_planning_text_fallback
+from .intents import validate_narrator_format
 from .narrator_tools import (
     get_narrator_tools_for_tier,
     tool_calls_to_effects,
@@ -27,14 +27,12 @@ from .narrator_tools import (
 from .extractors.entity_extractor import get_entity_extractor, EntityExtractor
 from .extractors.state_extractor import get_state_extractor, StateExtractor
 from .validators.nli_validator import get_nli_validator, NLIValidator
-from .turn_logger import get_turn_logger, TurnLogger, TurnRecord
+from .turn_logger import get_turn_logger, TurnLogger
 from .effects import (
     ProposedEffect,
     EffectType,
     EffectValidator,
     EffectExecutor,
-    EffectValidationResult,
-    EffectExecutionResult,
     build_effect_idempotency_key,
 )
 from ..game.mechanics.dice import get_roller, DiceRoll
@@ -44,7 +42,6 @@ from ..data.repositories import get_character_repo, get_transaction_repo, genera
 from ..data.repositories.inventory_repo import get_inventory_repo
 from ..models import Character, CharacterCondition, Condition, InventoryItem
 from ..models.npc import SceneEntity, EntityType, Disposition
-from ..config import get_settings
 
 if TYPE_CHECKING:
     from ..game.session import GameSession
@@ -1307,7 +1304,7 @@ class DMOrchestrator:
         _effect_kg_ops = 0
         if kg and world_state and self._last_executed_effects:
             try:
-                from ..game.knowledge.bridge import DeltaBridge, NamePromotion
+                from ..game.knowledge.bridge import DeltaBridge
                 from ..game.knowledge.models import AddNode as _AddNode, UpdateNode as _UpdateNode
                 from ..memory import get_vector_store
 
@@ -2920,7 +2917,6 @@ Write your narration directly."""
                 which entities are already accounted for and avoids creating
                 duplicates.
         """
-        from ..game.world_state import WorldState, NPCState
 
         try:
             delta = await self._state_extractor.extract(
@@ -3297,7 +3293,6 @@ Write your narration directly."""
         working alongside WorldState.
         """
         from ..models.npc import SceneEntity, EntityType, Disposition
-        from ..game.world_state import StateDelta
 
         if not self._scene_registry:
             return

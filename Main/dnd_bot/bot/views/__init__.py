@@ -15,7 +15,6 @@ from .combat_actions import (
     CombatActionView,
     TargetSelectionView,
     ActionResultEmbed,
-    CombatTurnManager,
 )
 
 __all__ = [
@@ -32,5 +31,4 @@ __all__ = [
     "CombatActionView",
     "TargetSelectionView",
     "ActionResultEmbed",
-    "CombatTurnManager",
 ]

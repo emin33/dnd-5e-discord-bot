@@ -25,9 +25,9 @@ from .actions import (
     TurnContext,
     WeaponStats,
 )
-from ..mechanics.dice import get_roller, DiceRoll
+from ..mechanics.dice import get_roller
 from ..mechanics.conditions import ConditionResolver
-from ...models import Character, Combatant, Combat, CombatState, Condition, AbilityScore
+from ...models import Character, Combatant, Condition, AbilityScore
 from ...data.srd import get_srd
 from ...data.repositories import get_character_repo, get_inventory_repo
 
@@ -803,7 +803,7 @@ class CombatTurnCoordinator:
         caster: Combatant,
     ) -> ActionResult:
         """Execute a spell cast using SpellcastingManager."""
-        from ..magic.spellcasting import SpellcastingManager, SpellType
+        from ..magic.spellcasting import SpellcastingManager
 
         spell_mgr = SpellcastingManager()
 
@@ -1344,7 +1344,7 @@ class CombatTurnCoordinator:
 
         Returns the narrative text.
         """
-        from ...llm.brains.narrator import MechanicalOutcome, get_narrator
+        from ...llm.brains.narrator import get_narrator
 
         if self._narrator is None:
             self._narrator = get_narrator()

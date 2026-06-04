@@ -233,7 +233,7 @@ class AdminCog(commands.Cog):
         effect on the next turn — in-progress turns finish with the
         old profile.
         """
-        from ...config import get_profile, switch_profile, list_profiles, load_profile
+        from ...config import get_profile, switch_profile, list_profiles
 
         if name is None:
             # Show current profile

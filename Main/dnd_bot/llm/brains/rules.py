@@ -1,7 +1,7 @@
 """Rules Brain - Mechanical authority with tool-based state changes."""
 
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Optional
 import json
 
 from ..client import OllamaClient, get_llm_client

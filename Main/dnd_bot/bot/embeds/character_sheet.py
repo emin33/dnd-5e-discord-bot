@@ -2,7 +2,7 @@
 
 import discord
 
-from ...models import AbilityScore, Character, Skill, SKILL_ABILITIES
+from ...models import AbilityScore, Character
 from ...data.srd import get_srd
 
 

@@ -3,7 +3,7 @@
 import re
 from datetime import datetime
 from enum import Enum
-from typing import Any, Literal, Optional, Union
+from typing import Literal, Optional, Union
 
 from pydantic import BaseModel, Field
 
