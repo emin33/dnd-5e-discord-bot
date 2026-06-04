@@ -224,6 +224,34 @@ async def test_cast_spell_consumes_and_persists_a_slot(net):
 
 
 @pytest.mark.asyncio
+async def test_skill_check_rolls_and_narrates_outcome(net):
+    """A skill check rolls a d20 and narrates the outcome (a 2nd narration path).
+
+    Trajectory: [triage(roll)] → one dice roll → [narrate_outcome] → effects.
+    The roll value is non-deterministic by design, so we scrub it — assert a
+    roll happened (count + result shape), not the number (testing §2).
+    """
+    result = await net.run(
+        action="I search the room for traps",
+        triage=triage_response(
+            "skill_check", needs_roll=True, skill="perception", ability="wisdom", dc=10,
+        ),
+        narration=narration_response(
+            "Your eyes catch a glint of wire near the floor.",
+            tool_calls=[{"name": "ref_entity", "arguments": {"entity_id": "tripwire"}}],
+        ),
+    )
+
+    # A roll occurred and was surfaced; value scrubbed.
+    assert len(result.dice_rolls) == 1
+    assert result.mechanical_result["action_type"] == "skill_check"
+    assert "success" in result.mechanical_result
+    # Narrated via the roll-outcome path and tagged an entity.
+    assert net.narrator.calls  # invoked through _narrate_outcome
+    assert [e.effect_type for e in result.proposed_effects] == [EffectType.REF_ENTITY]
+
+
+@pytest.mark.asyncio
 async def test_guard_blocks_unmocked_real_calls(net):
     """Safety net itself: a real provider call raises while the guard is armed."""
     from dnd_bot.llm.client import OllamaClient
