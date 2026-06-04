@@ -550,6 +550,13 @@ class GameCog(commands.Cog):
             except Exception as e:
                 logger.warning("narration_failed", error=str(e))
 
+            # Persist player state after the action (DF-2): the /game path
+            # otherwise never wrote combat HP/conditions back to the DB.
+            try:
+                await coordinator.persist_player_characters()
+            except Exception as e:
+                logger.warning("combat_persist_failed", error=str(e))
+
             # Check combat end
             if manager.combat.is_combat_over():
                 from ..embeds.combat_embed import build_combat_end_embed
@@ -660,6 +667,13 @@ class GameCog(commands.Cog):
                         await channel.send(embed=narr_embed)
                 except Exception as e:
                     logger.warning("narration_failed", error=str(e))
+
+            # Persist player state after the NPC turn (DF-2): NPC attacks damage
+            # players, and that HP must reach the DB on the /game path.
+            try:
+                await coordinator.persist_player_characters()
+            except Exception as e:
+                logger.warning("combat_persist_failed", error=str(e))
 
             # Check combat end
             if manager.combat.is_combat_over():

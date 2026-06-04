@@ -301,6 +301,20 @@ From the orchestrator trace. All TURN-SCOPED rows are latent behind `session.py:
 
 ---
 
+## §5b. Refactor progress / remaining TODO (updated 2026-05-29)
+
+Single-authority refactor (Option B) is being done in tested increments. Status:
+- [x] **ROOT-2 core** — `_effect_add_npc` keys KG nodes on the WorldState UUID (DF-3). Remaining ROOT-2: `_effect_ref_entity`/registry resolution by id (DF-10) + UPDATE_ENTITY→KG handler + `mark_dead` wiring (DF-4) — folded into **Stage C** below (the roster hands the narrator a name-slug, so this needs the canonical-id decision, not a one-liner).
+- [x] **DF-1** — `_sync_session_characters` no longer clobbers with the stale live object.
+- [x] **Stage A.1** — narrated effects (`_execute_update_player`) mutate the session-owned `Character`.
+- [x] **Stage A.2** — combat (coordinator reads + `_sync_player_characters` writes) on the same session-owned `Character`.
+- [x] **DF-2** — `/game` combat persists after player actions AND NPC turns (`coordinator.persist_player_characters`).
+- [ ] **Stage C — NPC identity end-to-end** (DF-10 + ROOT-2 remainder): pick one canonical NPC id, make the roster, ref-resolution, scene-registry, KG, and ChromaDB all use it. Medium, user-facing, independent of concurrency. **Next.**
+- [ ] **Stage B — per-session state/lock** (#6/#7): the ~97 `self._last_*` orchestrator refs → a TurnContext; move the global `_processing_lock` per-session. Biggest/riskiest; NOT urgent (single-server is fine behind the global lock). Deferred.
+- [ ] **ROOT-3** — serialize WorldState+combat to the dead tables; `recover_sessions` reuse `start_session` init (DF-5/6/7/16). Independent of B/C.
+
+All increments above are committed on branch `audit-and-single-authority-refactor` (501 tests green) except DF-2 (done, uncommitted at time of writing).
+
 ## §5. Recommended sequencing
 
 1. **ROOT-2 first — it's one surgical fix for ~8 findings.** Make `_effect_add_npc`/`_effect_ref_entity`

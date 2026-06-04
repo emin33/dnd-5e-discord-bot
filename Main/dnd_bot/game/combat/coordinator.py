@@ -199,12 +199,6 @@ class CombatTurnCoordinator:
 
     async def end_turn(self, combatant: Combatant) -> TurnEndResult:
         """End the current turn and advance to next combatant."""
-        # Process end-of-turn effects
-        effect_results = self.manager.process_end_of_turn_effects(combatant)
-        effect_messages = []
-        for result in effect_results:
-            effect_messages.extend(result.messages)
-
         # SURPRISE: Surprise ends at the end of the creature's first turn
         if combatant.is_surprised:
             combatant.is_surprised = False
@@ -212,8 +206,15 @@ class CombatTurnCoordinator:
 
         self.zone_tracker.on_turn_end(combatant.id)
 
-        # Advance turn
-        next_combatant, _, _, _ = self.manager.next_turn()
+        # Advance turn. next_turn() ALREADY processes end-of-turn effects for the
+        # outgoing combatant and returns them — do NOT also call
+        # process_end_of_turn_effects here, or ongoing damage / repeating saves
+        # tick twice (quality #3). Use next_turn's returned results for messages.
+        next_combatant, end_of_turn_results, _start_results, _recharge = self.manager.next_turn()
+
+        effect_messages = []
+        for result in end_of_turn_results:
+            effect_messages.extend(result.messages)
 
         round_advanced = next_combatant.turn_order == 0
 
@@ -807,7 +808,7 @@ class CombatTurnCoordinator:
         spell_mgr = SpellcastingManager()
 
         # Get character for spell slots
-        character = self._character_cache.get(caster.character_id) if caster.character_id else None
+        character = await self._get_character(caster.character_id) if caster.character_id else None
         if not character:
             return ActionResult(
                 action=action,
@@ -1069,7 +1070,7 @@ class CombatTurnCoordinator:
 
         # For player characters, get from character data
         if combatant.is_player and combatant.character_id:
-            char = self._character_cache.get(combatant.character_id)
+            char = self._resolve_player_character(combatant.character_id)
             if char:
                 return char.get_save_modifier(ability)
 
@@ -1081,7 +1082,7 @@ class CombatTurnCoordinator:
     def _is_concentrating(self, combatant: Combatant) -> bool:
         """Check if combatant is concentrating on a spell."""
         if combatant.is_player and combatant.character_id:
-            char = self._character_cache.get(combatant.character_id)
+            char = self._resolve_player_character(combatant.character_id)
             if char:
                 return char.is_concentrating
         return False
@@ -1097,7 +1098,7 @@ class CombatTurnCoordinator:
         # Get CON save modifier from real character/monster data
         con_mod = 0
         if combatant.is_player and combatant.character_id:
-            char = self._character_cache.get(combatant.character_id)
+            char = self._resolve_player_character(combatant.character_id)
             if char:
                 con_mod = char.get_save_modifier(AbilityScore.CONSTITUTION)
         else:
@@ -1122,30 +1123,64 @@ class CombatTurnCoordinator:
 
     # ==================== Helper Methods ====================
 
-    async def _get_character(self, character_id: str) -> Optional[Character]:
-        """Get the character for a combatant.
+    def _resolve_player_character(self, character_id: str) -> Optional[Character]:
+        """Session-first, in-memory resolve of a player Character (no I/O).
 
-        Single-authority refactor (Stage A.2): for PLAYER characters, return
-        the session's own live Character instance — the same object N1 mutates,
-        sync_player reads, and end_session reconciles. Combat slot/concentration
-        expenditure then lands on the canonical object instead of a private
-        cached copy that diverges (the old behavior, ROOT-1 / DF-3/DF-11).
-        NPCs/monsters aren't in session.players, so they fall through to the
-        per-coordinator cache / repo as before.
+        Single-authority (Stage A.2): prefer the session's own live Character
+        instance, then the per-coordinator cache. Returns None if not loaded.
+        Sync read-only combat helpers (save mods, concentration checks) MUST go
+        through this so they see the canonical object N1/sync_player use, not a
+        stale private-cache copy (quality #2). The async `_get_character` adds a
+        repo fallback on top of this for not-yet-loaded ids.
         """
         if self.session:
             for p in self.session.players.values():
                 if p.character and p.character.id == character_id:
                     return p.character
+        return self._character_cache.get(character_id)
 
-        if character_id in self._character_cache:
-            return self._character_cache[character_id]
+    async def _get_character(self, character_id: str) -> Optional[Character]:
+        """Get the character for a combatant: session-owned for players (see
+        `_resolve_player_character`), with a repo fallback for ids not yet
+        loaded (NPCs/monsters aren't in session.players)."""
+        found = self._resolve_player_character(character_id)
+        if found is not None:
+            return found
 
         repo = await get_character_repo()
         character = await repo.get_by_id(character_id)
         if character:
             self._character_cache[character_id] = character
         return character
+
+    async def persist_player_characters(self) -> None:
+        """Sync every player combatant back to its Character and persist (DF-2).
+
+        The /game narrative-combat path never called the combat cog's
+        `_sync_player_characters`, so combat HP/conditions/death-saves resolved
+        on that path never reached the DB. This runs the same sync at the
+        coordinator level (where `self.session` + `self.manager` live), so the
+        /game flow can persist after each action and after NPC turns. With the
+        single-authority refactor, `_get_character` returns the session-owned
+        Character, so sync_to_character lands on the canonical object.
+        """
+        from ...data.repositories.character_repo import get_character_repo as _get_repo
+        repo = await _get_repo()
+        for combatant in self.manager.get_player_combatants():
+            if not combatant.character_id:
+                continue
+            character = await self._get_character(combatant.character_id)
+            if character is None:
+                continue
+            self.manager.sync_to_character(combatant, character)
+            try:
+                await repo.update(character)
+            except Exception as e:
+                logger.warning(
+                    "combat_persist_failed",
+                    character_id=combatant.character_id,
+                    error=str(e),
+                )
 
     async def _get_equipped_weapons(self, character: Character) -> list[WeaponStats]:
         """Get equipped weapons for a character."""
