@@ -94,6 +94,29 @@ bypassing the session-first `_get_character`; and **double end-of-turn processin
    — NOTE: a leaky async fixture once hung pytest on *exit* (tests passed, process didn't
    terminate); fixtures opening a `Database` must `yield` + `await db.disconnect()`.
 
+## Operational notes (learned the hard way — don't relearn them)
+
+- **Run tests with the controlled-file pattern** (background pytest output buffers and
+  won't appear until exit):
+  `timeout 180 python -m pytest tests/ -p no:cacheprovider --timeout=45 -q > _testout.txt 2>&1; echo EXIT=$?; tail -6 _testout.txt`
+- **A leaky async fixture hangs pytest on exit** (tests PASS, process never terminates,
+  orphaning it). Any fixture opening a `Database` must `yield` + `await db.disconnect()`,
+  not `return`. This caused days of "the tests never finish" confusion.
+- **Don't kill "hung" pytest reflexively** — it's usually just slow-to-flush; wait for the
+  result. Genuinely stuck = a process alive >2 min for a ~20s suite.
+- **Bare `python -c "import dnd_bot.bot.cogs.*"` fails** with `discord has no attribute
+  'ApplicationContext'` — a py-cord vs discord.py env quirk, NOT a real error. The suite
+  never imports the cogs; don't chase it.
+- **Commit at every green checkpoint.** Branch: `audit-and-single-authority-refactor`. The
+  git repo root is the PARENT of `Main/`, so use `git -C "<repo root>"`. The LF→CRLF
+  warnings on commit are benign. `.gitignore` already excludes wav/mp3/model-weights/db —
+  but always dry-run-check `git add -An` for stray binaries before a big commit.
+- **Verify-don't-trust the audits.** They've been right on the *bug* but wrong on
+  *specifics* — file:line citations drift, and a few "dead code" / "depends on X" claims
+  were stale (e.g. turn_loop's "voice frontend depends on it" was false). Grep-confirm
+  before deleting; read the real code before changing it.
+- Baseline: **501 tests pass.** Keep them passing after every step.
+
 ## Anti-re-flag rules (enforce in review)
 
 - No business `if/elif` in the coordinator — new behavior = new handler/state/spec row.
