@@ -54,6 +54,37 @@ quality finding #2). The net is non-negotiable and comes before any decompositio
 Per-step benchmark: golden master unchanged — *exact* match for state diffs / mode
 transitions / tool-call sequences; semantic-similarity threshold for narration prose.
 
+## Progress log
+
+### Step 0 — Net: **DONE** (2026-06-04, commits `4b49a4b` + `42e918f`, 506 tests green)
+- **Production seam (behavior-neutral; defaults preserve current behavior):**
+  - `llm/client.py`: `LLMClient` Protocol + `ALLOW_MODEL_REQUESTS` guard
+    (`set_model_requests_allowed`) — every real provider `chat()/chat_stream()`
+    raises when armed, so an un-mocked call in a test fails loudly. Guard call
+    added to all 6 providers + Ollama `chat_stream`.
+  - `llm/orchestrator.py`: inject `narrator_client_factory` (defaults to
+    `get_narrator_client_for`) so a fake narrator client survives the per-turn
+    tier swap at `_select_narrator_client_for_turn`. Triage was already
+    injectable via `client=`.
+- **Net:** `tests/fakes.py` (`ScriptedBrain`, `FunctionBrain`, `brain_router`,
+  response builders) + `tests/integration/test_process_action.py` (5 tests:
+  attack→combat-without-narrating, social→ref_entity, cast_spell→slot-spent-&-
+  persisted, skill_check→roll-scrubbed via `_narrate_outcome`, guard-fires).
+- **Verified seam facts (grep-confirmed, may save the next session time):**
+  - **Two** LLM seams only: `get_llm_client()` feeds triage **and** the
+    state/entity extractors **and** the dedup judge (all `self.client or
+    get_llm_client()`); `get_narrator_client_for(tier)` feeds narration. A test
+    wires the first via one `FunctionBrain` on `orch.client` +
+    `_state_extractor.client` + `_entity_extractor.client` + `get_dedup_judge()`.
+  - `self.rules` is **dead** — assigned in `__init__`, never called. Triage is
+    `self.client.chat(json_schema=get_triage_schema())` (~orch:1475). NLI is
+    disabled (Step 3.7). Entity-extract is skipped when `world_state` is present.
+  - **Test env gotcha:** the suite runs under `C:\Python\python.exe` (system),
+    **not** `Main/venv` (which has no pytest). Use the controlled-file pattern.
+- **Next:** Step 1 (tool registry) — 16 `_execute_*` methods + the
+  `_execute_tool` dispatch (`orchestrator.py:4131`). This is a real extraction;
+  it will NOT "land fast" — give it its own focused session and end green+committed.
+
 ## Pre-net cleanup (safe to do NOW, before the net — reduces surface)
 
 Pure dead-code deletion is the safest change (grep-confirm zero usages + suite green) and
