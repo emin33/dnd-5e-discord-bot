@@ -81,9 +81,32 @@ transitions / tool-call sequences; semantic-similarity threshold for narration p
     disabled (Step 3.7). Entity-extract is skipped when `world_state` is present.
   - **Test env gotcha:** the suite runs under `C:\Python\python.exe` (system),
     **not** `Main/venv` (which has no pytest). Use the controlled-file pattern.
-- **Next:** Step 1 (tool registry) — 16 `_execute_*` methods + the
-  `_execute_tool` dispatch (`orchestrator.py:4131`). This is a real extraction;
-  it will NOT "land fast" — give it its own focused session and end green+committed.
+### Step 1a — Delete the dead tool-execution path: **DONE** (2026-06-04, commit `85cafe5`, 506 green)
+- **Verify-don't-trust payoff:** the audit framed Step 1 as "extract the 16
+  `_execute_*`," but `_execute_tool` (the orchestrator's rules-brain tool
+  dispatcher) has **zero callers** — it + the 14 `_execute_*` it dispatched are a
+  dead **parallel implementation** of tool execution (dead because `self.rules`
+  is dead). The research says remove parallel implementations *first*. Deleted
+  them + the orphaned `ToolExecutionResult` DTO (528 lines; orchestrator
+  4785→4257).
+- **KEPT** the two executors live code also calls directly
+  (`_execute_purchase_item` ← `_handle_purchase`, `_execute_add_item` ←
+  `_handle_inventory`) and the interleaved live helpers (`_resolve_character_by_name`,
+  `_resolve_combatant_by_name`).
+- **Lesson (recorded for the redo of similar cuts):** these dead methods are
+  **interleaved** with live helpers — a line-range deletion swallowed a live one
+  and the net failed loudly (caught it). Use **AST-span-by-name** deletion, not
+  line ranges, for interleaved clusters. The purchase/inventory live path is
+  **untested** — safety came from AST-by-name + post-delete `hasattr` checks + suite.
+
+- **Next (the real Step 1 — the tool *registry*, not yet started):** the LIVE
+  tool path is `narrator_tools._convert_tool_call` (8 tool→effect branches) →
+  `EffectExecutor.execute` (effects.py — *already* a `dict[EffectType, method]`
+  registry) → `_sync_effect_to_world_state` (orchestrator). Goal "add a tool =
+  one registration": co-locate each tool's **schema** (`get_narrator_tools_for_tier`)
+  with its **converter** (`_convert_tool_call`) so both read one registry. This is
+  audit #5 territory (the `ProposedEffect` 50-field god-DTO → discriminated union)
+  and wants more net coverage first (add_npc/spawn_object/purchase/inventory turns).
 
 ## Pre-net cleanup (safe to do NOW, before the net — reduces surface)
 
