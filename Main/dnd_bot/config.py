@@ -265,6 +265,11 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=False,
+        # Deliberate (pins the pydantic-settings default): unknown keys in
+        # .env fail fast at boot, so .env must track the fields below exactly.
+        # Unrelated OS env vars are unaffected (only field-named vars are read).
+        # Keep .env.example in sync; tests/unit/test_env_example.py enforces it.
+        extra="forbid",
     )
 
     # Discord
