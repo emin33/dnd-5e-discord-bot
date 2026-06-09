@@ -6,6 +6,7 @@ import structlog
 
 from ..config import get_settings
 from ..data import get_database, close_database, get_srd
+from ..data.repositories import get_session_repo
 
 logger = structlog.get_logger()
 
@@ -118,6 +119,14 @@ class DnDBot(commands.Bot):
         # Initialize database
         await get_database()
         logger.info("database_initialized")
+
+        # Session resume is not supported — mark any active rows left
+        # behind by a crashed/killed previous run as ended so the DB
+        # doesn't accumulate phantom active sessions.
+        session_repo = await get_session_repo()
+        stale = await session_repo.end_stale_sessions()
+        if stale:
+            logger.info("stale_sessions_ended", count=stale)
 
         # Load SRD data
         get_srd()

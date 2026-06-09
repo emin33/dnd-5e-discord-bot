@@ -93,36 +93,6 @@ class SessionRepository:
             "started_at": row[6],
         }
 
-    async def load_active_sessions(self) -> list[dict]:
-        """
-        Load all active sessions (for bot restart recovery).
-
-        Returns list of session dicts.
-        """
-        db = await self._get_db()
-
-        rows = await db.fetch_all(
-            """
-            SELECT id, campaign_id, channel_id, session_number, state, active_combat_id, started_at
-            FROM game_session
-            WHERE state NOT IN ('ended', 'paused')
-            ORDER BY started_at DESC
-            """,
-        )
-
-        return [
-            {
-                "id": row[0],
-                "campaign_id": row[1],
-                "channel_id": row[2],
-                "session_number": row[3],
-                "state": row[4],
-                "active_combat_id": row[5],
-                "started_at": row[6],
-            }
-            for row in rows
-        ]
-
     async def end_session(self, session_id: str) -> None:
         """Mark a session as ended."""
         db = await self._get_db()
@@ -136,6 +106,26 @@ class SessionRepository:
             (session_id,),
         )
         await db.commit()
+
+    async def end_stale_sessions(self) -> int:
+        """
+        Mark lingering non-terminal sessions as ended (startup hygiene).
+
+        Session resume is not supported, so rows left active by a crashed
+        or killed previous run would otherwise stay active forever. Called
+        once at bot startup. Returns the number of rows updated.
+        """
+        db = await self._get_db()
+
+        cursor = await db.execute(
+            """
+            UPDATE game_session
+            SET state = 'ended', ended_at = CURRENT_TIMESTAMP
+            WHERE state NOT IN ('ended', 'paused')
+            """,
+        )
+        await db.commit()
+        return cursor.rowcount
 
     async def pause_session(self, session_id: str) -> None:
         """Mark a session as paused (can be resumed)."""
