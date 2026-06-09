@@ -91,13 +91,16 @@ transitions / tool-call sequences; semantic-similarity threshold for narration p
   4785→4257).
 - **KEPT** the two executors live code also calls directly
   (`_execute_purchase_item` ← `_handle_purchase`, `_execute_add_item` ←
-  `_handle_inventory`) and the interleaved live helpers (`_resolve_character_by_name`,
-  `_resolve_combatant_by_name`).
+  `_handle_inventory`) and the interleaved live helper (`_resolve_character_by_name`).
 - **Lesson (recorded for the redo of similar cuts):** these dead methods are
   **interleaved** with live helpers — a line-range deletion swallowed a live one
   and the net failed loudly (caught it). Use **AST-span-by-name** deletion, not
   line ranges, for interleaved clusters. The purchase/inventory live path is
   **untested** — safety came from AST-by-name + post-delete `hasattr` checks + suite.
+- **Correction (2026-06-09, quality re-audit #13):** `_resolve_combatant_by_name` was
+  wrongly recorded above as a live helper — zero callers (they died with `_execute_tool`);
+  it and `_check_player_attack_initiation` (also zero callers; superseded by triage + the
+  `start_combat` tool) are now deleted, AST-span-by-name.
 
 - **Next (the real Step 1 — the tool *registry*, not yet started):** the LIVE
   tool path is `narrator_tools._convert_tool_call` (8 tool→effect branches) →
@@ -113,19 +116,21 @@ transitions / tool-call sequences; semantic-similarity threshold for narration p
 Pure dead-code deletion is the safest change (grep-confirm zero usages + suite green) and
 it removes *parallel implementations* the decomposition would otherwise have to reason
 about. From the quality audit's quick-wins:
-- Delete grep-confirmed orphans: `game/combat/turn_loop.py`, `game/mechanics/effects.py`
-  (+ `create_*_effect` factories), `views/CombatTurnManager`, streaming-TTS subsystem,
-  duplicate `_build_mechanics_embed`/`split_text` in `game.py`, empty `llm/prompts/` &
-  `llm/tools/` packages, `Character.proficiencies`/`CharacterProficiency`, etc.
+- Delete grep-confirmed orphans — mostly **DONE** (`ddea308`): `game/combat/turn_loop.py`,
+  `game/mechanics/effects.py` (+ `create_*_effect` factories), `views/CombatTurnManager`,
+  empty `llm/prompts/` & `llm/tools/` packages all gone. Still pending: streaming-TTS
+  subsystem, duplicate `_build_mechanics_embed`/`split_text` in `game.py`,
+  `Character.proficiencies`/`CharacterProficiency`, etc.
 - Either wire `image_comfyui.py` into the factory or delete it (config advertises
   `"comfyui"` → ValueError today).
-- Unused imports; hoist in-function `import structlog`/`uuid` to module level.
+- Unused imports (**DONE** `ddea308`, 84 removed); hoist in-function `import structlog`/
+  `uuid` to module level (still pending).
 - **DEFER** "rarely-hit fallback" deletions (INTENTS mini-language + adjudicator, ~650
   lines) until the net exists — confirm-then-delete, not blind.
 
 Also finish here: **Stage A.2 remainder (#2)** — `_get_save_modifier`/`_is_concentrating`/
-`_check_concentration` in `coordinator.py` still read `_character_cache` directly,
-bypassing the session-first `_get_character`; and **double end-of-turn processing (#3)**.
+`_check_concentration` in `coordinator.py` — and **double end-of-turn processing (#3)**:
+both **DONE** (`c0b3d67`; the three helpers now route via `_resolve_player_character`).
 
 ## Session strategy
 
@@ -169,7 +174,7 @@ bypassing the session-first `_get_character`; and **double end-of-turn processin
   *specifics* — file:line citations drift, and a few "dead code" / "depends on X" claims
   were stale (e.g. turn_loop's "voice frontend depends on it" was false). Grep-confirm
   before deleting; read the real code before changing it.
-- Baseline: **501 tests pass.** Keep them passing after every step.
+- Baseline: **506 tests pass.** Keep them passing after every step.
 
 ## Anti-re-flag rules (enforce in review)
 
