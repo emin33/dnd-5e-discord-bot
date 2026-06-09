@@ -11,10 +11,12 @@ dependencies = [
     # Database
     "aiosqlite>=0.20.0",
 
-    # LLM
+    # LLM (provider SDKs used by llm/client.py)
     "ollama>=0.4.0",
     "groq>=0.25.0",
     "openai>=1.0.0",
+    "anthropic>=0.89.0",  # default 'production' profile narrator
+    "google-generativeai>=0.8.6",  # legacy SDK used by GeminiClient (google-genai stays in [eval])
 
     # Data validation
     "pydantic>=2.9.0",
@@ -43,9 +45,35 @@ dev = [
 eval = [
     "google-genai>=1.0.0",
 ]
-kokoro = [
-    "kokoro>=0.9.4",
-    "soundfile",
+# Voice stack: ASR/TTS providers + LiveKit transport (dnd_bot/voice/, dnd_bot/immersion/ audio)
+voice = [
+    "numpy>=1.26.4",
+    "scipy>=1.15.3",
+    "soundfile>=0.13.1",
+    "lameenc>=1.8.2",
+    "aiohttp>=3.13.3",
+    "requests>=2.32.3",
+    "kokoro>=0.9.4",  # default local TTS (pulls torch)
+    "elevenlabs>=2.42.0",
+    "deepgram-sdk>=6.1.1",
+    "nvidia-riva-client>=2.25.1",
+    "livekit>=1.1.5",
+    "livekit-api>=1.1.0",
+    "livekit-agents>=1.5.2",
+    "livekit-plugins-nvidia>=1.5.1",
+    "livekit-plugins-silero>=1.5.1",
+]
+# FastAPI server for the web UI / voice API (run_voice.py needs both [voice] and [web])
+web = [
+    "fastapi>=0.115.12",
+    "uvicorn>=0.34.2",
+]
+# Scene image generation (default 'fal' provider needs only requests;
+# torch/diffusers are for the local Stable Diffusion path — heavy GPU install)
+image = [
+    "requests>=2.32.3",
+    "torch>=2.4.0",
+    "diffusers>=0.37.1",
 ]
 
 [build-system]
