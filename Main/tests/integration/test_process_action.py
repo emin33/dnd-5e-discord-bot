@@ -54,23 +54,27 @@ class _Net:
     pinned via the injected ``_narrator_client_factory``.
     """
 
-    def __init__(self, orch, session, character, char_repo, inv_repo):
+    def __init__(self, orch, session, character, char_repo, inv_repo, monkeypatch):
         self.orch = orch
         self.session = session
         self.character = character
         self.char_repo = char_repo
         self.inv_repo = inv_repo
+        self.monkeypatch = monkeypatch
         self.registry = orch._scene_registry
         self.brain: FunctionBrain | None = None        # triage + extractors
         self.narrator: ScriptedBrain | None = None     # narration
 
     async def run(self, action, triage, narration=None, player_name=None):
         self.brain = FunctionBrain(brain_router(triage))
-        # Every get_llm_client()-backed seam → the one branching fake.
+        # Every get_llm_client()-backed seam → the one branching fake. The
+        # extractors and the dedup judge are process-wide singletons, so they
+        # go through monkeypatch — teardown restores the real clients instead
+        # of leaking the fake into later tests.
         self.orch.client = self.brain
-        self.orch._state_extractor.client = self.brain
-        self.orch._entity_extractor.client = self.brain
-        get_dedup_judge().client = self.brain
+        self.monkeypatch.setattr(self.orch._state_extractor, "client", self.brain)
+        self.monkeypatch.setattr(self.orch._entity_extractor, "client", self.brain)
+        self.monkeypatch.setattr(get_dedup_judge(), "client", self.brain)
         # Narrator tier seam → a scripted fake (one prose+tools response/turn).
         self.narrator = ScriptedBrain([narration or narration_response("")])
         self.orch._narrator_client_factory = lambda tier: self.narrator
@@ -139,7 +143,7 @@ async def net(tmp_path: Path, monkeypatch):
     orch.set_scene_registry(registry)
 
     try:
-        yield _Net(orch, session, wizard, char_repo, inv_repo)
+        yield _Net(orch, session, wizard, char_repo, inv_repo, monkeypatch)
     finally:
         llm_client.set_model_requests_allowed(True)
         # Close aiosqlite or its background thread keeps pytest from exiting.
