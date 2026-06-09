@@ -17,6 +17,11 @@ from ..llm.client import get_ollama_client
 
 logger = structlog.get_logger()
 
+# Failed condensation/compaction now leaves its buffer intact for retry
+# (audit P1-11); warn once repeated failures let a transition buffer grow
+# well past its normal trigger size (~4-6 messages).
+_RETRY_BACKLOG_WARN = 30
+
 
 # Session summary generation prompt
 SUMMARIZE_PROMPT = """You are summarizing a D&D game session.
@@ -172,7 +177,11 @@ class MemoryManager:
 
             raw = response.content.strip() if response.content else ""
             if not raw:
-                self.buffer._condensation_buffer.clear()
+                # Empty response = failed condensation; keep the buffer so
+                # the next cycle retries (audit P1-11).
+                logger.warning(
+                    "condensation_empty_response", campaign_id=self.campaign_id
+                )
                 return
 
             # Parse bullet points
@@ -198,8 +207,16 @@ class MemoryManager:
                 logger.warning("condense_parse_fallback", raw_preview=raw[:100])
 
         except Exception as e:
-            logger.warning("condensation_failed", error=str(e))
-            self.buffer._condensation_buffer.clear()
+            # Keep the buffer intact so the next cycle retries — clearing
+            # here permanently dropped the un-condensed exchanges (P1-11).
+            backlog = len(self.buffer._condensation_buffer)
+            logger.warning("condensation_failed", error=str(e), pending_messages=backlog)
+            if backlog >= _RETRY_BACKLOG_WARN:
+                logger.warning(
+                    "condensation_backlog_growing",
+                    campaign_id=self.campaign_id,
+                    pending_messages=backlog,
+                )
 
     async def _compact_overflow(self) -> None:
         """Tier 2→3: Compact overflow into running narrative with typed fact extraction.
@@ -263,7 +280,11 @@ class MemoryManager:
             )
 
             if not raw:
-                self.buffer._overflow_buffer.clear()
+                # Empty response = failed compaction; keep the overflow
+                # buffer so the next cycle retries (audit P1-11).
+                logger.warning(
+                    "compaction_empty_response", campaign_id=self.campaign_id
+                )
                 return
 
             # Parse SUMMARY and FACTS sections
@@ -291,12 +312,21 @@ class MemoryManager:
 
         except Exception as e:
             import traceback
+            # Keep the overflow buffer intact so the next cycle retries
+            # instead of dropping un-compacted memory (audit P1-11).
+            backlog = len(self.buffer._overflow_buffer)
             logger.warning(
                 "overflow_compaction_failed",
                 error=str(e),
                 traceback=traceback.format_exc()[:500],
+                pending_messages=backlog,
             )
-            self.buffer._overflow_buffer.clear()
+            if backlog >= _RETRY_BACKLOG_WARN:
+                logger.warning(
+                    "compaction_backlog_growing",
+                    campaign_id=self.campaign_id,
+                    pending_messages=backlog,
+                )
 
     async def _extract_periodic_facts(self) -> None:
         """Extract typed facts from recent messages on a turn-based schedule.

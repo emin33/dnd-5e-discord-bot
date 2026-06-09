@@ -9,8 +9,12 @@ Tests three subsystems added from agentic orchestration patterns:
 import time
 import pytest
 
+from dnd_bot.llm.client import LLMResponse
+from dnd_bot.memory import manager as manager_module
 from dnd_bot.memory.blocks import MessageBuffer, Message
 from dnd_bot.memory.manager import MemoryManager
+
+from tests.fakes import FunctionBrain, ScriptedBrain
 
 
 # ==================== MessageBuffer: Overflow & Compaction ====================
@@ -491,3 +495,94 @@ class TestDMScratchpad:
 
         categories = [e["category"] for e in orch._scratchpad]
         assert categories == ["tension", "npc_mood", "foreshadow"]
+
+
+# ==================== Condensation Failure Resilience ====================
+
+
+def _raise_llm_error(messages, **kwargs):
+    """FunctionBrain fn simulating a provider outage."""
+    raise RuntimeError("ollama down")
+
+
+class TestCondensationFailurePreservesBuffer:
+    """Audit P1-11: failed condensation/compaction must not destroy memory.
+
+    The transition buffers are cleared only on success, so the next cycle
+    retries instead of permanently dropping the aged-out exchanges.
+    """
+
+    def _fill_condensation(self, mgr: MemoryManager, n: int = 4) -> None:
+        for i in range(n):
+            mgr.buffer._condensation_buffer.append(
+                Message(role="user", content=f"exchange {i}", author_name="Kael")
+            )
+
+    async def test_condense_failure_preserves_buffer_then_retry_clears(
+        self, monkeypatch
+    ):
+        mgr = MemoryManager("test-campaign")
+        self._fill_condensation(mgr)
+
+        # LLM call raises → buffer intact, nothing condensed
+        monkeypatch.setattr(
+            manager_module, "get_ollama_client",
+            lambda: FunctionBrain(_raise_llm_error),
+        )
+        await mgr._condense_recent()
+        assert len(mgr.buffer._condensation_buffer) == 4
+        assert mgr.buffer.condensed_summaries == []
+
+        # Next cycle succeeds → condenses and clears
+        monkeypatch.setattr(
+            manager_module, "get_ollama_client",
+            lambda: ScriptedBrain([LLMResponse(content="- Sum A\n- Sum B")]),
+        )
+        await mgr._condense_recent()
+        assert len(mgr.buffer._condensation_buffer) == 0
+        assert mgr.buffer.condensed_summaries == ["Sum A", "Sum B"]
+
+    async def test_condense_empty_response_preserves_buffer(self, monkeypatch):
+        mgr = MemoryManager("test-campaign")
+        self._fill_condensation(mgr)
+
+        monkeypatch.setattr(
+            manager_module, "get_ollama_client",
+            lambda: ScriptedBrain([LLMResponse(content="")]),
+        )
+        await mgr._condense_recent()
+
+        assert len(mgr.buffer._condensation_buffer) == 4
+        assert mgr.buffer.condensed_summaries == []
+
+    async def test_compact_failure_preserves_overflow_then_retry_clears(
+        self, monkeypatch
+    ):
+        mgr = MemoryManager("test-campaign")
+        mgr.buffer._overflow_buffer = [
+            Message(role="system", content=f"old summary {i}") for i in range(3)
+        ]
+
+        # LLM call raises → overflow intact, no summary written
+        monkeypatch.setattr(
+            manager_module, "get_ollama_client",
+            lambda: FunctionBrain(_raise_llm_error),
+        )
+        await mgr._compact_overflow()
+        assert len(mgr.buffer._overflow_buffer) == 3
+        assert mgr.buffer.running_summary == ""
+
+        # Retry succeeds → compacts and clears
+        monkeypatch.setattr(
+            manager_module, "get_ollama_client",
+            lambda: ScriptedBrain([
+                LLMResponse(
+                    content="SUMMARY:\nThe party explored the cave.\n"
+                            "FACTS:\n- EVENT: The cave was explored"
+                )
+            ]),
+        )
+        await mgr._compact_overflow()
+        assert len(mgr.buffer._overflow_buffer) == 0
+        assert "explored the cave" in mgr.buffer.running_summary
+        assert any("EVENT" in f for f in mgr.buffer.pinned_facts)
