@@ -1097,12 +1097,11 @@ class EffectExecutor:
             applied["disposition"] = entity.disposition
 
         if effect.update_status is not None:
-            # SceneEntity doesn't have status historically; record as attribute
-            setattr(entity, "status", effect.update_status.lower())
+            entity.status = effect.update_status.lower()
             applied["status"] = effect.update_status.lower()
 
         if effect.update_importance is not None:
-            setattr(entity, "important", bool(effect.update_importance))
+            entity.important = bool(effect.update_importance)
             applied["important"] = bool(effect.update_importance)
 
         if effect.update_description_addition:

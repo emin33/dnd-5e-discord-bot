@@ -115,6 +115,14 @@ class SceneEntity(BaseModel):
     # 76-84: Hostile
     # 85-100: Combat (auto-trigger threshold)
 
+    # Narrator-declared state (update_entity effect; see llm/effects.py).
+    # None = never declared. Vocabulary: alive/wounded/unconscious/dead/fled/captured.
+    status: Optional[str] = None
+    important: bool = False  # Quest-givers, allies, key story NPCs (mirrors NPCState.important)
+
+    # Free-form object properties (spawn_object effect: item_index, value, magical, etc.)
+    properties: dict = Field(default_factory=dict)
+
     # Combat-ready stats (if known or estimated)
     hp_estimate: Optional[int] = None
     ac_estimate: Optional[int] = None
