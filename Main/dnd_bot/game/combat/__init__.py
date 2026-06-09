@@ -30,6 +30,8 @@ from .coordinator import (
     get_coordinator_by_key,
     clear_coordinator,
     clear_coordinator_by_key,
+    get_turn_lock,
+    get_turn_lock_for_channel,
 )
 
 from .npc_brain import (
@@ -63,6 +65,8 @@ __all__ = [
     "get_coordinator_by_key",
     "clear_coordinator",
     "clear_coordinator_by_key",
+    "get_turn_lock",
+    "get_turn_lock_for_channel",
     # NPC AI
     "NPCCombatBrain",
     "CreatureBehavior",

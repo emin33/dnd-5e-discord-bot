@@ -17,6 +17,32 @@ from ...game.combat.actions import (
 from ...game.combat.coordinator import CombatTurnCoordinator
 
 
+async def _reject_interaction(interaction: discord.Interaction, message: str) -> None:
+    """Ephemeral rejection used by the views' interaction_check gates."""
+    try:
+        await interaction.response.send_message(message, ephemeral=True)
+    except Exception:
+        pass
+
+
+async def _disable_items_and_ack(view: discord.ui.View, interaction: discord.Interaction) -> None:
+    """Disable every item on a view and acknowledge by editing the message.
+
+    Called BEFORE any awaited game mutation so double-clicks land on dead
+    components (audit P0-6). Falls back to a bare defer if the edit fails;
+    the callers' one-shot flags remain the real guard either way.
+    """
+    for item in view.children:
+        item.disabled = True
+    try:
+        await interaction.response.edit_message(view=view)
+    except Exception:
+        try:
+            await interaction.response.defer()
+        except Exception:
+            pass
+
+
 class CombatActionView(discord.ui.View):
     """
     Main action menu for a combatant's turn.
@@ -30,15 +56,56 @@ class CombatActionView(discord.ui.View):
         turn_context: TurnContext,
         on_action_complete: Callable[[ActionResult], Awaitable[None]],
         on_turn_end: Callable[[], Awaitable[None]],
+        actor_user_id: Optional[int] = None,
     ):
         super().__init__(timeout=300)  # 5 minute timeout
         self.coordinator = coordinator
         self.ctx = turn_context
         self.on_action_complete = on_action_complete
         self.on_turn_end = on_turn_end
+        self.actor_user_id = actor_user_id
         self.message: Optional[discord.Message] = None
+        # One-shot guard (audit P0-6): set when a click claims this turn so
+        # double-clicks and stray buttons can't drive a second mutation.
+        self._acted = False
 
         self._build_buttons()
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        """Gate clicks: only the acting player, and only until the turn is claimed."""
+        if (
+            self.actor_user_id is not None
+            and interaction.user
+            and interaction.user.id != self.actor_user_id
+        ):
+            await _reject_interaction(
+                interaction,
+                f"Only {self.ctx.combatant_name}'s player can act on this turn.",
+            )
+            return False
+        if self._acted:
+            await _reject_interaction(
+                interaction, "That turn is already being resolved."
+            )
+            return False
+        return True
+
+    async def disable_and_claim(self, interaction: discord.Interaction) -> bool:
+        """Claim the turn and disable all buttons BEFORE any game mutation.
+
+        Returns False (after an ephemeral notice) if another click already
+        claimed this view — the caller must bail without touching combat
+        state. The coordinator's per-channel turn lock is the hard backstop
+        for anything that still slips through (audit P0-6).
+        """
+        if self._acted:
+            await _reject_interaction(
+                interaction, "That turn is already being resolved."
+            )
+            return False
+        self._acted = True
+        await _disable_items_and_ack(self, interaction)
+        return True
 
     def _build_buttons(self):
         """Build action buttons based on available resources."""
@@ -137,13 +204,15 @@ class AttackButton(discord.ui.Button):
         self.parent = parent
 
     async def callback(self, interaction: discord.Interaction):
-        # Show target selection
+        # Show target selection (navigation only — the mutation happens in
+        # the sub-view, which carries its own double-click guard)
         view = TargetSelectionView(
             coordinator=self.parent.coordinator,
             turn_context=self.parent.ctx,
             action_type=CombatActionType.ATTACK,
             on_select=self._on_target_selected,
             on_cancel=self._on_cancel,
+            actor_user_id=self.parent.actor_user_id,
         )
         await interaction.response.edit_message(
             embed=view.get_embed(),
@@ -218,13 +287,17 @@ class DashButton(discord.ui.Button):
         self.parent = parent
 
     async def callback(self, interaction: discord.Interaction):
+        # Claim the turn and disable buttons BEFORE the game mutation so a
+        # double-click can't execute twice (audit P0-6).
+        if not await self.parent.disable_and_claim(interaction):
+            return
+
         action = CombatAction(
             action_type=CombatActionType.DASH,
             combatant_id=self.parent.ctx.combatant_id,
         )
 
         result = await self.parent.coordinator.execute_action(action)
-        await interaction.response.defer()
         await self.parent.on_action_complete(result)
 
 
@@ -241,13 +314,16 @@ class DodgeButton(discord.ui.Button):
         self.parent = parent
 
     async def callback(self, interaction: discord.Interaction):
+        # Disable-before-mutate double-click guard (audit P0-6)
+        if not await self.parent.disable_and_claim(interaction):
+            return
+
         action = CombatAction(
             action_type=CombatActionType.DODGE,
             combatant_id=self.parent.ctx.combatant_id,
         )
 
         result = await self.parent.coordinator.execute_action(action)
-        await interaction.response.defer()
         await self.parent.on_action_complete(result)
 
 
@@ -264,13 +340,16 @@ class DisengageButton(discord.ui.Button):
         self.parent = parent
 
     async def callback(self, interaction: discord.Interaction):
+        # Disable-before-mutate double-click guard (audit P0-6)
+        if not await self.parent.disable_and_claim(interaction):
+            return
+
         action = CombatAction(
             action_type=CombatActionType.DISENGAGE,
             combatant_id=self.parent.ctx.combatant_id,
         )
 
         result = await self.parent.coordinator.execute_action(action)
-        await interaction.response.defer()
         await self.parent.on_action_complete(result)
 
 
@@ -287,7 +366,8 @@ class HelpButton(discord.ui.Button):
         self.parent = parent
 
     async def callback(self, interaction: discord.Interaction):
-        # Show ally selection for Help
+        # Show ally selection for Help (navigation only — the sub-view
+        # carries the double-click guard)
         view = TargetSelectionView(
             coordinator=self.parent.coordinator,
             turn_context=self.parent.ctx,
@@ -295,6 +375,7 @@ class HelpButton(discord.ui.Button):
             on_select=self._on_target_selected,
             on_cancel=self._on_cancel,
             allies_only=True,
+            actor_user_id=self.parent.actor_user_id,
         )
         await interaction.response.edit_message(
             embed=view.get_embed(),
@@ -336,13 +417,16 @@ class HideButton(discord.ui.Button):
         self.parent = parent
 
     async def callback(self, interaction: discord.Interaction):
+        # Disable-before-mutate double-click guard (audit P0-6)
+        if not await self.parent.disable_and_claim(interaction):
+            return
+
         action = CombatAction(
             action_type=CombatActionType.HIDE,
             combatant_id=self.parent.ctx.combatant_id,
         )
 
         result = await self.parent.coordinator.execute_action(action)
-        await interaction.response.defer()
         await self.parent.on_action_complete(result)
 
 
@@ -359,7 +443,11 @@ class EndTurnButton(discord.ui.Button):
         self.parent = parent
 
     async def callback(self, interaction: discord.Interaction):
-        await interaction.response.defer()
+        # Claim + disable before the turn-end mutation (audit P0-6): a
+        # double-click here used to advance the turn twice, skipping a
+        # combatant.
+        if not await self.parent.disable_and_claim(interaction):
+            return
         self.parent.stop()
         await self.parent.on_turn_end()
 
@@ -379,6 +467,7 @@ class TargetSelectionView(discord.ui.View):
         on_select: Callable[[discord.Interaction, str, Optional[WeaponStats]], Awaitable[None]],
         on_cancel: Callable[[discord.Interaction], Awaitable[None]],
         allies_only: bool = False,
+        actor_user_id: Optional[int] = None,
     ):
         super().__init__(timeout=60)
         self.coordinator = coordinator
@@ -387,10 +476,32 @@ class TargetSelectionView(discord.ui.View):
         self.on_select = on_select
         self.on_cancel = on_cancel
         self.allies_only = allies_only
+        self.actor_user_id = actor_user_id
+        # One-shot guard (audit P0-6): a double-select must not fire twice
+        self._acted = False
 
         self.selected_weapon: Optional[WeaponStats] = None
 
         self._build_view()
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        """Gate clicks: only the acting player, and only until a target is picked."""
+        if (
+            self.actor_user_id is not None
+            and interaction.user
+            and interaction.user.id != self.actor_user_id
+        ):
+            await _reject_interaction(
+                interaction,
+                f"Only {self.ctx.combatant_name}'s player can act on this turn.",
+            )
+            return False
+        if self._acted:
+            await _reject_interaction(
+                interaction, "That action is already being resolved."
+            )
+            return False
+        return True
 
     def _build_view(self):
         """Build the selection view."""
@@ -532,7 +643,12 @@ class TargetSelectionView(discord.ui.View):
 
     async def _on_target_select(self, interaction: discord.Interaction):
         target_id = interaction.data["values"][0]
-        await interaction.response.defer()
+        # Claim + disable BEFORE the game mutation runs in on_select, so a
+        # double-select can't execute the action twice (audit P0-6).
+        if self._acted:
+            return
+        self._acted = True
+        await _disable_items_and_ack(self, interaction)
         self.stop()
         await self.on_select(interaction, target_id, self.selected_weapon)
 
@@ -558,8 +674,30 @@ class SpellSelectionView(discord.ui.View):
         super().__init__(timeout=60)
         self.parent = parent
         self.on_cancel_cb = on_cancel
+        # One-shot guard (audit P0-6): every route into the actual cast
+        # funnels through _execute_cast — it must never run twice.
+        self._cast_executed = False
 
         self._build_view()
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        """Gate clicks: only the acting player, and only until a cast fires."""
+        if (
+            self.parent.actor_user_id is not None
+            and interaction.user
+            and interaction.user.id != self.parent.actor_user_id
+        ):
+            await _reject_interaction(
+                interaction,
+                f"Only {self.parent.ctx.combatant_name}'s player can act on this turn.",
+            )
+            return False
+        if self._cast_executed:
+            await _reject_interaction(
+                interaction, "That spell is already being resolved."
+            )
+            return False
+        return True
 
     def _build_view(self):
         """Build spell selection dropdown."""
@@ -634,6 +772,7 @@ class SpellSelectionView(discord.ui.View):
                 on_select=on_target_selected,
                 on_cancel=self.on_cancel_cb,
                 allies_only=is_healing,
+                actor_user_id=self.parent.actor_user_id,
             )
             await interaction.response.edit_message(
                 content=f"Casting **{info.name}** — choose a target:",
@@ -641,8 +780,10 @@ class SpellSelectionView(discord.ui.View):
                 view=target_view,
             )
         else:
-            # Utility/self spell — no target needed
-            await interaction.response.defer()
+            # Utility/self spell — no target needed. Disable the dropdown
+            # BEFORE executing so a double-select can't cast twice
+            # (audit P0-6).
+            await _disable_items_and_ack(self, interaction)
             await self._proceed_to_slot_or_execute(
                 interaction, spell_index, info.level, []
             )
@@ -707,6 +848,12 @@ class SpellSelectionView(discord.ui.View):
         target_ids: list[str],
     ):
         """Construct CombatAction and execute through coordinator."""
+        # One-shot guard (audit P0-6): target select, slot select, and the
+        # direct path all funnel here — never execute the cast twice.
+        if self._cast_executed:
+            return
+        self._cast_executed = True
+
         action = CombatAction(
             action_type=CombatActionType.CAST_SPELL,
             combatant_id=self.parent.ctx.combatant_id,
@@ -742,6 +889,8 @@ class SlotLevelSelectionView(discord.ui.View):
         self.target_ids = target_ids
         self.on_cast = on_cast
         self.on_cancel_cb = on_cancel
+        # One-shot guard (audit P0-6): a double-select must not cast twice
+        self._acted = False
 
         options = [
             discord.SelectOption(
@@ -768,9 +917,32 @@ class SlotLevelSelectionView(discord.ui.View):
         cancel.callback = self._on_cancel
         self.add_item(cancel)
 
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        """Gate clicks: only the acting player, and only until a slot is picked."""
+        if (
+            self.parent.actor_user_id is not None
+            and interaction.user
+            and interaction.user.id != self.parent.actor_user_id
+        ):
+            await _reject_interaction(
+                interaction,
+                f"Only {self.parent.ctx.combatant_name}'s player can act on this turn.",
+            )
+            return False
+        if self._acted:
+            await _reject_interaction(
+                interaction, "That spell is already being resolved."
+            )
+            return False
+        return True
+
     async def _on_select(self, interaction: discord.Interaction):
         slot_level = int(interaction.data["values"][0])
-        await interaction.response.defer()
+        # Claim + disable BEFORE the cast executes (audit P0-6)
+        if self._acted:
+            return
+        self._acted = True
+        await _disable_items_and_ack(self, interaction)
         self.stop()
         await self.on_cast(interaction, self.spell_index, slot_level, self.target_ids)
 
@@ -896,6 +1068,19 @@ class NPCTurnView(discord.ui.View):
         self.coordinator = coordinator
         self.channel = channel
         self.on_turns_complete = on_turns_complete
+        # In-flight guard (audit P0-6): NPC turns have no owning player, so
+        # there is no actor to restrict to — but clicks during a run are
+        # rejected, and buttons disable BEFORE the slow multi-LLM-call turn.
+        self._busy = False
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        """Anyone at the table may drive NPC turns, but only one run at a time."""
+        if self._busy:
+            await _reject_interaction(
+                interaction, "NPC turns are already running."
+            )
+            return False
+        return True
 
     @discord.ui.button(
         label="Run NPC Turn",
@@ -904,12 +1089,15 @@ class NPCTurnView(discord.ui.View):
     )
     async def run_npc_turn(self, button: discord.ui.Button, interaction: discord.Interaction):
         """Run the current NPC's turn."""
-        await interaction.response.defer()
-
         current = self.coordinator.manager.combat.get_current_combatant()
         if not current or current.is_player:
-            await interaction.followup.send("No NPC turn to run.", ephemeral=True)
+            await interaction.response.send_message("No NPC turn to run.", ephemeral=True)
             return
+
+        # Disable buttons and edit BEFORE the multi-LLM-call turn so the
+        # whole slow window isn't re-clickable (audit P0-6).
+        self._busy = True
+        await _disable_items_and_ack(self, interaction)
 
         # Run the NPC turn
         results = await self.coordinator.run_npc_turn(current)
@@ -926,8 +1114,13 @@ class NPCTurnView(discord.ui.View):
             except Exception:
                 pass
 
-        # Disable the button after use
+        # Pre-hardening UX: this button stays used-up after one turn, the
+        # "Run All" button comes back.
+        for item in self.children:
+            if isinstance(item, discord.ui.Button):
+                item.disabled = False
         button.disabled = True
+        self._busy = False
         try:
             await interaction.message.edit(view=self)
         except Exception:
@@ -943,7 +1136,10 @@ class NPCTurnView(discord.ui.View):
     )
     async def run_all_npc_turns(self, button: discord.ui.Button, interaction: discord.Interaction):
         """Run all consecutive NPC turns automatically."""
-        await interaction.response.defer()
+        # Disable buttons and edit BEFORE the long multi-turn run so the
+        # whole slow window isn't re-clickable (audit P0-6).
+        self._busy = True
+        await _disable_items_and_ack(self, interaction)
 
         turns_run = 0
         max_turns = 10
@@ -975,13 +1171,6 @@ class NPCTurnView(discord.ui.View):
             if self.coordinator.manager.combat.is_combat_over():
                 break
 
-        # Disable buttons after use
-        for item in self.children:
-            if isinstance(item, discord.ui.Button):
-                item.disabled = True
-        try:
-            await interaction.message.edit(view=self)
-        except Exception:
-            pass
-
+        # Buttons were already disabled (and the message edited) before the
+        # run; this view is used up.
         await self.on_turns_complete()

@@ -135,6 +135,17 @@ class GameSession:
         player = self.get_player(user_id)
         return player.character if player else None
 
+    def get_user_id_for_character(self, character_id: str) -> Optional[int]:
+        """Reverse-map a character id to its controlling player's user id.
+
+        Used by combat views' interaction_check so only the acting player
+        can drive their turn's buttons (audit P0-6).
+        """
+        for user_id, player in self.players.items():
+            if player.character and player.character.id == character_id:
+                return user_id
+        return None
+
     def get_all_characters(self) -> list[Character]:
         """Get all player characters in the session."""
         return [p.character for p in self.players.values() if p.character]
@@ -818,6 +829,12 @@ class GameSessionManager:
         4. Reset ``session.state`` to ACTIVE and drop
            ``session.combat_manager``.
 
+        The whole sequence runs under the same per-channel turn lock the
+        coordinator's mutation methods hold (audit P0-6), so teardown can
+        never interleave with a half-finished turn. Callers must therefore
+        not invoke this while holding that lock. Clearing the coordinator
+        registry below also drops the lock entry itself.
+
         Idempotent: a second call finds nothing to do and returns False.
         Also works with no GameSession (the /combat commands run standalone)
         and heals a COMBAT session whose manager was never created.
@@ -826,46 +843,48 @@ class GameSessionManager:
             CombatTurnCoordinator,
             clear_coordinator_by_key,
             get_coordinator_by_key,
+            get_turn_lock,
         )
 
         key = session_key or f"discord:{channel_id}"
-        session = self._sessions.get(key)
-
-        manager = get_combat_by_key(key)
-        if manager is None and session is not None:
-            manager = session.combat_manager
-
         did_work = False
 
-        if manager is not None:
-            coordinator = get_coordinator_by_key(key)
-            if coordinator is None:
-                coordinator = CombatTurnCoordinator(manager, session)
-            elif coordinator.session is None:
-                # /combat cog paths register coordinators without a session;
-                # bind it so persistence resolves the session-owned Character
-                # instances (Stage A.2 single authority).
-                coordinator.session = session
-            try:
-                await coordinator.persist_player_characters()
-            except Exception as e:
-                logger.warning(
-                    "combat_end_persist_failed",
-                    session_key=key,
-                    error=str(e),
-                )
-            if manager.combat.state != CombatState.COMBAT_END:
-                manager.end_combat()
-            did_work = True
+        async with get_turn_lock(key):
+            session = self._sessions.get(key)
 
-        clear_combat_by_key(key)
-        clear_coordinator_by_key(key)
+            manager = get_combat_by_key(key)
+            if manager is None and session is not None:
+                manager = session.combat_manager
 
-        if session is not None:
-            if session.state == SessionState.COMBAT:
-                session.state = SessionState.ACTIVE
+            if manager is not None:
+                coordinator = get_coordinator_by_key(key)
+                if coordinator is None:
+                    coordinator = CombatTurnCoordinator(manager, session)
+                elif coordinator.session is None:
+                    # /combat cog paths register coordinators without a session;
+                    # bind it so persistence resolves the session-owned Character
+                    # instances (Stage A.2 single authority).
+                    coordinator.session = session
+                try:
+                    await coordinator.persist_player_characters()
+                except Exception as e:
+                    logger.warning(
+                        "combat_end_persist_failed",
+                        session_key=key,
+                        error=str(e),
+                    )
+                if manager.combat.state != CombatState.COMBAT_END:
+                    manager.end_combat()
                 did_work = True
-            session.combat_manager = None
+
+            clear_combat_by_key(key)
+            clear_coordinator_by_key(key)
+
+            if session is not None:
+                if session.state == SessionState.COMBAT:
+                    session.state = SessionState.ACTIVE
+                    did_work = True
+                session.combat_manager = None
 
         if did_work:
             logger.info(

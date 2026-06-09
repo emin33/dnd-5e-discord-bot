@@ -587,11 +587,19 @@ class GameCog(commands.Cog):
                 if next_combatant:
                     await self._auto_run_npc_turns(channel, coordinator, manager)
 
+        # Restrict the buttons to the acting player (audit P0-6). With no
+        # session mapping for this combatant, fall back to unrestricted.
+        actor_user_id = None
+        session = self.session_manager.get_session(channel.id)
+        if session and combatant.character_id:
+            actor_user_id = session.get_user_id_for_character(combatant.character_id)
+
         view = CombatActionView(
             coordinator=coordinator,
             turn_context=turn_ctx,
             on_action_complete=on_action_complete,
             on_turn_end=on_turn_end,
+            actor_user_id=actor_user_id,
         )
 
         await channel.send(

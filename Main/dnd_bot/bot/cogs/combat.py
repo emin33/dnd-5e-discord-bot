@@ -11,7 +11,7 @@ from ...game.combat.manager import (
     get_combat_for_channel,
     set_combat_for_channel,
 )
-from ...game.combat.coordinator import get_coordinator
+from ...game.combat.coordinator import get_coordinator, get_turn_lock_for_channel
 from ...game.session import get_session_manager
 from ..views.combat_actions import (
     CombatActionView,
@@ -503,8 +503,20 @@ class CombatCog(commands.Cog):
             )
             return
 
-        current_before = manager.combat.get_current_combatant()
-        next_combatant = manager.next_turn()
+        # Acknowledge first: the turn lock below may be held by a slow NPC
+        # turn, and slash commands only have 3s to respond.
+        await ctx.defer()
+
+        # Audit P0-6: /combat next mutates turn order directly (bypassing the
+        # coordinator), so it must hold the same per-channel turn lock the
+        # coordinator's methods take. Released before end_combat below —
+        # teardown acquires the lock itself.
+        async with get_turn_lock_for_channel(ctx.channel_id):
+            current_before = manager.combat.get_current_combatant()
+            # next_turn() returns (combatant, end effects, start effects,
+            # recharges) — previously the whole tuple was assigned, crashing
+            # the announcement below on .name.
+            next_combatant, _end_fx, _start_fx, _recharges = manager.next_turn()
 
         if manager.combat.state == CombatState.COMBAT_END:
             # Combat ended
@@ -1544,11 +1556,19 @@ class CombatCog(commands.Cog):
                 if not end_result.next_is_player:
                     await ctx.send("*(Run `/combat turn` to process this NPC's turn)*")
 
+            # Restrict the buttons to the acting player (audit P0-6). With no
+            # session mapping (standalone /combat), fall back to unrestricted.
+            actor_user_id = None
+            session = get_session_manager().get_session(ctx.channel_id)
+            if session and current.character_id:
+                actor_user_id = session.get_user_id_for_character(current.character_id)
+
             view = CombatActionView(
                 coordinator=coordinator,
                 turn_context=turn_ctx,
                 on_action_complete=on_action_complete,
                 on_turn_end=on_turn_end,
+                actor_user_id=actor_user_id,
             )
 
             await ctx.respond(embed=view.get_embed(), view=view)

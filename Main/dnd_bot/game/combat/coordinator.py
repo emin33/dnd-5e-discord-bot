@@ -14,6 +14,7 @@ Flow:
 
 from dataclasses import dataclass, field
 from typing import Optional, TYPE_CHECKING
+import asyncio
 import structlog
 
 from .manager import CombatManager
@@ -107,6 +108,28 @@ class CombatTurnCoordinator:
         """Set the narrator for result descriptions."""
         self._narrator = narrator
 
+    # ==================== Turn Serialization (audit P0-6) ====================
+
+    def _lock_key(self) -> str:
+        """Lock/registry key for this combat — mirrors get_coordinator()'s keying."""
+        if self.session is not None and getattr(self.session, "session_key", ""):
+            return self.session.session_key
+        return _coord_key(self.manager.combat.channel_id)
+
+    @property
+    def turn_lock(self) -> asyncio.Lock:
+        """Per-channel/session lock serializing all turn mutations.
+
+        Resolved from the module registry on every use so any coordinator
+        for the same combat — plus the cog paths that mutate turn state
+        without a coordinator (/combat next) and teardown
+        (GameSessionManager.end_combat) — share one lock. Public mutating
+        methods (start_turn, end_turn, execute_action, run_npc_turn)
+        acquire it and delegate to ``*_locked`` impls; read-only narration
+        helpers deliberately do not.
+        """
+        return get_turn_lock(self._lock_key())
+
     # ==================== Turn Management ====================
 
     async def start_turn(self, combatant: Combatant) -> TurnContext:
@@ -115,7 +138,14 @@ class CombatTurnCoordinator:
 
         Resets turn resources and builds available options.
         Handles surprise: surprised creatures can't act on their first turn.
+
+        Serialized on the per-channel turn lock (audit P0-6).
         """
+        async with self.turn_lock:
+            return await self._start_turn_locked(combatant)
+
+    async def _start_turn_locked(self, combatant: Combatant) -> TurnContext:
+        """start_turn body — caller must hold the turn lock."""
         # Reset turn-based states
         self.zone_tracker.on_turn_start(combatant.id)
         combatant.turn_resources.reset_for_new_turn(combatant.speed)
@@ -198,7 +228,15 @@ class CombatTurnCoordinator:
         return context
 
     async def end_turn(self, combatant: Combatant) -> TurnEndResult:
-        """End the current turn and advance to next combatant."""
+        """End the current turn and advance to next combatant.
+
+        Serialized on the per-channel turn lock (audit P0-6).
+        """
+        async with self.turn_lock:
+            return await self._end_turn_locked(combatant)
+
+    async def _end_turn_locked(self, combatant: Combatant) -> TurnEndResult:
+        """end_turn body — caller must hold the turn lock."""
         # SURPRISE: Surprise ends at the end of the creature's first turn
         if combatant.is_surprised:
             combatant.is_surprised = False
@@ -234,7 +272,14 @@ class CombatTurnCoordinator:
         Execute a combat action through the mechanics layer.
 
         This is the main entry point for all combat actions.
+
+        Serialized on the per-channel turn lock (audit P0-6).
         """
+        async with self.turn_lock:
+            return await self._execute_action_locked(action)
+
+    async def _execute_action_locked(self, action: CombatAction) -> ActionResult:
+        """execute_action body — caller must hold the turn lock."""
         combatant = self.manager.get_combatant(action.combatant_id)
         if not combatant:
             return ActionResult(
@@ -1267,14 +1312,27 @@ class CombatTurnCoordinator:
         Run an NPC's turn automatically using AI decision-making.
 
         Returns list of action results for narration.
+
+        The whole turn (start -> decide -> execute -> end) runs under the
+        per-channel turn lock so no other entry point can interleave with a
+        half-finished NPC turn (audit P0-6). The NPC brain's decide_action
+        LLM call deliberately stays inside the lock: releasing it between
+        decision and execution would let another path mutate the state the
+        decision was based on. Narration stays outside — callers narrate
+        after this returns.
         """
+        async with self.turn_lock:
+            return await self._run_npc_turn_locked(combatant)
+
+    async def _run_npc_turn_locked(self, combatant: Combatant) -> list[ActionResult]:
+        """run_npc_turn body — caller must hold the turn lock."""
         from .npc_brain import get_npc_brain
 
         brain = get_npc_brain()
         results = []
 
         # Start the turn (applies surprise: sets action=False if surprised)
-        await self.start_turn(combatant)
+        await self._start_turn_locked(combatant)
 
         # If surprised, skip action phase with informative feedback
         if combatant.is_surprised:
@@ -1288,7 +1346,7 @@ class CombatTurnCoordinator:
                 error=f"{combatant.name} is caught off guard and cannot act!",
             )
             results.append(surprised_result)
-            await self.end_turn(combatant)
+            await self._end_turn_locked(combatant)
             return results
 
         # Roll recharge for any used abilities
@@ -1314,7 +1372,7 @@ class CombatTurnCoordinator:
                 break
 
             # Execute the action
-            result = await self.execute_action(action)
+            result = await self._execute_action_locked(action)
             results.append(result)
 
             # If action failed, stop trying
@@ -1326,7 +1384,7 @@ class CombatTurnCoordinator:
                 break
 
         # End turn
-        await self.end_turn(combatant)
+        await self._end_turn_locked(combatant)
 
         logger.info(
             "npc_turn_completed",
@@ -1547,6 +1605,28 @@ def _coord_key(channel_id: int) -> str:
     return f"discord:{channel_id}"
 
 
+# Per-channel/session turn locks (audit P0-6). One lock per coordinator
+# registry key serializes every combat-turn mutation path — button views,
+# /combat slash commands, and auto-run NPC turns — at this single
+# game-layer chokepoint. Created on demand; the entry is dropped when
+# clear_coordinator*/teardown clears the registry key.
+_turn_locks: dict[str, asyncio.Lock] = {}
+
+
+def get_turn_lock(session_key: str) -> asyncio.Lock:
+    """Get or create the turn-serialization lock for a session key."""
+    lock = _turn_locks.get(session_key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _turn_locks[session_key] = lock
+    return lock
+
+
+def get_turn_lock_for_channel(channel_id: int) -> asyncio.Lock:
+    """Get or create the turn-serialization lock for a Discord channel."""
+    return get_turn_lock(_coord_key(channel_id))
+
+
 def get_coordinator(manager: CombatManager, session: Optional["GameSession"] = None) -> CombatTurnCoordinator:
     """Get or create a coordinator for a combat encounter."""
     # Use session_key if session provides one, else fall back to channel_id
@@ -1572,15 +1652,25 @@ def get_coordinator_by_key(session_key: str) -> Optional[CombatTurnCoordinator]:
 
 
 def clear_coordinator(channel_id: int) -> None:
-    """Clear coordinator for a channel (combat ended)."""
+    """Clear coordinator for a channel (combat ended).
+
+    Also drops the channel's turn-lock entry (audit P0-6); a holder's
+    reference stays valid until released, later combats get a fresh lock.
+    """
     key = _coord_key(channel_id)
     if key in _coordinators:
         _coordinators[key].zone_tracker.on_combat_end()
         del _coordinators[key]
+    _turn_locks.pop(key, None)
 
 
 def clear_coordinator_by_key(session_key: str) -> None:
-    """Clear coordinator by generic session key (combat ended)."""
+    """Clear coordinator by generic session key (combat ended).
+
+    Also drops the key's turn-lock entry (audit P0-6); a holder's
+    reference stays valid until released, later combats get a fresh lock.
+    """
     if session_key in _coordinators:
         _coordinators[session_key].zone_tracker.on_combat_end()
         del _coordinators[session_key]
+    _turn_locks.pop(session_key, None)
