@@ -7,7 +7,7 @@ from typing import Any, Callable, Optional
 import asyncio
 import structlog
 
-from ..models import Character
+from ..models import Character, CombatState
 from ..memory import (
     MemoryManager,
     get_memory_manager,
@@ -20,7 +20,7 @@ from .frontend import GameFrontend, GameEvent
 from ..data.repositories import get_character_repo, get_session_repo
 from ..data.repositories.npc_repo import get_npc_repo
 from ..models.npc import EntityType, Disposition, SceneEntity
-from .combat.manager import CombatManager, get_combat_by_key
+from .combat.manager import CombatManager, get_combat_by_key, clear_combat_by_key
 from .scene.registry import get_scene_registry, clear_scene_registry
 from .world_state import WorldState
 
@@ -796,16 +796,84 @@ class GameSessionManager:
 
         return True
 
-    def exit_combat(self, channel_id: int) -> bool:
-        """Transition session out of combat."""
-        session = self.get_session(channel_id)
-        if not session:
-            return False
+    async def end_combat(self, channel_id: int, session_key: Optional[str] = None) -> bool:
+        """Single owner of combat teardown (audit P0-3).
 
-        session.state = SessionState.ACTIVE
-        session.combat_manager = None
+        Every bot-layer path that ends combat — slash commands, the /game
+        turn loop, auto-detected combat-over — must call this instead of
+        hand-rolling ``manager.end_combat()`` + registry clears (previously
+        copy-pasted at 9 cog sites with drifted contents, none of which
+        returned ``session.state`` to ACTIVE, so a session reported COMBAT
+        forever after its first fight).
 
-        return True
+        In order:
+        1. Persist player combatants to their Characters via the
+           coordinator's single implementation (a transient coordinator is
+           built for the manual /combat paths that never created one).
+           Persistence failures are logged but never block teardown — a
+           session wedged in COMBAT is worse than one missed sync.
+        2. Finalize the manager (skipped if a turn advance already ended it,
+           so ``ended_at`` is stamped exactly once).
+        3. Clear BOTH module registries (combat manager + turn coordinator).
+        4. Reset ``session.state`` to ACTIVE and drop
+           ``session.combat_manager``.
+
+        Idempotent: a second call finds nothing to do and returns False.
+        Also works with no GameSession (the /combat commands run standalone)
+        and heals a COMBAT session whose manager was never created.
+        """
+        from .combat.coordinator import (
+            CombatTurnCoordinator,
+            clear_coordinator_by_key,
+            get_coordinator_by_key,
+        )
+
+        key = session_key or f"discord:{channel_id}"
+        session = self._sessions.get(key)
+
+        manager = get_combat_by_key(key)
+        if manager is None and session is not None:
+            manager = session.combat_manager
+
+        did_work = False
+
+        if manager is not None:
+            coordinator = get_coordinator_by_key(key)
+            if coordinator is None:
+                coordinator = CombatTurnCoordinator(manager, session)
+            elif coordinator.session is None:
+                # /combat cog paths register coordinators without a session;
+                # bind it so persistence resolves the session-owned Character
+                # instances (Stage A.2 single authority).
+                coordinator.session = session
+            try:
+                await coordinator.persist_player_characters()
+            except Exception as e:
+                logger.warning(
+                    "combat_end_persist_failed",
+                    session_key=key,
+                    error=str(e),
+                )
+            if manager.combat.state != CombatState.COMBAT_END:
+                manager.end_combat()
+            did_work = True
+
+        clear_combat_by_key(key)
+        clear_coordinator_by_key(key)
+
+        if session is not None:
+            if session.state == SessionState.COMBAT:
+                session.state = SessionState.ACTIVE
+                did_work = True
+            session.combat_manager = None
+
+        if did_work:
+            logger.info(
+                "combat_teardown_complete",
+                session_key=key,
+                session_id=session.id if session else None,
+            )
+        return did_work
 
 
 # Singleton instance

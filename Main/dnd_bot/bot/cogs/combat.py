@@ -10,12 +10,9 @@ from ...game.combat.manager import (
     CombatManager,
     get_combat_for_channel,
     set_combat_for_channel,
-    clear_combat_for_channel,
 )
-from ...game.combat.coordinator import (
-    get_coordinator,
-    clear_coordinator,
-)
+from ...game.combat.coordinator import get_coordinator
+from ...game.session import get_session_manager
 from ..views.combat_actions import (
     CombatActionView,
     ActionResultEmbed,
@@ -61,8 +58,6 @@ class CombatCog(commands.Cog):
         copy that then loses out to (or contradicts) the live one. Falls back
         to a fresh fetch only when no session is resolvable (tests / non-Discord).
         """
-        from ...game.session import get_session_manager
-
         repo = await get_character_repo()
         session = get_session_manager().get_session(manager.combat.channel_id)
         live_by_id = {}
@@ -519,7 +514,7 @@ class CombatCog(commands.Cog):
             )
             embed = build_combat_end_embed(manager.combat, victory=players_alive)
             await ctx.respond(embed=embed)
-            clear_combat_for_channel(ctx.channel_id)
+            await get_session_manager().end_combat(ctx.channel_id)
             return
 
         if next_combatant:
@@ -681,8 +676,7 @@ class CombatCog(commands.Cog):
             )
             end_embed = build_combat_end_embed(manager.combat, victory=players_alive)
             await ctx.send(embed=end_embed)
-            manager.end_combat()
-            clear_combat_for_channel(ctx.channel_id)
+            await get_session_manager().end_combat(ctx.channel_id)
 
     @combat.command(name="damage", description="Apply damage to a combatant")
     async def combat_damage(
@@ -758,11 +752,9 @@ class CombatCog(commands.Cog):
                     c.is_player and c.hp_current > 0
                     for c in manager.combat.combatants
                 )
-                await self._sync_player_characters(manager)
                 embed = build_combat_end_embed(manager.combat, victory=players_alive)
                 await ctx.send(embed=embed)
-                manager.end_combat()
-                clear_combat_for_channel(ctx.channel_id)
+                await get_session_manager().end_combat(ctx.channel_id)
 
     @combat.command(name="heal", description="Heal a combatant")
     async def combat_heal(
@@ -930,8 +922,7 @@ class CombatCog(commands.Cog):
             )
             end_embed = build_combat_end_embed(manager.combat, victory=players_alive)
             await ctx.send(embed=end_embed)
-            manager.end_combat()
-            clear_combat_for_channel(ctx.channel_id)
+            await get_session_manager().end_combat(ctx.channel_id)
 
     @combat.command(name="stabilize", description="Stabilize a dying creature")
     async def combat_stabilize(
@@ -1532,12 +1523,9 @@ class CombatCog(commands.Cog):
                         c.is_player and c.hp_current > 0
                         for c in manager.combat.combatants
                     )
-                    await self._sync_player_characters(manager)
                     end_embed = build_combat_end_embed(manager.combat, victory=players_alive)
                     await ctx.send(embed=end_embed)
-                    manager.end_combat()
-                    clear_combat_for_channel(ctx.channel_id)
-                    clear_coordinator(ctx.channel_id)
+                    await get_session_manager().end_combat(ctx.channel_id)
                     return
 
                 # End turn and advance to next combatant
@@ -1625,12 +1613,9 @@ class CombatCog(commands.Cog):
                     c.is_player and c.hp_current > 0
                     for c in manager.combat.combatants
                 )
-                await self._sync_player_characters(manager)
                 end_embed = build_combat_end_embed(manager.combat, victory=players_alive)
                 await ctx.send(embed=end_embed)
-                manager.end_combat()
-                clear_combat_for_channel(ctx.channel_id)
-                clear_coordinator(ctx.channel_id)
+                await get_session_manager().end_combat(ctx.channel_id)
                 return
 
         # Announce current combatant
@@ -1662,10 +1647,8 @@ class CombatCog(commands.Cog):
             )
             return
 
-        # Sync all player characters before ending
-        await self._sync_player_characters(manager)
-
-        manager.end_combat()
+        # Persist players, finalize, clear registries, reset session state
+        await get_session_manager().end_combat(ctx.channel_id)
 
         embed = discord.Embed(
             title=":stop_button: Combat Ended",
@@ -1689,8 +1672,6 @@ class CombatCog(commands.Cog):
                 inline=False,
             )
 
-        clear_combat_for_channel(ctx.channel_id)
-        clear_coordinator(ctx.channel_id)
         await ctx.respond(embed=embed)
 
 

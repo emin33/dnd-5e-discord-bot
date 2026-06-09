@@ -560,8 +560,6 @@ class GameCog(commands.Cog):
             # Check combat end
             if manager.combat.is_combat_over():
                 from ..embeds.combat_embed import build_combat_end_embed
-                from ...game.combat.manager import clear_combat_for_channel
-                from ...game.combat.coordinator import clear_coordinator
 
                 players_alive = any(
                     c.is_player and c.hp_current > 0
@@ -569,9 +567,7 @@ class GameCog(commands.Cog):
                 )
                 end_embed = build_combat_end_embed(manager.combat, victory=players_alive)
                 await channel.send(embed=end_embed)
-                manager.end_combat()
-                clear_combat_for_channel(channel.id)
-                clear_coordinator(channel.id)
+                await get_session_manager().end_combat(channel.id)
                 return
 
             # End turn and advance to next combatant
@@ -612,8 +608,6 @@ class GameCog(commands.Cog):
     ) -> None:
         """Auto-run all consecutive NPC turns, then show player UI."""
         from ..embeds.combat_embed import build_combat_end_embed
-        from ...game.combat.manager import clear_combat_for_channel
-        from ...game.combat.coordinator import clear_coordinator
 
         max_turns = 10  # Safety limit
         turns_run = 0
@@ -683,9 +677,7 @@ class GameCog(commands.Cog):
                 )
                 end_embed = build_combat_end_embed(manager.combat, victory=players_alive)
                 await channel.send(embed=end_embed)
-                manager.end_combat()
-                clear_combat_for_channel(channel.id)
-                clear_coordinator(channel.id)
+                await get_session_manager().end_combat(channel.id)
                 return
 
         # After NPC turns, show player turn UI if it's a player's turn
