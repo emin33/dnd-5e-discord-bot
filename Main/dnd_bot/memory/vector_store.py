@@ -4,6 +4,8 @@ from pathlib import Path
 from typing import Optional
 import structlog
 
+from ..config import get_settings
+
 logger = structlog.get_logger()
 
 
@@ -19,8 +21,10 @@ class VectorStore:
     - Player decisions and consequences
     """
 
-    def __init__(self, persist_directory: str = "./data/chroma"):
-        self.persist_directory = Path(persist_directory)
+    def __init__(self, persist_directory: str | Path | None = None):
+        # Default resolves from settings at construction time so the store
+        # lands next to the SQLite data regardless of launch CWD.
+        self.persist_directory = Path(persist_directory or get_settings().chroma_path)
         self.persist_directory.mkdir(parents=True, exist_ok=True)
 
         self._client = None

@@ -24,6 +24,38 @@ CAMPAIGN_ID = "test-campaign-001"
 
 
 # ======================================================================
+# Persist-directory resolution (audit 2026-06-09 item 14)
+# ======================================================================
+
+
+class TestPersistDirectoryResolution:
+    """Default path must come from settings, not a CWD-relative literal."""
+
+    def test_default_path_comes_from_settings(self, tmp_path, monkeypatch):
+        """VectorStore() with no path resolves settings.chroma_path."""
+        from dnd_bot.config import get_settings
+
+        monkeypatch.setattr(
+            get_settings(), "chroma_persist_path", str(tmp_path / "settings-chroma")
+        )
+        vs = VectorStore()
+        assert vs.persist_directory == tmp_path / "settings-chroma"
+        assert vs.persist_directory.is_dir()
+
+    def test_explicit_path_overrides_settings(self, tmp_path, monkeypatch):
+        """An explicit persist_directory wins over the settings default."""
+        from dnd_bot.config import get_settings
+
+        monkeypatch.setattr(
+            get_settings(), "chroma_persist_path", str(tmp_path / "settings-chroma")
+        )
+        explicit = tmp_path / "explicit-chroma"
+        vs = VectorStore(persist_directory=str(explicit))
+        assert vs.persist_directory == explicit
+        assert not (tmp_path / "settings-chroma").exists()
+
+
+# ======================================================================
 # Entity description indexing
 # ======================================================================
 
