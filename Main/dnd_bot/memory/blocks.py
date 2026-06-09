@@ -75,6 +75,35 @@ class Message:
         return self.content
 
 
+def _message_to_dict(msg: Message) -> dict:
+    """Full serialization of a Message for persistence.
+
+    Distinct from ``Message.to_dict``, which is the role/content shape
+    the LLM API expects.
+    """
+    return {
+        "role": msg.role,
+        "content": msg.content,
+        "author_name": msg.author_name,
+        "timestamp": msg.timestamp.isoformat(),
+        "message_id": msg.message_id,
+        "is_dm_narration": msg.is_dm_narration,
+    }
+
+
+def _message_from_dict(data: dict) -> Message:
+    """Inverse of ``_message_to_dict``; missing keys fall back to defaults."""
+    timestamp = data.get("timestamp")
+    return Message(
+        role=data.get("role", "user"),
+        content=data.get("content", ""),
+        author_name=data.get("author_name"),
+        timestamp=datetime.fromisoformat(timestamp) if timestamp else datetime.utcnow(),
+        message_id=data.get("message_id"),
+        is_dm_narration=data.get("is_dm_narration", False),
+    )
+
+
 class MessageBuffer:
     """
     Three-tier sliding window buffer with gradual context compaction.
@@ -199,6 +228,41 @@ class MessageBuffer:
     def pinned_facts(self) -> list[str]:
         """Typed facts extracted during compaction that must survive indefinitely."""
         return self._pinned_facts
+
+    # ------------------------------------------------------------------
+    # Persistence
+    # ------------------------------------------------------------------
+
+    def to_dict(self) -> dict:
+        """Serialize every tier so campaign memory survives a restart."""
+        return {
+            "messages": [_message_to_dict(m) for m in self._messages],
+            "condensation_buffer": [
+                _message_to_dict(m) for m in self._condensation_buffer
+            ],
+            "condensed": list(self._condensed),
+            "overflow_buffer": [_message_to_dict(m) for m in self._overflow_buffer],
+            "running_summary": self._running_summary,
+            "pinned_facts": list(self._pinned_facts),
+        }
+
+    def load_dict(self, data: dict) -> None:
+        """Restore tier contents from a ``to_dict`` payload.
+
+        In place (rather than a classmethod) so the profile-driven size caps
+        set at construction are preserved. Missing keys keep their empty
+        defaults, so legacy payloads load cleanly.
+        """
+        self._messages = [_message_from_dict(d) for d in data.get("messages", [])]
+        self._condensation_buffer = [
+            _message_from_dict(d) for d in data.get("condensation_buffer", [])
+        ]
+        self._condensed = list(data.get("condensed", []))
+        self._overflow_buffer = [
+            _message_from_dict(d) for d in data.get("overflow_buffer", [])
+        ]
+        self._running_summary = data.get("running_summary", "")
+        self._pinned_facts = list(data.get("pinned_facts", []))
 
     # ------------------------------------------------------------------
     # Helpers

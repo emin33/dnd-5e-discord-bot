@@ -4,6 +4,7 @@ Uses a three-gate consolidation pattern (inspired by agentic orchestration
 systems) to avoid wasting LLM calls on rapid-fire exchanges like combat.
 """
 
+import asyncio
 import time
 from typing import Optional
 from datetime import datetime
@@ -727,6 +728,7 @@ class MemoryManager:
         return {
             "campaign_id": self.campaign_id,
             "core": self.core.to_dict(),
+            "buffer": self.buffer.to_dict(),
             "message_count": self._message_count,
             "last_summary_at": self._last_summary_at,
             "session_summaries": [
@@ -753,6 +755,13 @@ class MemoryManager:
         if "core" in data:
             manager.core = CoreMemory.from_dict(data["core"])
 
+        # Restore buffer tiers (pinned facts, running summary, condensed
+        # summaries, in-flight messages). In place so the profile-driven
+        # caps from __init__ stick; legacy payloads without a "buffer" key
+        # simply start with a fresh buffer.
+        if isinstance(data.get("buffer"), dict):
+            manager.buffer.load_dict(data["buffer"])
+
         # Restore counters
         manager._message_count = data.get("message_count", 0)
         manager._last_summary_at = data.get("last_summary_at", 0)
@@ -777,19 +786,25 @@ class MemoryManager:
 _managers: dict[str, MemoryManager] = {}
 _MAX_CACHED_MANAGERS = 50
 
+# Strong refs to in-flight eviction saves scheduled from sync call sites —
+# the event loop only keeps weak refs to tasks.
+_pending_saves: set["asyncio.Task"] = set()
+
 
 async def get_memory_manager(campaign_id: str) -> MemoryManager:
     """Get or create a memory manager for a campaign.
 
     Loads persisted state from the database on first access.
-    Evicts oldest cached managers if cache exceeds _MAX_CACHED_MANAGERS.
+    Evicts oldest cached managers if cache exceeds _MAX_CACHED_MANAGERS,
+    persisting their state first so campaign memory survives eviction.
     """
     if campaign_id not in _managers:
         # Evict oldest entries if at capacity
         if len(_managers) >= _MAX_CACHED_MANAGERS:
             oldest_key = next(iter(_managers))
+            evicted = _managers.pop(oldest_key)
+            await _persist_manager(evicted)
             logger.info("memory_manager_evicted", campaign_id=oldest_key)
-            _managers.pop(oldest_key)
 
         manager = await _load_memory_state(campaign_id)
         if manager is None:
@@ -803,20 +818,40 @@ def get_memory_manager_sync(campaign_id: str) -> MemoryManager:
     if campaign_id not in _managers:
         if len(_managers) >= _MAX_CACHED_MANAGERS:
             oldest_key = next(iter(_managers))
-            _managers.pop(oldest_key)
+            evicted = _managers.pop(oldest_key)
+            _schedule_eviction_save(evicted)
+            logger.info("memory_manager_evicted", campaign_id=oldest_key)
         _managers[campaign_id] = MemoryManager(campaign_id)
     return _managers[campaign_id]
 
 
+def _schedule_eviction_save(manager: MemoryManager) -> None:
+    """Best-effort async save for the sync eviction path."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        logger.warning(
+            "memory_eviction_save_skipped_no_loop", campaign_id=manager.campaign_id
+        )
+        return
+    task = loop.create_task(_persist_manager(manager))
+    _pending_saves.add(task)
+    task.add_done_callback(_pending_saves.discard)
+
+
 async def save_memory_state(campaign_id: str) -> None:
     """Persist memory manager state to the database."""
-    if campaign_id not in _managers:
+    manager = _managers.get(campaign_id)
+    if manager is None:
         return
+    await _persist_manager(manager)
 
+
+async def _persist_manager(manager: MemoryManager) -> None:
+    """Write a manager's serialized state to the campaign_memory table."""
     try:
         from ..data.database import get_database
         db = await get_database()
-        manager = _managers[campaign_id]
         state_json = json.dumps(manager.to_dict())
 
         await db.execute(
@@ -824,12 +859,14 @@ async def save_memory_state(campaign_id: str) -> None:
             INSERT OR REPLACE INTO campaign_memory (id, campaign_id, memory_type, content, metadata)
             VALUES (?, ?, 'manager_state', ?, '{}')
             """,
-            (f"{campaign_id}-state", campaign_id, state_json),
+            (f"{manager.campaign_id}-state", manager.campaign_id, state_json),
         )
         await db.commit()
-        logger.debug("memory_state_saved", campaign_id=campaign_id)
+        logger.debug("memory_state_saved", campaign_id=manager.campaign_id)
     except Exception as e:
-        logger.warning("memory_state_save_failed", campaign_id=campaign_id, error=str(e))
+        logger.warning(
+            "memory_state_save_failed", campaign_id=manager.campaign_id, error=str(e)
+        )
 
 
 async def _load_memory_state(campaign_id: str) -> Optional[MemoryManager]:

@@ -8,7 +8,12 @@ import asyncio
 import structlog
 
 from ..models import Character
-from ..memory import MemoryManager, get_memory_manager_sync
+from ..memory import (
+    MemoryManager,
+    get_memory_manager,
+    get_memory_manager_sync,
+    save_memory_state,
+)
 from ..llm.orchestrator import get_orchestrator, DMResponse
 from ..llm.brains.base import BrainContext
 from .frontend import GameFrontend, GameEvent
@@ -255,9 +260,10 @@ class GameSessionManager:
 
         self._sessions[session.session_key] = session
 
-        # Initialize memory manager for this campaign
+        # Initialize memory manager for this campaign — async getter so
+        # persisted memory tiers (pinned facts, summaries) load from the DB
         if campaign_id not in self._memory_managers:
-            self._memory_managers[campaign_id] = get_memory_manager_sync(campaign_id)
+            self._memory_managers[campaign_id] = await get_memory_manager(campaign_id)
 
         # Persist to database
         await session_repo.save_session(
@@ -322,10 +328,12 @@ class GameSessionManager:
                     error=str(e),
                 )
 
-            # Generate final summary
+            # Generate final summary, then persist memory tiers so pinned
+            # facts / summaries survive a restart
             memory = self._memory_managers.get(session.campaign_id)
             if memory:
                 await memory.end_session()
+                await save_memory_state(session.campaign_id)
 
             # Mark session as ended in database
             session_repo = await get_session_repo()
