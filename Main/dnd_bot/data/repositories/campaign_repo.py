@@ -3,6 +3,8 @@
 from datetime import datetime
 from typing import Optional
 
+import aiosqlite
+
 from ...models import Campaign
 from ..database import Database, get_database
 
@@ -144,7 +146,7 @@ class CampaignRepository:
         await db.commit()
         return True
 
-    def _row_to_campaign(self, row) -> Campaign:
+    def _row_to_campaign(self, row: aiosqlite.Row) -> Campaign:
         """Convert a database row to a Campaign model.
 
         Column order from schema:

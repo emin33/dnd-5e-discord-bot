@@ -79,7 +79,7 @@ def get_asr():
     return _asr_instance
 
 
-def _reset_asr():
+def _reset_asr() -> None:
     """Clear ASR singleton so it recreates from the active profile."""
     global _asr_instance
     _asr_instance = None

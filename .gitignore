@@ -47,6 +47,7 @@ Main/docs/
 
 # Test artifacts
 .pytest_cache/
+.mypy_cache/
 .coverage
 htmlcov/
 

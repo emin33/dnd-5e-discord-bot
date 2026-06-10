@@ -2,7 +2,9 @@
 
 import json
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
+
+import aiosqlite
 
 from ...models.immersion import (
     GuildImmersionSettings,
@@ -131,7 +133,7 @@ class ImmersionRepository:
         await self._ensure_catalog_seeded()
         db = await self._get_db()
         query = "SELECT voice_id, name, provider, gender, age, style_tags FROM voice_catalog WHERE 1=1"
-        params: list = []
+        params: list[Any] = []
 
         if gender:
             query += " AND gender = ?"
@@ -182,7 +184,7 @@ class ImmersionRepository:
         await db.commit()
         return count
 
-    def _row_to_voice(self, row) -> VoiceCatalogEntry:
+    def _row_to_voice(self, row: aiosqlite.Row) -> VoiceCatalogEntry:
         """Convert database row to VoiceCatalogEntry."""
         style_tags = []
         if row[5]:

@@ -97,7 +97,7 @@ def get_adjudicator() -> EffectsAdjudicator:
     return _adjudicator
 
 
-def _reset_adjudicator():
+def _reset_adjudicator() -> None:
     """Clear cached adjudicator so it recreates from the active profile."""
     global _adjudicator
     _adjudicator = None

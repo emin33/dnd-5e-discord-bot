@@ -6,7 +6,7 @@ systems) to avoid wasting LLM calls on rapid-fire exchanges like combat.
 
 import asyncio
 import time
-from typing import Optional
+from typing import Any, Optional
 from datetime import datetime
 import json
 import structlog
@@ -509,7 +509,7 @@ class MemoryManager:
                 "required": ["summary"],
             }
 
-            response = await client.chat(
+            llm_response = await client.chat(
                 messages=[
                     {"role": "system", "content": "You are a helpful assistant that summarizes D&D sessions."},
                     {"role": "user", "content": prompt},
@@ -519,7 +519,7 @@ class MemoryManager:
                 json_schema=summary_schema,
                 think=False,
             )
-            response = response.content or ""
+            response = llm_response.content or ""
 
             logger.info(
                 "incremental_summary_llm_response",
@@ -678,14 +678,14 @@ class MemoryManager:
         if self._session_summaries:
             recent = self._session_summaries[-2:]
             parts.append("<recent_session_context>")
-            for summary in recent:
-                parts.append(f"Previous: {summary.summary}")
+            for session_summary in recent:
+                parts.append(f"Previous: {session_summary.summary}")
             parts.append("</recent_session_context>")
             parts.append("")
 
         return "\n".join(parts)
 
-    def get_message_history(self, limit: Optional[int] = None) -> list[dict]:
+    def get_message_history(self, limit: Optional[int] = None) -> list[dict[str, str]]:
         """Get message history for LLM API."""
         return self.buffer.get_for_llm(limit)
 
@@ -753,7 +753,7 @@ class MemoryManager:
 
         return self._session_summaries[-1] if self._session_summaries else None
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Serialize manager state for persistence."""
         return {
             "campaign_id": self.campaign_id,
@@ -777,7 +777,7 @@ class MemoryManager:
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> "MemoryManager":
+    def from_dict(cls, data: dict[str, Any]) -> "MemoryManager":
         """Deserialize manager state."""
         manager = cls(data["campaign_id"])
 
@@ -818,7 +818,7 @@ _MAX_CACHED_MANAGERS = 50
 
 # Strong refs to in-flight eviction saves scheduled from sync call sites —
 # the event loop only keeps weak refs to tasks.
-_pending_saves: set["asyncio.Task"] = set()
+_pending_saves: set["asyncio.Task[None]"] = set()
 
 
 async def get_memory_manager(campaign_id: str) -> MemoryManager:

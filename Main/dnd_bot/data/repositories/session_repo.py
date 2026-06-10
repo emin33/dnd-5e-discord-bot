@@ -1,6 +1,6 @@
 """Session repository for game session persistence."""
 
-from typing import Optional
+from typing import Any, Optional
 import json
 
 from ..database import Database, get_database
@@ -61,7 +61,7 @@ class SessionRepository:
 
         await db.commit()
 
-    async def load_session(self, channel_id: int) -> Optional[dict]:
+    async def load_session(self, channel_id: int) -> Optional[dict[str, Any]]:
         """
         Load the most recent active session for a channel.
 
@@ -160,7 +160,7 @@ class SessionRepository:
         self,
         session_id: str,
         snapshot_type: str,
-        game_state: dict,
+        game_state: dict[str, Any],
     ) -> str:
         """Create a session snapshot for rollback support."""
         import uuid
@@ -179,7 +179,7 @@ class SessionRepository:
 
         return snapshot_id
 
-    async def get_latest_snapshot(self, session_id: str) -> Optional[dict]:
+    async def get_latest_snapshot(self, session_id: str) -> Optional[dict[str, Any]]:
         """Get the most recent snapshot for a session."""
         db = await self._get_db()
 

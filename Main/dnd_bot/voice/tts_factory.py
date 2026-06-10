@@ -109,7 +109,7 @@ def get_tts():
     return _tts_instance
 
 
-def _reset_tts():
+def _reset_tts() -> None:
     """Clear TTS singleton so it recreates from the active profile."""
     global _tts_instance
     _tts_instance = None

@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field
 from pathlib import Path
 from functools import lru_cache
-from typing import Optional
+from typing import Any, Optional
 
 import yaml
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -109,7 +109,7 @@ def load_profile(profile_name: str) -> LLMProfile:
     asr_data = data.get("asr", {})
     immersion_data = data.get("immersion", {})
 
-    def _provider_config_or_none(d):
+    def _provider_config_or_none(d: Optional[dict[str, Any]]) -> Optional[ProviderConfig]:
         if not d:
             return None
         return ProviderConfig(

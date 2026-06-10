@@ -1,10 +1,14 @@
 """Vector store for campaign knowledge RAG using ChromaDB."""
 
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Any, Optional
 import structlog
 
 from ..config import get_settings
+
+if TYPE_CHECKING:
+    from chromadb.api import ClientAPI
+    from chromadb.api.models.Collection import Collection
 
 logger = structlog.get_logger()
 
@@ -27,8 +31,8 @@ class VectorStore:
         self.persist_directory = Path(persist_directory or get_settings().chroma_path)
         self.persist_directory.mkdir(parents=True, exist_ok=True)
 
-        self._client = None
-        self._collection = None
+        self._client: Optional["ClientAPI"] = None
+        self._collection: Optional["Collection"] = None
         self._initialized = False
 
     def _ensure_initialized(self) -> None:
@@ -54,7 +58,7 @@ class VectorStore:
         except Exception as e:
             logger.error("chromadb_init_failed", error=str(e))
 
-    def _get_collection(self, campaign_id: str):
+    def _get_collection(self, campaign_id: str) -> "Optional[Collection]":
         """Get or create collection for a campaign."""
         self._ensure_initialized()
         if not self._client:
@@ -71,7 +75,7 @@ class VectorStore:
         campaign_id: str,
         memory_id: str,
         content: str,
-        metadata: Optional[dict] = None,
+        metadata: Optional[dict[str, Any]] = None,
     ) -> bool:
         """Add a memory to the vector store."""
         collection = self._get_collection(campaign_id)
@@ -104,7 +108,7 @@ class VectorStore:
         campaign_id: str,
         memory_id: str,
         content: str,
-        metadata: Optional[dict] = None,
+        metadata: Optional[dict[str, Any]] = None,
     ) -> bool:
         """Update an existing memory."""
         collection = self._get_collection(campaign_id)
@@ -150,8 +154,8 @@ class VectorStore:
         campaign_id: str,
         query: str,
         n_results: int = 5,
-        where: Optional[dict] = None,
-    ) -> list[dict]:
+        where: Optional[dict[str, Any]] = None,
+    ) -> list[dict[str, Any]]:
         """
         Search for relevant memories using semantic similarity.
 
@@ -171,9 +175,9 @@ class VectorStore:
             memories = []
             if results and results.get("ids"):
                 ids = results["ids"][0]
-                documents = results["documents"][0] if results.get("documents") else []
-                distances = results["distances"][0] if results.get("distances") else []
-                metadatas = results["metadatas"][0] if results.get("metadatas") else []
+                documents = (results.get("documents") or [[]])[0]
+                distances = (results.get("distances") or [[]])[0]
+                metadatas = (results.get("metadatas") or [[]])[0]
 
                 for i, memory_id in enumerate(ids):
                     memories.append({
@@ -199,7 +203,7 @@ class VectorStore:
         campaign_id: str,
         memory_type: str,
         limit: int = 10,
-    ) -> list[dict]:
+    ) -> list[dict[str, Any]]:
         """Get memories by type (npc, location, event, etc.)."""
         return self.search(
             campaign_id=campaign_id,
@@ -365,7 +369,7 @@ class VectorStore:
         query: str,
         n_results: int = 3,
         max_distance: float = 1.5,
-    ) -> list[dict]:
+    ) -> list[dict[str, Any]]:
         """Search entity descriptions by semantic similarity.
 
         Returns entities whose descriptions are semantically close to the query.
@@ -426,7 +430,7 @@ class VectorStore:
         max_results: int = 3,
         min_turn_age: int = 12,
         current_turn: int = 0,
-    ) -> list[dict]:
+    ) -> list[dict[str, Any]]:
         """Retrieve past narration related to specific entities.
 
         Uses entity names as the semantic query (filtered to narrative type)

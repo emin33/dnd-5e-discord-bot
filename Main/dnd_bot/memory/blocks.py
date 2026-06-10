@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Optional
+from typing import Any, Optional
 
 
 class MemoryBlockType(str, Enum):
@@ -61,7 +61,7 @@ class Message:
     message_id: Optional[str] = None  # Discord message ID
     is_dm_narration: bool = False  # True if this was DM narration
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, str]:
         """Convert to dict for LLM API."""
         return {
             "role": self.role,
@@ -75,7 +75,7 @@ class Message:
         return self.content
 
 
-def _message_to_dict(msg: Message) -> dict:
+def _message_to_dict(msg: Message) -> dict[str, Any]:
     """Full serialization of a Message for persistence.
 
     Distinct from ``Message.to_dict``, which is the role/content shape
@@ -91,7 +91,7 @@ def _message_to_dict(msg: Message) -> dict:
     }
 
 
-def _message_from_dict(data: dict) -> Message:
+def _message_from_dict(data: dict[str, Any]) -> Message:
     """Inverse of ``_message_to_dict``; missing keys fall back to defaults."""
     timestamp = data.get("timestamp")
     return Message(
@@ -130,6 +130,7 @@ class MessageBuffer:
         self._verbatim_size = verbatim_size    # Tier 1 cap
         self._condensed_size = condensed_size  # Tier 2 cap
         self.preserve_recent = preserve_recent
+        self._compaction_threshold: int = 6    # Tier 3 batch size (profile may override)
 
         # Tier 1: Full prose messages
         self._messages: list[Message] = []
@@ -197,8 +198,7 @@ class MessageBuffer:
     @property
     def has_pending_compaction(self) -> bool:
         """True if overflow buffer has messages waiting for compaction."""
-        threshold = getattr(self, '_compaction_threshold', 6)
-        return len(self._overflow_buffer) >= threshold
+        return len(self._overflow_buffer) >= self._compaction_threshold
 
     def get_overflow_text(self) -> str:
         """Get overflow messages as text for summarization."""
@@ -233,7 +233,7 @@ class MessageBuffer:
     # Persistence
     # ------------------------------------------------------------------
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Serialize every tier so campaign memory survives a restart."""
         return {
             "messages": [_message_to_dict(m) for m in self._messages],
@@ -246,7 +246,7 @@ class MessageBuffer:
             "pinned_facts": list(self._pinned_facts),
         }
 
-    def load_dict(self, data: dict) -> None:
+    def load_dict(self, data: dict[str, Any]) -> None:
         """Restore tier contents from a ``to_dict`` payload.
 
         In place (rather than a classmethod) so the profile-driven size caps
@@ -326,7 +326,7 @@ class MessageBuffer:
             messages = messages[-limit:]
         return messages
 
-    def get_for_llm(self, limit: Optional[int] = None) -> list[dict]:
+    def get_for_llm(self, limit: Optional[int] = None) -> list[dict[str, str]]:
         """Get messages formatted for LLM API."""
         return [m.to_dict() for m in self.get_messages(limit)]
 
@@ -502,7 +502,7 @@ class CoreMemory:
         """Estimate total tokens for all blocks."""
         return sum(block.estimate_tokens() for block in self._blocks.values())
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Serialize to dict for persistence."""
         return {
             "campaign_id": self.campaign_id,
@@ -520,7 +520,7 @@ class CoreMemory:
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> "CoreMemory":
+    def from_dict(cls, data: dict[str, Any]) -> "CoreMemory":
         """Deserialize from dict."""
         memory = cls(data["campaign_id"])
 

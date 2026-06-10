@@ -41,6 +41,7 @@ dev = [
     "pytest-cov>=5.0.0",
     "ruff>=0.8.0",
     "mypy>=1.13.0",
+    "types-PyYAML>=6.0.0",  # yaml stubs; config.py (strict mypy tier) imports yaml
 ]
 eval = [
     "google-genai>=1.0.0",
@@ -96,7 +97,69 @@ line-length = 100
 select = ["E", "F", "I", "N", "W", "UP"]
 ignore = ["E501"]
 
+# Honest tiered mypy config (audit 2026-06-09 punch item 4: was blanket
+# strict=true that never ran anywhere and could not pass). Gate command:
+# run_typecheck.bat (venv\Scripts\python -m mypy dnd_bot) — must exit 0.
 [tool.mypy]
-python_version = "3.11"
-strict = true
+python_version = "3.11"  # project floor (requires-python >=3.11)
+plugins = ["pydantic.mypy"]
+packages = ["dnd_bot"]
+warn_unused_configs = true
+warn_redundant_casts = true
+
+# --- STRICT TIER -------------------------------------------------------------
+# The typed core. Near-strict (the per-module subset of --strict); keep at
+# ZERO errors — run_typecheck.bat fails otherwise.
+[[tool.mypy.overrides]]
+module = [
+    "dnd_bot.models.*",
+    "dnd_bot.data.*",
+    "dnd_bot.memory.*",
+    "dnd_bot.config",
+]
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+disallow_untyped_decorators = true
+disallow_any_generics = true
+disallow_subclassing_any = true
+disallow_untyped_calls = true
+check_untyped_defs = true
+warn_return_any = true
+warn_unused_ignores = true
+strict_equality = true
+no_implicit_reexport = true
+
+# pydantic's @computed_field stacks on @property, which mypy cannot model
+# (even with the pydantic plugin) — models/character.py ability modifiers.
+[[tool.mypy.overrides]]
+module = "dnd_bot.models.*"
+disable_error_code = ["prop-decorator"]
+
+# --- RELAXED TIER ------------------------------------------------------------
+# Explicitly NOT checked yet. Each package needs its own typing pass before
+# promotion to the strict tier (or even the default baseline). Reasons:
+[[tool.mypy.overrides]]
+module = [
+    "dnd_bot.bot.*",        # py-cord Option-as-annotation idiom is uncheckable; ~17% annotation coverage (524 baseline errors)
+    "dnd_bot.voice.*",      # voice SDKs (riva/livekit/kokoro/...) not installed in dev venv; route handlers unannotated
+    "dnd_bot.immersion.*",  # torch/diffusers/scipy paths not installed in dev venv; ~61% coverage
+    "dnd_bot.llm.*",        # LLM seams carry loose dict shapes (35 baseline errors); typing lands with the tool-registry/effects refactor
+    "dnd_bot.game.*",       # 92 baseline errors (rest.py, world_state.py, coordinator.py); demoted from the audit's hoped-for strict tier
+    "dnd_bot.main",         # discord bootstrap, same idioms as bot/*
+]
+ignore_errors = true
+
+# --- Third-party imports without stubs (targeted, never global) --------------
+[[tool.mypy.overrides]]
+module = [
+    "networkx.*",              # installed, ships no py.typed (types-networkx exists if game/* is ever promoted)
+    "torch.*",                 # [image]/[voice] extras — not installed in dev venv
+    "kokoro.*",                # [voice] extra
+    "elevenlabs.*",            # [voice] extra
+    "riva.*",                  # [voice] extra
+    "deepgram.*",              # [voice] extra
+    "livekit.*",               # [voice] extra
+    "fastapi.*",               # [web] extra
+    "sentence_transformers.*", # optional NLI validator dependency
+]
 ignore_missing_imports = true

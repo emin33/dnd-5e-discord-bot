@@ -2,7 +2,8 @@
 
 import asyncio
 from pathlib import Path
-from typing import Optional
+from types import TracebackType
+from typing import Any, Optional
 import aiosqlite
 import structlog
 
@@ -60,30 +61,30 @@ class Database:
         return self._connection
 
     async def execute(
-        self, sql: str, parameters: tuple = ()
+        self, sql: str, parameters: tuple[Any, ...] = ()
     ) -> aiosqlite.Cursor:
         """Execute a SQL statement."""
         return await self.connection.execute(sql, parameters)
 
     async def execute_many(
-        self, sql: str, parameters: list[tuple]
+        self, sql: str, parameters: list[tuple[Any, ...]]
     ) -> aiosqlite.Cursor:
         """Execute a SQL statement with multiple parameter sets."""
         return await self.connection.executemany(sql, parameters)
 
     async def fetch_one(
-        self, sql: str, parameters: tuple = ()
+        self, sql: str, parameters: tuple[Any, ...] = ()
     ) -> Optional[aiosqlite.Row]:
         """Fetch a single row."""
         cursor = await self.execute(sql, parameters)
         return await cursor.fetchone()
 
     async def fetch_all(
-        self, sql: str, parameters: tuple = ()
+        self, sql: str, parameters: tuple[Any, ...] = ()
     ) -> list[aiosqlite.Row]:
         """Fetch all rows."""
         cursor = await self.execute(sql, parameters)
-        return await cursor.fetchall()
+        return list(await cursor.fetchall())
 
     async def commit(self) -> None:
         """Commit the current transaction."""
@@ -158,7 +159,7 @@ class Database:
 
                 logger.info("migration_applied", version=version)
 
-    async def transaction(self):
+    async def transaction(self) -> "TransactionContext":
         """Context manager for transactions with automatic commit/rollback."""
         return TransactionContext(self)
 
@@ -186,7 +187,7 @@ class TransactionContext:
         self.db = db
         self._savepoint_name: Optional[str] = None
 
-    async def __aenter__(self):
+    async def __aenter__(self) -> "TransactionContext":
         # Use savepoint for nested transactions
         import uuid
 
@@ -194,7 +195,12 @@ class TransactionContext:
         await self.db.execute(f"SAVEPOINT {self._savepoint_name}")
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
+    async def __aexit__(
+        self,
+        exc_type: Optional[type[BaseException]],
+        exc_val: Optional[BaseException],
+        exc_tb: Optional[TracebackType],
+    ) -> bool:
         if exc_type is not None:
             # Rollback on exception
             await self.db.execute(f"ROLLBACK TO SAVEPOINT {self._savepoint_name}")

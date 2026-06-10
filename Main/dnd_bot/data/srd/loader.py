@@ -49,7 +49,7 @@ class SRDDataLoader:
     def __init__(self, srd_path: Optional[Path] = None):
         settings = get_settings()
         self.srd_path = srd_path or settings.srd_path
-        self._cache: dict[str, dict[str, Any]] = {}
+        self._cache: dict[str, dict[str, dict[str, Any]]] = {}
         self._loaded = False
 
     def load_all(self) -> None:

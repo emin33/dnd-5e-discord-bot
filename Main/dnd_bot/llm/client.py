@@ -1803,7 +1803,7 @@ _narrator_clients_by_tier: dict = {}  # tier -> client (with fallback applied)
 _clients_by_provider_model: dict = {}  # (provider, model) -> shared client instance
 
 
-def _reset_clients():
+def _reset_clients() -> None:
     """Clear cached client instances so they recreate from the active profile."""
     global _client, _narrator_client, _narrator_clients_by_tier, _clients_by_provider_model
     _client = None
@@ -1832,7 +1832,7 @@ def _create_client(provider: str, model: str, fallback_to_ollama: bool = False, 
         return OllamaClient(model=model, num_ctx=context_size or None)
 
 
-def get_llm_client():
+def get_llm_client() -> "LLMClient":
     """Get the brain/triage LLM client based on active profile."""
     global _client
     if _client is None:

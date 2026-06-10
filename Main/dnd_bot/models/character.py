@@ -1,7 +1,7 @@
 """Character data model."""
 
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 import uuid
 
 from pydantic import BaseModel, Field, computed_field
@@ -30,7 +30,8 @@ class AbilityScores(BaseModel):
 
     def get_score(self, ability: AbilityScore) -> int:
         """Get score for a specific ability."""
-        return getattr(self, ability.name.lower())
+        score: int = getattr(self, ability.name.lower())
+        return score
 
     def get_modifier(self, ability: AbilityScore) -> int:
         """Get modifier for a specific ability."""
@@ -97,7 +98,8 @@ class SpellSlots(BaseModel):
         """Get (current, max) slots for a spell level."""
         if level < 1 or level > 9:
             raise ValueError(f"Invalid spell level: {level}")
-        return getattr(self, f"level_{level}")
+        slots: tuple[int, int] = getattr(self, f"level_{level}")
+        return slots
 
     def has_slot(self, level: int) -> bool:
         """Check if a slot of the given level is available."""
@@ -390,7 +392,7 @@ class Character(BaseModel):
                 return c.stacks
         return 0
 
-    def calculate_ac_from_equipment(self, equipped_armor: list[dict]) -> int:
+    def calculate_ac_from_equipment(self, equipped_armor: list[dict[str, Any]]) -> int:
         """Calculate AC from equipped armor/shield items.
 
         Args:

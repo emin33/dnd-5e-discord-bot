@@ -2,7 +2,7 @@
 
 from datetime import datetime
 from enum import Enum
-from typing import Optional
+from typing import Any, Optional
 import uuid
 
 from pydantic import BaseModel, Field
@@ -121,7 +121,7 @@ class SceneEntity(BaseModel):
     important: bool = False  # Quest-givers, allies, key story NPCs (mirrors NPCState.important)
 
     # Free-form object properties (spawn_object effect: item_index, value, magical, etc.)
-    properties: dict = Field(default_factory=dict)
+    properties: dict[str, Any] = Field(default_factory=dict)
 
     # Combat-ready stats (if known or estimated)
     hp_estimate: Optional[int] = None

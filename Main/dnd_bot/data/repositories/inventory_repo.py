@@ -3,6 +3,8 @@
 from datetime import datetime
 from typing import Optional
 
+import aiosqlite
+
 from ...models import InventoryItem, Currency
 from ..database import Database, get_database
 
@@ -295,7 +297,7 @@ class InventoryRepository:
 
         return item
 
-    def _row_to_item(self, row) -> InventoryItem:
+    def _row_to_item(self, row: aiosqlite.Row) -> InventoryItem:
         """Convert a database row to an InventoryItem."""
         added_at = datetime.utcnow()
         if row[9]:

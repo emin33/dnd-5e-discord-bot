@@ -3,6 +3,8 @@
 import time
 from typing import Optional
 
+import aiosqlite
+
 from ...models import (
     AbilityScore,
     AbilityScores,
@@ -527,7 +529,7 @@ class CharacterRepository:
         _invalidate_character_cache()
         return True
 
-    async def _row_to_character(self, db: Database, row) -> Character:
+    async def _row_to_character(self, db: Database, row: aiosqlite.Row) -> Character:
         """Convert a database row to a Character model."""
         character_id = row[0]
 

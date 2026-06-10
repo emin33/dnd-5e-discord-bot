@@ -45,7 +45,7 @@ class TransactionRepository:
 
         return row is not None
 
-    async def get_result(self, transaction_key: str) -> Optional[dict]:
+    async def get_result(self, transaction_key: str) -> Optional[dict[str, Any]]:
         """Get the cached result of a previously applied transaction."""
         db = await self._get_db()
 
@@ -61,7 +61,8 @@ class TransactionRepository:
             return None
 
         try:
-            return json.loads(row[0])
+            result: dict[str, Any] = json.loads(row[0])
+            return result
         except (json.JSONDecodeError, TypeError):
             return None
 
@@ -71,7 +72,7 @@ class TransactionRepository:
         operation_type: str,
         target_id: str,
         result: Any,
-        payload: Optional[dict] = None,
+        payload: Optional[dict[str, Any]] = None,
         ttl_hours: int = DEFAULT_TTL_HOURS,
     ) -> None:
         """
@@ -112,8 +113,8 @@ class TransactionRepository:
         operation_type: str,
         target_id: str,
         result: Any,
-        payload: Optional[dict] = None,
-    ) -> tuple[bool, Optional[dict]]:
+        payload: Optional[dict[str, Any]] = None,
+    ) -> tuple[bool, Optional[dict[str, Any]]]:
         """
         Check if transaction exists and record if not.
 
@@ -153,12 +154,12 @@ class TransactionRepository:
         operation_type: Optional[str] = None,
         target_id: Optional[str] = None,
         limit: int = 50,
-    ) -> list[dict]:
+    ) -> list[dict[str, Any]]:
         """Get recent transactions for debugging/audit."""
         db = await self._get_db()
 
         query = "SELECT * FROM transaction_log WHERE 1=1"
-        params = []
+        params: list[Any] = []
 
         if operation_type:
             query += " AND operation_type = ?"

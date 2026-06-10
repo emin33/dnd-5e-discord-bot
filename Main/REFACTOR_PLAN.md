@@ -166,6 +166,11 @@ both **DONE** (`c0b3d67`; the three helpers now route via `_resolve_player_chara
 - **Bare `python -c "import dnd_bot.bot.cogs.*"` fails** with `discord has no attribute
   'ApplicationContext'` — a py-cord vs discord.py env quirk, NOT a real error. The suite
   never imports the cogs; don't chase it.
+- **Type gate exists: `run_typecheck.bat`** (= `venv\Scripts\python -m mypy dnd_bot`,
+  must exit 0). Tier map in `pyproject.toml [tool.mypy]`: STRICT on `models`/`data`/
+  `memory`/`config.py` — keep those at zero errors; `ignore_errors` (commented why) on
+  `bot`/`voice`/`immersion`/`llm`/`game`/`main` until each gets its typing pass. Run the
+  gate alongside the suite before committing typed-core changes.
 - **Commit at every green checkpoint.** Branch: `audit-and-single-authority-refactor`. The
   git repo root is the PARENT of `Main/`, so use `git -C "<repo root>"`. The LF→CRLF
   warnings on commit are benign. `.gitignore` already excludes wav/mp3/model-weights/db —

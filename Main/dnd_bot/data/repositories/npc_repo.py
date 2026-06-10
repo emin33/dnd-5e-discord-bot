@@ -3,6 +3,8 @@
 from datetime import datetime
 from typing import Optional
 
+import aiosqlite
+
 from ...models.npc import NPC, NPCRelationship, Disposition
 from ..database import Database, get_database
 
@@ -261,7 +263,7 @@ class NPCRepository:
         await db.commit()
         return True
 
-    def _row_to_npc(self, row) -> NPC:
+    def _row_to_npc(self, row: aiosqlite.Row) -> NPC:
         """Convert database row to NPC model."""
         return NPC(
             id=row[0],
@@ -277,7 +279,7 @@ class NPCRepository:
             voice_id=row[10] if len(row) > 10 else None,
         )
 
-    def _row_to_relationship(self, row) -> NPCRelationship:
+    def _row_to_relationship(self, row: aiosqlite.Row) -> NPCRelationship:
         """Convert database row to NPCRelationship model."""
         return NPCRelationship(
             npc_id=row[0],

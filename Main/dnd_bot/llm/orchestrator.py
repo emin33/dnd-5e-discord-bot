@@ -4119,7 +4119,7 @@ def get_orchestrator() -> DMOrchestrator:
     return _orchestrator
 
 
-def _reset_orchestrator():
+def _reset_orchestrator() -> None:
     """Clear cached orchestrator so it recreates from the active profile."""
     global _orchestrator
     _orchestrator = None

@@ -1,7 +1,7 @@
 """Campaign and game session data models."""
 
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 import uuid
 
 from pydantic import BaseModel, Field
@@ -63,5 +63,5 @@ class SessionSnapshot(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     session_id: str
     snapshot_type: str = "manual"  # 'auto', 'manual', 'pre_combat'
-    game_state: dict  # Full serialized state
+    game_state: dict[str, Any]  # Full serialized state
     created_at: datetime = Field(default_factory=datetime.utcnow)
