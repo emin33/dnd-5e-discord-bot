@@ -619,6 +619,8 @@ class GameCog(commands.Cog):
 
         max_turns = 10  # Safety limit
         turns_run = 0
+        consecutive_failures = 0
+        max_consecutive_failures = 3  # Abort combat rather than wedge (audit P1-15)
 
         while turns_run < max_turns:
             current = manager.combat.get_current_combatant()
@@ -634,13 +636,51 @@ class GameCog(commands.Cog):
             try:
                 results = await coordinator.run_npc_turn(current)
             except Exception as e:
-                logger.error("npc_turn_failed", combatant=current.name, error=str(e))
+                consecutive_failures += 1
+                logger.error(
+                    "npc_turn_failed",
+                    combatant=current.name,
+                    error=str(e),
+                    consecutive_failures=consecutive_failures,
+                    exc_info=True,
+                )
                 await channel.send(f"*{current.name} hesitates...* (Error: {str(e)[:80]})")
+                if consecutive_failures >= max_consecutive_failures:
+                    # Every turn we advance to fails too — stop spamming
+                    # and end combat instead of wedging (audit P1-15).
+                    await channel.send(
+                        ":warning: Combat ended — NPC turns keep failing and "
+                        "the encounter cannot continue."
+                    )
+                    await get_session_manager().end_combat(channel.id)
+                    return
+                # Recovery ladder (audit P1-15): end_turn -> force-advance ->
+                # abort. A finished-broken combat beats one wedged forever on
+                # the same combatant.
                 try:
                     await coordinator.end_turn(current)
                 except Exception:
-                    pass
+                    logger.error(
+                        "npc_end_turn_failed", combatant=current.name, exc_info=True
+                    )
+                    advanced = None
+                    try:
+                        advanced = await coordinator.force_advance_turn()
+                    except Exception:
+                        logger.error(
+                            "npc_force_advance_failed",
+                            combatant=current.name,
+                            exc_info=True,
+                        )
+                    if advanced is None:
+                        await channel.send(
+                            f":warning: Combat ended — **{current.name}**'s turn "
+                            "could not be completed or skipped."
+                        )
+                        await get_session_manager().end_combat(channel.id)
+                        return
                 continue
+            consecutive_failures = 0
             _t1 = _time.monotonic()
             logger.info("timing_npc_turn", combatant=current.name, elapsed=f"{_t1 - _t0:.1f}s")
 

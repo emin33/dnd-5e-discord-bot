@@ -265,6 +265,27 @@ class CombatTurnCoordinator:
             effect_messages=effect_messages,
         )
 
+    async def force_advance_turn(self) -> Optional[Combatant]:
+        """Last-resort initiative advance after a failed turn (audit P1-15).
+
+        When a turn fails AND the follow-up end_turn also fails, initiative
+        stays parked on the broken combatant and combat wedges. This skips
+        end_turn's bookkeeping (surprise/zone cleanup, TurnEndResult) and
+        advances the combat model directly. Returns the new current
+        combatant, or None if combat is over / cannot advance — callers
+        should treat None as "abort combat".
+
+        Serialized on the per-channel turn lock (audit P0-6).
+        """
+        async with self.turn_lock:
+            next_combatant, _end, _start, _recharge = self.manager.next_turn()
+            if next_combatant is not None:
+                logger.warning(
+                    "turn_force_advanced",
+                    next_combatant=next_combatant.name,
+                )
+            return next_combatant
+
     # ==================== Action Execution ====================
 
     async def execute_action(self, action: CombatAction) -> ActionResult:
