@@ -29,7 +29,7 @@ os.chdir(Path(__file__).parent)
 
 # Must import after chdir so pydantic-settings finds .env
 import uuid
-from dnd_bot.config import get_settings
+from dnd_bot.config import get_settings, get_profile
 from dnd_bot.game.session import get_session_manager, GameSessionManager
 from dnd_bot.data.repositories import get_character_repo, get_campaign_repo
 from dnd_bot.data.database import get_database
@@ -712,7 +712,8 @@ async def main():
     print_header("D&D 5e BOT TEST HARNESS")
 
     settings = get_settings()
-    print_section("MODEL", settings.ollama_model)
+    profile = get_profile()
+    print_section("PROFILE", f"{profile.name}: narrator={profile.narrator.provider}/{profile.narrator.model}, brain={profile.brain.provider}/{profile.brain.model}")
     print_section("DB", settings.database_path)
 
     session = TestSession()
