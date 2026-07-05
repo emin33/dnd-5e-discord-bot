@@ -72,17 +72,11 @@ Main/
 
 ## Configuration
 
-See `.env.example` for all available settings:
-
-| Variable | Description | Default |
-|---|---|---|
-| `DISCORD_BOT_TOKEN` | Your Discord bot token | (required) |
-| `OLLAMA_HOST` | Ollama server URL | `http://localhost:11434` |
-| `OLLAMA_MODEL` | Model to use | `qwen3:32b` |
-| `NARRATOR_TEMPERATURE` | Creativity for narration | `0.75` |
-| `RULES_TEMPERATURE` | Strictness for rules calls | `0.1` |
-| `DATABASE_PATH` | SQLite database location | `data/dnd_bot.db` |
-| `SRD_DATA_PATH` | Path to 5e-database SRD JSON | `../5e-database/src/2014` |
+See `Main/.env.example` for the complete, annotated list of settings. Every
+key there maps 1:1 to a field on `dnd_bot.config.Settings`, and unknown keys
+in `.env` are rejected at boot, so don't add keys that aren't in that file.
+`DISCORD_BOT_TOKEN` is the only required key. LLM provider/model selection
+lives in `Main/config/profiles.yaml`, chosen via `ACTIVE_PROFILE`.
 
 ## Development
 
