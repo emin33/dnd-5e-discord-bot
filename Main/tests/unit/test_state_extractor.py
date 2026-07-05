@@ -91,11 +91,10 @@ def _make_orchestrator() -> DMOrchestrator:
     """Build a DMOrchestrator with all heavy deps mocked.
 
     The dedup pass only touches the dedup_judge module-level singleton,
-    so we mock the four constructor deps to skip ollama init."""
+    so we mock the three constructor deps to skip ollama init."""
     return DMOrchestrator(
         narrator=MagicMock(),
         adjudicator=MagicMock(),
-        rules=MagicMock(),
         client=MagicMock(),
     )
 

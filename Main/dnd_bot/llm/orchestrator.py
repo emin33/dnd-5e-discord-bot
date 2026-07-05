@@ -18,7 +18,6 @@ from .narrative_signals import select_narrator_tier
 from .brains.base import BrainContext
 from .brains.narrator import NarratorBrain, get_narrator
 from .brains.adjudicator import EffectsAdjudicator, get_adjudicator
-from .brains.rules import RulesBrain, get_rules_brain
 from .intents import validate_narrator_format
 from .narrator_tools import (
     get_narrator_tools_for_tier,
@@ -535,13 +534,11 @@ class DMOrchestrator:
         self,
         narrator: Optional[NarratorBrain] = None,
         adjudicator: Optional[EffectsAdjudicator] = None,
-        rules: Optional[RulesBrain] = None,
         client: Optional[OllamaClient] = None,
         narrator_client_factory: Optional[Callable[[str], Any]] = None,
     ):
         self.narrator = narrator or get_narrator()
         self.adjudicator = adjudicator or get_adjudicator()
-        self.rules = rules or get_rules_brain()
         self.client = client or get_llm_client()
         # Tier→client resolver for narration. Injectable so a test can pin a
         # fake narrator client that survives the per-turn tier swap; the

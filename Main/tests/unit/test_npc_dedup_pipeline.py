@@ -78,7 +78,6 @@ def _make_orchestrator(world_state: WorldState | None = None) -> DMOrchestrator:
     orch = DMOrchestrator(
         narrator=MagicMock(),
         adjudicator=MagicMock(),
-        rules=MagicMock(),
         client=MagicMock(),
     )
     if world_state is not None:
