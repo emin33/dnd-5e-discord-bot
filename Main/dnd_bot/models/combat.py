@@ -459,7 +459,17 @@ class Combat(BaseModel):
         CombatState.SETUP: [CombatState.ROLLING_INITIATIVE, CombatState.IDLE],
         CombatState.ROLLING_INITIATIVE: [CombatState.ACTIVE],
         CombatState.ACTIVE: [CombatState.AWAITING_ACTION, CombatState.COMBAT_END],
-        CombatState.AWAITING_ACTION: [CombatState.RESOLVING_ACTION, CombatState.END_TURN],
+        # AWAITING_ACTION -> COMBAT_END: a turn advance can end combat AFTER
+        # landing on a living winner (NPC-side victory / TPK: next_turn()
+        # transitions to AWAITING_ACTION, then sees is_combat_over()).
+        # Without this edge end_combat()'s transition silently failed and the
+        # encounter stayed AWAITING_ACTION forever (adversarial review,
+        # blocker 1a).
+        CombatState.AWAITING_ACTION: [
+            CombatState.RESOLVING_ACTION,
+            CombatState.END_TURN,
+            CombatState.COMBAT_END,
+        ],
         CombatState.RESOLVING_ACTION: [CombatState.AWAITING_ACTION, CombatState.END_TURN],
         CombatState.END_TURN: [CombatState.ACTIVE, CombatState.COMBAT_END],
         CombatState.COMBAT_END: [CombatState.IDLE],

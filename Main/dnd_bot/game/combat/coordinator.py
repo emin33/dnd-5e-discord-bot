@@ -66,13 +66,21 @@ SPELL_CONDITION_MAP: dict[str, tuple[Condition, int, bool]] = {
 
 @dataclass
 class TurnEndResult:
-    """Result of ending a turn."""
+    """Result of ending a turn.
+
+    ``combat_over=True`` means the advance ended the encounter (e.g. the
+    outgoing turn downed the last conscious combatant on one side) — there is
+    no next combatant and the ``next_*`` fields are empty. Callers must route
+    to ``GameSessionManager.end_combat`` instead of announcing a next turn
+    (adversarial review, blocker 1b).
+    """
     next_combatant_id: str
     next_combatant_name: str
     next_is_player: bool
     round_advanced: bool
     new_round: int
     effect_messages: list[str] = field(default_factory=list)
+    combat_over: bool = False
 
 
 class CombatTurnCoordinator:
@@ -253,6 +261,20 @@ class CombatTurnCoordinator:
         effect_messages = []
         for result in end_of_turn_results:
             effect_messages.extend(result.messages)
+
+        if next_combatant is None:
+            # The advance ended combat (manager.next_turn() saw
+            # is_combat_over() and finalized the encounter) — a first-class
+            # outcome, not a crash (adversarial review, blocker 1b).
+            return TurnEndResult(
+                next_combatant_id="",
+                next_combatant_name="",
+                next_is_player=False,
+                round_advanced=False,
+                new_round=self.manager.combat.current_round,
+                effect_messages=effect_messages,
+                combat_over=True,
+            )
 
         round_advanced = next_combatant.turn_order == 0
 
@@ -1404,8 +1426,12 @@ class CombatTurnCoordinator:
             if self.manager.combat.is_combat_over():
                 break
 
-        # End turn
-        await self._end_turn_locked(combatant)
+        # End turn — unless this NPC's actions just ended combat. Teardown
+        # (GameSessionManager.end_combat) owns the COMBAT_END bookkeeping,
+        # and advancing a dead encounter would tick end-of-turn effects on
+        # it (adversarial review, blocker 1c).
+        if not self.manager.combat.is_combat_over():
+            await self._end_turn_locked(combatant)
 
         logger.info(
             "npc_turn_completed",
