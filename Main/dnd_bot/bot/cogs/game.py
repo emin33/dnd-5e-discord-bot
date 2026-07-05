@@ -10,7 +10,11 @@ from ...data.repositories import get_character_repo, get_campaign_repo
 from ...game.combat.manager import get_combat_for_channel
 from ...game.combat.coordinator import get_coordinator
 from ...game.combat.actions import CombatActionType
-from ..embeds.combat_embed import build_combat_tracker_embed, build_combat_start_embed
+from ..embeds.combat_embed import (
+    build_combat_tracker_embed,
+    build_combat_start_embed,
+    build_combat_over_embed,
+)
 from ..views.campaign_lobby import get_active_campaign_id
 from ..views.combat_actions import CombatActionView, ActionResultEmbed, NPCTurnView
 from ..frontends.discord_text import DiscordTextFrontend
@@ -432,6 +436,14 @@ class GameCog(commands.Cog):
         async def on_turn_end():
             end_result = await coordinator.end_turn(combatant)
 
+            if end_result.combat_over:
+                # The advance itself ended combat (e.g. end-of-turn effects
+                # downed the last combatant on one side) — adversarial
+                # review, blocker 1.
+                await channel.send(embed=build_combat_over_embed(manager.combat))
+                await get_session_manager().end_combat(channel.id)
+                return
+
             next_msg = f":arrow_right: **{end_result.next_combatant_name}**'s turn!"
             if end_result.round_advanced:
                 next_msg = f"**Round {end_result.new_round}**\n{next_msg}"
@@ -514,7 +526,14 @@ class GameCog(commands.Cog):
                 # abort. A finished-broken combat beats one wedged forever on
                 # the same combatant.
                 try:
-                    await coordinator.end_turn(current)
+                    end_result = await coordinator.end_turn(current)
+                    if end_result.combat_over:
+                        # The failed turn still ended combat (e.g. TPK) —
+                        # a proper defeat/victory embed, not the failure
+                        # warning (adversarial review, blocker 1e).
+                        await channel.send(embed=build_combat_over_embed(manager.combat))
+                        await get_session_manager().end_combat(channel.id)
+                        return
                 except Exception:
                     logger.error(
                         "npc_end_turn_failed", combatant=current.name, exc_info=True
@@ -529,10 +548,16 @@ class GameCog(commands.Cog):
                             exc_info=True,
                         )
                     if advanced is None:
-                        await channel.send(
-                            f":warning: Combat ended — **{current.name}**'s turn "
-                            "could not be completed or skipped."
-                        )
+                        # Distinguish combat-over from cannot-advance
+                        # (adversarial review, blocker 1e): a TPK gets the
+                        # defeat embed, not the wedge warning.
+                        if manager.combat.is_combat_over():
+                            await channel.send(embed=build_combat_over_embed(manager.combat))
+                        else:
+                            await channel.send(
+                                f":warning: Combat ended — **{current.name}**'s turn "
+                                "could not be completed or skipped."
+                            )
                         await get_session_manager().end_combat(channel.id)
                         return
                 continue

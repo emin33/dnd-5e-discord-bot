@@ -281,6 +281,18 @@ def build_combat_end_embed(combat: Combat, victory: bool) -> discord.Embed:
     return embed
 
 
+def build_combat_over_embed(combat: Combat) -> discord.Embed:
+    """Victory/defeat embed for a combat that just ended.
+
+    Computes victory from surviving players so every combat-over site
+    (cogs, views) renders the same embed (adversarial review, blocker 1d).
+    """
+    players_alive = any(
+        c.is_player and c.hp_current > 0 for c in combat.combatants
+    )
+    return build_combat_end_embed(combat, victory=players_alive)
+
+
 def build_attack_result_embed(
     attacker_name: str,
     target_name: str,

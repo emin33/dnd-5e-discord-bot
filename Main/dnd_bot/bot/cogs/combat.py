@@ -22,6 +22,7 @@ from ..embeds.combat_embed import (
     build_initiative_results_embed,
     build_combat_start_embed,
     build_combat_end_embed,
+    build_combat_over_embed,
     build_attack_result_embed,
 )
 from ...game.mechanics.dice import get_roller
@@ -518,30 +519,27 @@ class CombatCog(commands.Cog):
             # the announcement below on .name.
             next_combatant, _end_fx, _start_fx, _recharges = manager.next_turn()
 
-        if manager.combat.state == CombatState.COMBAT_END:
-            # Combat ended
-            players_alive = any(
-                c.is_player and c.hp_current > 0
-                for c in manager.combat.combatants
-            )
-            embed = build_combat_end_embed(manager.combat, victory=players_alive)
+        if next_combatant is None or manager.combat.is_combat_over():
+            # Combat ended on this advance. Robust to both signals
+            # (adversarial review, blocker 2): manager.next_turn() finalizes
+            # the encounter and returns no combatant; teardown then clears
+            # the registries so a repeated /combat next can't re-tick
+            # end-of-turn effects on the dead encounter.
+            embed = build_combat_over_embed(manager.combat)
             await ctx.respond(embed=embed)
             await get_session_manager().end_combat(ctx.channel_id)
             return
 
-        if next_combatant:
-            if current_before:
-                end_msg = f":stop_button: **{current_before.name}**'s turn ends."
-            else:
-                end_msg = ""
-
-            tracker_embed = build_combat_tracker_embed(manager.combat)
-            await ctx.respond(
-                f"{end_msg}\n\n:arrow_right: **{next_combatant.name}**, it's your turn!",
-                embed=tracker_embed,
-            )
+        if current_before:
+            end_msg = f":stop_button: **{current_before.name}**'s turn ends."
         else:
-            await ctx.respond("Combat has ended!")
+            end_msg = ""
+
+        tracker_embed = build_combat_tracker_embed(manager.combat)
+        await ctx.respond(
+            f"{end_msg}\n\n:arrow_right: **{next_combatant.name}**, it's your turn!",
+            embed=tracker_embed,
+        )
 
     @combat.command(name="attack", description="Make an attack in combat")
     async def combat_attack(
@@ -1501,6 +1499,15 @@ class CombatCog(commands.Cog):
                 except Exception as e:
                     logger.warning("narration_failed", error=str(e))
 
+            # The NPC's turn may have ended combat (e.g. the last conscious
+            # player just went down) — route through the single teardown
+            # owner instead of announcing a next turn (adversarial review,
+            # blocker 1d).
+            if manager.combat.is_combat_over():
+                await ctx.send(embed=build_combat_over_embed(manager.combat))
+                await get_session_manager().end_combat(ctx.channel_id)
+                return
+
             # Announce next turn
             next_combatant = manager.combat.get_current_combatant()
             if next_combatant:
@@ -1546,6 +1553,14 @@ class CombatCog(commands.Cog):
             async def on_turn_end():
                 await self._sync_player_characters(manager)
                 end_result = await coordinator.end_turn(current)
+
+                if end_result.combat_over:
+                    # The advance itself ended combat (e.g. end-of-turn
+                    # effects downed the last combatant on one side) —
+                    # adversarial review, blocker 1.
+                    await ctx.send(embed=build_combat_over_embed(manager.combat))
+                    await get_session_manager().end_combat(ctx.channel_id)
+                    return
 
                 # Announce next combatant
                 next_msg = f":arrow_right: **{end_result.next_combatant_name}**'s turn!"

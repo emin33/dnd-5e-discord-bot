@@ -15,6 +15,8 @@ from ...game.combat.actions import (
     WeaponStats,
 )
 from ...game.combat.coordinator import CombatTurnCoordinator
+from ...game.session import get_session_manager
+from ..embeds.combat_embed import build_combat_over_embed
 
 
 async def _reject_interaction(interaction: discord.Interaction, message: str) -> None:
@@ -1082,6 +1084,13 @@ class NPCTurnView(discord.ui.View):
             return False
         return True
 
+    async def _finish_combat(self) -> None:
+        """Victory/defeat embed + teardown through the single owner
+        (GameSessionManager.end_combat) — adversarial review, blocker 1d."""
+        embed = build_combat_over_embed(self.coordinator.manager.combat)
+        await self.channel.send(embed=embed)
+        await get_session_manager().end_combat(self.channel.id)
+
     @discord.ui.button(
         label="Run NPC Turn",
         style=discord.ButtonStyle.danger,
@@ -1099,32 +1108,57 @@ class NPCTurnView(discord.ui.View):
         self._busy = True
         await _disable_items_and_ack(self, interaction)
 
-        # Run the NPC turn
-        results = await self.coordinator.run_npc_turn(current)
+        combat_over = False
+        turn_ran = False
+        try:
+            # Run the NPC turn
+            results = await self.coordinator.run_npc_turn(current)
+            turn_ran = True
 
-        for result in results:
-            result_embed = ActionResultEmbed.build(result)
-            await self.channel.send(embed=result_embed)
+            for result in results:
+                result_embed = ActionResultEmbed.build(result)
+                await self.channel.send(embed=result_embed)
 
-            # Narrate the result
+                # Narrate the result
+                try:
+                    narrative = await self.coordinator.narrate_result(result)
+                    if narrative:
+                        await self.channel.send(f"*{narrative}*")
+                except Exception:
+                    pass
+
+            combat_over = self.coordinator.manager.combat.is_combat_over()
+        finally:
+            # Always release the view (adversarial review, blocker 1d): a
+            # raised turn must not leave _busy stuck True with every button
+            # dead.
+            self._busy = False
+            if combat_over:
+                for item in self.children:
+                    item.disabled = True
+                self.stop()
+            elif turn_ran:
+                # Pre-hardening UX: this button stays used-up after one
+                # turn, the "Run All" button comes back.
+                for item in self.children:
+                    if isinstance(item, discord.ui.Button):
+                        item.disabled = False
+                button.disabled = True
+            else:
+                # The turn raised — restore every button so the table can
+                # retry instead of staring at a bricked view.
+                for item in self.children:
+                    item.disabled = False
             try:
-                narrative = await self.coordinator.narrate_result(result)
-                if narrative:
-                    await self.channel.send(f"*{narrative}*")
+                await interaction.message.edit(view=self)
             except Exception:
                 pass
 
-        # Pre-hardening UX: this button stays used-up after one turn, the
-        # "Run All" button comes back.
-        for item in self.children:
-            if isinstance(item, discord.ui.Button):
-                item.disabled = False
-        button.disabled = True
-        self._busy = False
-        try:
-            await interaction.message.edit(view=self)
-        except Exception:
-            pass
+        if combat_over:
+            # NPC-side victory (e.g. TPK): defeat/victory embed + teardown
+            # through the single owner (adversarial review, blocker 1d).
+            await self._finish_combat()
+            return
 
         # Call completion callback
         await self.on_turns_complete()
@@ -1141,35 +1175,58 @@ class NPCTurnView(discord.ui.View):
         self._busy = True
         await _disable_items_and_ack(self, interaction)
 
-        turns_run = 0
-        max_turns = 10
+        combat_over = False
+        completed = False
+        try:
+            turns_run = 0
+            max_turns = 10
 
-        while turns_run < max_turns:
-            current = self.coordinator.manager.combat.get_current_combatant()
-            if not current:
-                break
-            if current.is_player:
-                break
+            while turns_run < max_turns:
+                current = self.coordinator.manager.combat.get_current_combatant()
+                if not current:
+                    break
+                if current.is_player:
+                    break
 
-            turns_run += 1
-            await self.channel.send(f":skull: **{current.name}**'s turn...")
+                turns_run += 1
+                await self.channel.send(f":skull: **{current.name}**'s turn...")
 
-            results = await self.coordinator.run_npc_turn(current)
+                results = await self.coordinator.run_npc_turn(current)
 
-            for result in results:
-                result_embed = ActionResultEmbed.build(result)
-                await self.channel.send(embed=result_embed)
+                for result in results:
+                    result_embed = ActionResultEmbed.build(result)
+                    await self.channel.send(embed=result_embed)
 
+                    try:
+                        narrative = await self.coordinator.narrate_result(result)
+                        if narrative:
+                            await self.channel.send(f"*{narrative}*")
+                    except Exception:
+                        pass
+
+                # Check if combat is over
+                if self.coordinator.manager.combat.is_combat_over():
+                    combat_over = True
+                    break
+            completed = True
+        finally:
+            self._busy = False
+            if not completed:
+                # A raised turn must not leave the view bricked (adversarial
+                # review, blocker 1d): restore the buttons for a retry.
+                for item in self.children:
+                    item.disabled = False
                 try:
-                    narrative = await self.coordinator.narrate_result(result)
-                    if narrative:
-                        await self.channel.send(f"*{narrative}*")
+                    await interaction.message.edit(view=self)
                 except Exception:
                     pass
 
-            # Check if combat is over
-            if self.coordinator.manager.combat.is_combat_over():
-                break
+        if combat_over:
+            # NPC-side victory (e.g. TPK): defeat/victory embed + teardown
+            # through the single owner (adversarial review, blocker 1d).
+            self.stop()
+            await self._finish_combat()
+            return
 
         # Buttons were already disabled (and the message edited) before the
         # run; this view is used up.
