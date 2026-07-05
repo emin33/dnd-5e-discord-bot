@@ -639,6 +639,33 @@ class EffectExecutor:
         # Set per-turn by the orchestrator so update_player targets the acting
         # PC rather than guessing in a multiplayer session (audit #1 / Option C).
         self.acting_character_id: Optional[str] = None
+        # EffectType → handler registration. Built once here (not inline in
+        # execute()) so tests can cross-check it against the tool registry's
+        # emittable effect types — a converter-producible type with no row
+        # here is exactly the silent-no-op drift the audit flagged.
+        self._executors = {
+            EffectType.SPAWN_OBJECT: self._execute_spawn_object,
+            EffectType.ADD_NPC: self._execute_add_npc,
+            EffectType.TRANSFER_ITEM: self._execute_transfer_item,
+            EffectType.GRANT_CURRENCY: self._execute_grant_currency,
+            EffectType.APPLY_DAMAGE: self._execute_apply_damage,
+            EffectType.APPLY_HEALING: self._execute_apply_healing,
+            EffectType.ADD_CONDITION: self._execute_add_condition,
+            EffectType.REMOVE_CONDITION: self._execute_remove_condition,
+            EffectType.START_COMBAT: self._execute_start_combat,
+            EffectType.SET_FLAG: self._execute_set_flag,
+            EffectType.LOG_MEMORY: self._execute_log_memory,
+            EffectType.CONSUME_RESOURCE: self._execute_consume_resource,
+            EffectType.REQUEST_ROLL: self._execute_request_roll,
+            EffectType.REF_ENTITY: self._execute_ref_entity,
+            EffectType.UPDATE_ENTITY: self._execute_update_entity,
+            EffectType.UPDATE_PLAYER: self._execute_update_player,
+            EffectType.CHANGE_LOCATION: self._execute_change_location,
+        }
+
+    def handled_effect_types(self) -> set[EffectType]:
+        """The EffectTypes this executor has a registered handler for."""
+        return set(self._executors)
 
     async def execute(
         self,
@@ -659,28 +686,7 @@ class EffectExecutor:
                 details={"message": "Effect already applied"},
             )
 
-        # Execute based on type
-        executors = {
-            EffectType.SPAWN_OBJECT: self._execute_spawn_object,
-            EffectType.ADD_NPC: self._execute_add_npc,
-            EffectType.TRANSFER_ITEM: self._execute_transfer_item,
-            EffectType.GRANT_CURRENCY: self._execute_grant_currency,
-            EffectType.APPLY_DAMAGE: self._execute_apply_damage,
-            EffectType.APPLY_HEALING: self._execute_apply_healing,
-            EffectType.ADD_CONDITION: self._execute_add_condition,
-            EffectType.REMOVE_CONDITION: self._execute_remove_condition,
-            EffectType.START_COMBAT: self._execute_start_combat,
-            EffectType.SET_FLAG: self._execute_set_flag,
-            EffectType.LOG_MEMORY: self._execute_log_memory,
-            EffectType.CONSUME_RESOURCE: self._execute_consume_resource,
-            EffectType.REQUEST_ROLL: self._execute_request_roll,
-            EffectType.REF_ENTITY: self._execute_ref_entity,
-            EffectType.UPDATE_ENTITY: self._execute_update_entity,
-            EffectType.UPDATE_PLAYER: self._execute_update_player,
-            EffectType.CHANGE_LOCATION: self._execute_change_location,
-        }
-
-        executor = executors.get(effect.effect_type)
+        executor = self._executors.get(effect.effect_type)
         if not executor:
             return EffectExecutionResult(
                 effect=effect,

@@ -1,16 +1,19 @@
 """Tests for the narrator tool registry (REFACTOR_PLAN.md Step 1).
 
-Phase 1 (this file's first job): pin the registry byte-identical to the
-legacy hardcoded dispatch in narrator_tools.py — schema lists per tier and
-converter outputs — BEFORE the hardcoded versions are deleted. When the
-strangle lands, the legacy-comparison tests are rewritten into direct pins.
+The registry is the single authority for tool schemas, tier membership,
+and tool→effect converters. Before the strangle, this file pinned the
+registry byte-identical to the legacy hardcoded dispatch; the hardcoded
+versions are now deleted, so the pins are direct: exact tier composition,
+façade-serves-registry, and the executor cross-check that makes a
+converter-producible EffectType without an executor row (the audit's
+silent remove_entity no-op) impossible to reintroduce.
 """
 
 import pytest
 
 from dnd_bot.llm import tool_registry
 from dnd_bot.llm import narrator_tools
-from dnd_bot.llm.effects import EffectType
+from dnd_bot.llm.effects import EffectExecutor, EffectType
 
 
 # Representative arguments per tool: enough surface to exercise every
@@ -72,14 +75,26 @@ CONVERTER_CASES = {
 }
 
 
-class TestRegistryMatchesLegacyDispatch:
-    """The registry must reproduce the hardcoded narrator_tools dispatch
-    exactly — these comparisons guard the strangler window."""
+# Exact tier composition, in canonical schema order. These pins replaced the
+# legacy-comparison tests when the hardcoded NARRATOR_TOOLS list was deleted —
+# any change here is a deliberate tool-surface change, not drift.
+EXPECTED_TIERS = {
+    "core": ["ref_entity", "add_npc", "spawn_object"],
+    "core_plus": ["ref_entity", "add_npc", "spawn_object",
+                  "start_combat", "change_location"],
+    "full": ["ref_entity", "add_npc", "spawn_object", "update_player",
+             "request_roll", "start_combat", "change_location",
+             "update_entity"],
+}
 
-    def test_tier_schema_lists_identical(self):
-        for tier in tool_registry.KNOWN_TIERS:
-            assert tool_registry.tools_for_tier(tier) == \
-                narrator_tools.NARRATOR_TOOL_TIERS[tier], f"tier '{tier}' drifted"
+
+class TestTierComposition:
+    """Exact per-tier tool lists — the registry is the single truth."""
+
+    @pytest.mark.parametrize("tier", sorted(EXPECTED_TIERS))
+    def test_tier_composition_pinned(self, tier):
+        tools = tool_registry.tools_for_tier(tier)
+        assert [t["function"]["name"] for t in tools] == EXPECTED_TIERS[tier]
 
     def test_full_tier_covers_every_registered_tool(self):
         full = tool_registry.tools_for_tier("full")
@@ -90,29 +105,41 @@ class TestRegistryMatchesLegacyDispatch:
         assert tool_registry.tools_for_tier("super_full_max") is None
         assert tool_registry.tools_for_tier("") is None
 
-    @pytest.mark.parametrize("tool_name", sorted(CONVERTER_CASES))
-    def test_converter_outputs_identical(self, tool_name):
-        for args in CONVERTER_CASES[tool_name]:
-            legacy = narrator_tools._convert_tool_call(tool_name, dict(args))
-            via_registry = tool_registry.convert_tool_call(tool_name, dict(args))
-            assert legacy is not None and via_registry is not None
-            assert via_registry.model_dump() == legacy.model_dump(), (
-                f"{tool_name} converter drifted for args {args!r}"
-            )
 
-    def test_unknown_tool_returns_none_both(self):
-        assert narrator_tools._convert_tool_call("no_such_tool", {}) is None
+class TestFacadeServesRegistry:
+    """narrator_tools is a thin read over the registry — same objects."""
+
+    @pytest.mark.parametrize("tier", sorted(EXPECTED_TIERS))
+    def test_tier_map_is_registry_derived(self, tier):
+        assert narrator_tools.NARRATOR_TOOL_TIERS[tier] == \
+            tool_registry.tools_for_tier(tier)
+        assert narrator_tools.get_narrator_tools_for_tier(tier) == \
+            tool_registry.tools_for_tier(tier)
+
+    def test_convert_delegates_to_registry(self):
+        assert narrator_tools._convert_tool_call is tool_registry.convert_tool_call
+
+    def test_unknown_tool_returns_none(self):
         assert tool_registry.convert_tool_call("no_such_tool", {}) is None
 
-    def test_every_legacy_tool_is_registered(self):
-        legacy_names = [t["function"]["name"] for t in narrator_tools.NARRATOR_TOOLS]
-        registry_names = [spec.name for spec in tool_registry.all_specs()]
-        assert registry_names == legacy_names
-
     def test_converter_cases_cover_every_registered_tool(self):
-        """Meta: if a tool is added to the registry without comparison cases,
-        fail here instead of silently skipping it."""
+        """Meta: if a tool is added to the registry without representative
+        cases, fail here instead of silently skipping it."""
         assert set(CONVERTER_CASES) == {s.name for s in tool_registry.all_specs()}
+
+
+class TestExecutorCrossCheck:
+    """Every EffectType a registered converter can emit must have an
+    EffectExecutor handler row — the registration drift that made
+    remove_entity a silent end-to-end no-op (audit Duplication P0)."""
+
+    def test_every_emittable_type_has_an_executor(self):
+        handled = EffectExecutor().handled_effect_types()
+        missing = tool_registry.emittable_effect_types() - handled
+        assert not missing, (
+            f"converter-producible effect types with NO executor row: "
+            f"{sorted(t.value for t in missing)}"
+        )
 
 
 class TestSpecDeclarations:
