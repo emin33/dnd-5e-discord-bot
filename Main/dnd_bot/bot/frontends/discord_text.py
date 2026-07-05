@@ -1,12 +1,11 @@
 """Discord text channel implementation of GameFrontend.
 
-Wraps all existing Discord presentation logic (embeds, progressive edits,
-combat button views) behind the generic GameFrontend protocol.
+Wraps all existing Discord presentation logic (embeds, progressive edits)
+behind the generic GameFrontend protocol.
 """
 
 from __future__ import annotations
 
-import asyncio
 import time
 from typing import Optional
 
@@ -14,12 +13,6 @@ import discord
 import structlog
 
 from ...game.frontend import GameEvent, GameEventType
-from ...game.combat.actions import CombatAction, ActionResult, TurnContext
-from ..views.combat_actions import CombatActionView, ActionResultEmbed
-from ..embeds.combat_embed import (
-    build_combat_tracker_embed,
-    build_combat_start_embed,
-)
 
 logger = structlog.get_logger()
 
@@ -154,7 +147,6 @@ class DiscordTextFrontend:
     - Mechanics as blue embeds
     - Narrative streaming via progressive message edits
     - Final narrative as gold embeds
-    - Combat turns via button views (CombatActionView)
     - Immersion: TTS audio + scene images (background tasks)
     """
 
@@ -190,63 +182,6 @@ class DiscordTextFrontend:
             await handler(self, event)
         else:
             logger.debug("unhandled_frontend_event", event_type=event.type)
-
-    async def get_combat_action(self, turn_context: TurnContext) -> CombatAction:
-        """Show combat button UI and await player's action choice.
-
-        Creates a CombatActionView with buttons. When the player clicks
-        a button, the view resolves the future with their CombatAction.
-        """
-        future: asyncio.Future[CombatAction] = asyncio.get_event_loop().create_future()
-
-        # Import coordinator here to avoid circular imports at module level
-        from ...game.combat.coordinator import get_coordinator_for_channel
-
-        coordinator = get_coordinator_for_channel(self._channel.id)
-        if not coordinator:
-            raise RuntimeError("No combat coordinator for this channel")
-
-        async def on_action_complete(result: ActionResult) -> None:
-            # Send the mechanical result embed
-            result_embed = ActionResultEmbed.build(result)
-            await self._channel.send(embed=result_embed)
-
-            # Narrate the result
-            try:
-                narrative = await coordinator.narrate_result(result)
-                if narrative:
-                    narr_embed = discord.Embed(
-                        description=narrative,
-                        color=discord.Color.dark_gold(),
-                    )
-                    await self._channel.send(embed=narr_embed)
-            except Exception as e:
-                logger.warning("narration_failed", error=str(e))
-
-        async def on_turn_end() -> None:
-            # The turn loop handles advancement - just resolve the future
-            pass
-
-        # Wrap the view so clicking a button resolves our future
-        class _FutureResolvingView(CombatActionView):
-            async def _execute_and_resolve(self_view, action: CombatAction):
-                if not future.done():
-                    future.set_result(action)
-
-        view = CombatActionView(
-            coordinator=coordinator,
-            turn_context=turn_context,
-            on_action_complete=on_action_complete,
-            on_turn_end=on_turn_end,
-        )
-
-        await self._channel.send(
-            f":crossed_swords: **{turn_context.combatant_name}**, it's your turn!",
-            embed=view.get_embed(),
-            view=view,
-        )
-
-        return await future
 
     # --- Event handlers ---
 
@@ -471,56 +406,10 @@ class DiscordTextFrontend:
                 logger.info("immersion_image_starting")
                 asyncio.create_task(self._generate_and_send_image(event))
 
-    async def _handle_combat_start(self, event: GameEvent) -> None:
-        combat = event.data["combat"]
-        start_embed = build_combat_start_embed(combat)
-        tracker_embed = build_combat_tracker_embed(combat)
-        await self._channel.send(embeds=[start_embed, tracker_embed])
-
-    async def _handle_action_result(self, event: GameEvent) -> None:
-        result = event.data["result"]
-        narrative = event.data.get("narrative")
-
-        result_embed = ActionResultEmbed.build(result)
-        await self._channel.send(embed=result_embed)
-
-        if narrative:
-            narr_embed = discord.Embed(
-                description=narrative,
-                color=discord.Color.dark_gold(),
-            )
-            await self._channel.send(embed=narr_embed)
-
-    async def _handle_turn_end(self, event: GameEvent) -> None:
-        next_name = event.data.get("next_combatant_name")
-        round_advanced = event.data.get("round_advanced", False)
-        new_round = event.data.get("new_round", 0)
-
-        if next_name:
-            msg = f":arrow_right: **{next_name}**'s turn!"
-            if round_advanced:
-                msg = f"**Round {new_round}**\n{msg}"
-            await self._channel.send(msg)
-
-    async def _handle_combat_end(self, event: GameEvent) -> None:
-        victory = event.data.get("victory", True)
-        # We'd need the combat object here - for now just send a message
-        msg = ":tada: **Victory!**" if victory else ":skull: **Defeat...**"
-        await self._channel.send(msg)
-
-    async def _handle_error(self, event: GameEvent) -> None:
-        message = event.data.get("message", "Something went wrong.")
-        await self._channel.send(f":warning: {message}")
-
 
 # Dispatch table for event handling
 _EVENT_HANDLERS = {
     GameEventType.MECHANICS_READY: DiscordTextFrontend._handle_mechanics_ready,
     GameEventType.NARRATIVE_TOKEN: DiscordTextFrontend._handle_narrative_token,
     GameEventType.NARRATIVE_COMPLETE: DiscordTextFrontend._handle_narrative_complete,
-    GameEventType.COMBAT_START: DiscordTextFrontend._handle_combat_start,
-    GameEventType.ACTION_RESULT: DiscordTextFrontend._handle_action_result,
-    GameEventType.TURN_END: DiscordTextFrontend._handle_turn_end,
-    GameEventType.COMBAT_END: DiscordTextFrontend._handle_combat_end,
-    GameEventType.ERROR: DiscordTextFrontend._handle_error,
 }
