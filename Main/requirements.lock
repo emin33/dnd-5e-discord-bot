@@ -1,5 +1,5 @@
 # Lockfile: pip freeze of Main/venv (core [project.dependencies] + [dev] extra).
-# Generated 2026-06-09 on Python 3.13.13 / Windows from pyproject.toml via:
+# Generated 2026-07-05 on Python 3.13.14 / Windows from pyproject.toml via:
 #   py -3.13 -m venv venv && venv\Scripts\python -m pip install -e ".[dev]"
 #   venv\Scripts\python -m pip freeze --exclude-editable
 # voice/web/image extras are NOT included (heavy GPU stacks).
@@ -113,6 +113,7 @@ tenacity==9.1.4
 tokenizers==0.23.1
 tqdm==4.68.2
 typer==0.25.1
+types-PyYAML==6.0.12.20260518
 typing-inspection==0.4.2
 typing_extensions==4.15.0
 uritemplate==4.2.0
