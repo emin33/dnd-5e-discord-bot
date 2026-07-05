@@ -195,6 +195,11 @@ class TurnContext:
     is_concentrating: bool = False
     concentration_spell: Optional[str] = None
 
+    # Set when start_turn was a no-op because the encounter is already over
+    # or torn down (adversarial review, should-fix 2). Callers must not
+    # build a turn UI from such a context.
+    combat_over: bool = False
+
 
 @dataclass
 class MultiAttackAction:

@@ -194,3 +194,89 @@ class TestNpcTurnTpk:
         assert session.combat_manager is None
         assert get_combat_by_key(KEY) is None
         assert get_coordinator_by_key(KEY) is None
+
+
+class TestTornDownCoordinatorGuards:
+    """Adversarial review, should-fix 2: a coroutine parked on the turn lock
+    can resume AFTER GameSessionManager.end_combat finalized the manager and
+    cleared the registries. The ``*_locked`` bodies must return typed no-op
+    results against the torn-down combat instead of mutating or crashing."""
+
+    async def _torn_down(self, mock_character, monkeypatch):
+        """A registered combat torn down through the single owner."""
+        manager = _make_combat(mock_character)
+        set_combat_for_channel(CHANNEL, manager)
+        coordinator = get_coordinator(manager)
+
+        async def _fake_persist(self):
+            pass
+
+        monkeypatch.setattr(
+            CombatTurnCoordinator, "persist_player_characters", _fake_persist
+        )
+        sessions = GameSessionManager()
+        assert await sessions.end_combat(CHANNEL) is True
+        assert manager.combat.state == CombatState.COMBAT_END
+        return manager, coordinator
+
+    async def test_locked_calls_after_teardown_are_noops(
+        self, mock_character, monkeypatch
+    ):
+        manager, coordinator = await self._torn_down(mock_character, monkeypatch)
+        goblin = next(c for c in manager.combat.combatants if not c.is_player)
+        goblin.turn_resources.action = True
+        turn_index_before = manager.combat.current_turn_index
+
+        # execute_action: typed failure, no resource consumed
+        result = await coordinator.execute_action(
+            CombatAction(
+                action_type=CombatActionType.DASH,
+                combatant_id=goblin.id,
+            )
+        )
+        assert result.success is False
+        assert "ended" in (result.error or "").lower()
+        assert goblin.turn_resources.action is True  # untouched
+
+        # end_turn: combat-over result, initiative not advanced
+        end_result = await coordinator.end_turn(goblin)
+        assert end_result.combat_over is True
+        assert manager.combat.current_turn_index == turn_index_before
+
+        # start_turn: flagged no-op context, no resources granted
+        turn_ctx = await coordinator.start_turn(goblin)
+        assert turn_ctx.combat_over is True
+        assert turn_ctx.has_action is False
+
+        # run_npc_turn: no actions executed
+        assert await coordinator.run_npc_turn(goblin) == []
+
+    async def test_replaced_coordinator_is_stale(self, mock_character):
+        """A NEW combat re-registering the channel makes calls from the OLD
+        coordinator no-ops even though its own manager was never finalized."""
+        manager_old = _make_combat(mock_character)
+        set_combat_for_channel(CHANNEL, manager_old)
+        coordinator_old = get_coordinator(manager_old)
+
+        clear_coordinator_by_key(KEY)
+        manager_new = _make_combat(mock_character)
+        set_combat_for_channel(CHANNEL, manager_new)
+        coordinator_new = get_coordinator(manager_new)
+        assert coordinator_new is not coordinator_old
+        assert manager_old.combat.state == CombatState.AWAITING_ACTION
+
+        goblin_old = next(
+            c for c in manager_old.combat.combatants if not c.is_player
+        )
+        result = await coordinator_old.execute_action(
+            CombatAction(
+                action_type=CombatActionType.DASH,
+                combatant_id=goblin_old.id,
+            )
+        )
+        assert result.success is False
+
+        end_result = await coordinator_old.end_turn(goblin_old)
+        assert end_result.combat_over is True
+        # The new combat is unaffected and fully operational.
+        assert manager_new.combat.state == CombatState.AWAITING_ACTION

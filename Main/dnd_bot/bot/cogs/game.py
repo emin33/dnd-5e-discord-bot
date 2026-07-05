@@ -6,6 +6,7 @@ from discord.ext import commands
 import structlog
 
 from ...game.session import get_session_manager, SessionState
+from ...models import CombatState
 from ...data.repositories import get_character_repo, get_campaign_repo
 from ...game.combat.manager import get_combat_for_channel
 from ...game.combat.coordinator import get_coordinator
@@ -389,6 +390,11 @@ class GameCog(commands.Cog):
     ) -> None:
         """Show the player action UI for a combatant's turn."""
         turn_ctx = await coordinator.start_turn(combatant)
+        if turn_ctx.combat_over:
+            # Teardown raced us while waiting on the turn lock — the
+            # encounter is already over, nothing to show (adversarial
+            # review, should-fix 2).
+            return
 
         async def on_action_complete(result):
             import time as _time
@@ -491,6 +497,11 @@ class GameCog(commands.Cog):
         max_consecutive_failures = 3  # Abort combat rather than wedge (audit P1-15)
 
         while turns_run < max_turns:
+            if manager.combat.state == CombatState.COMBAT_END:
+                # Ended elsewhere (teardown raced us) — nothing to run
+                # (adversarial review, should-fix 2).
+                return
+
             current = manager.combat.get_current_combatant()
             if not current or current.is_player:
                 break

@@ -16,6 +16,7 @@ from ...game.combat.actions import (
 )
 from ...game.combat.coordinator import CombatTurnCoordinator
 from ...game.session import get_session_manager
+from ...models import CombatState
 from ..embeds.combat_embed import build_combat_over_embed
 
 
@@ -1137,7 +1138,11 @@ class NPCTurnView(discord.ui.View):
     async def run_npc_turn(self, button: discord.ui.Button, interaction: discord.Interaction):
         """Run the current NPC's turn."""
         current = self.coordinator.manager.combat.get_current_combatant()
-        if not current or current.is_player:
+        if (
+            self.coordinator.manager.combat.state == CombatState.COMBAT_END
+            or not current
+            or current.is_player
+        ):
             await interaction.response.send_message("No NPC turn to run.", ephemeral=True)
             return
 
@@ -1220,6 +1225,12 @@ class NPCTurnView(discord.ui.View):
             max_turns = 10
 
             while turns_run < max_turns:
+                if self.coordinator.manager.combat.state == CombatState.COMBAT_END:
+                    # Ended elsewhere (teardown raced us) — nothing to run,
+                    # the view is done (adversarial review, should-fix 2).
+                    completed = True
+                    self.stop()
+                    return
                 current = self.coordinator.manager.combat.get_current_combatant()
                 if not current:
                     break

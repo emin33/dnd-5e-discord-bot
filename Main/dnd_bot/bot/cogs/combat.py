@@ -1528,6 +1528,11 @@ class CombatCog(commands.Cog):
         else:
             # Player turn - show action UI
             turn_ctx = await coordinator.start_turn(current)
+            if turn_ctx.combat_over:
+                # Teardown raced us while waiting on the turn lock
+                # (adversarial review, should-fix 2).
+                await ctx.respond("Combat has already ended.", ephemeral=True)
+                return
 
             async def on_action_complete(result):
                 result_embed = ActionResultEmbed.build(result)
@@ -1625,6 +1630,11 @@ class CombatCog(commands.Cog):
         max_turns = 10  # Safety limit
 
         while turns_run < max_turns:
+            if manager.combat.state == CombatState.COMBAT_END:
+                # Ended elsewhere (teardown raced us) — nothing to run
+                # (adversarial review, should-fix 2).
+                return
+
             current = manager.combat.get_current_combatant()
             if not current:
                 break

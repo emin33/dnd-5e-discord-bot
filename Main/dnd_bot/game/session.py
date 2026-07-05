@@ -320,6 +320,17 @@ class GameSessionManager:
 
     async def end_session(self, channel_id: int) -> Optional[GameSession]:
         """End a game session."""
+        session = self._sessions.get(f"discord:{channel_id}")
+        if session is not None and (
+            session.state == SessionState.COMBAT
+            or session.combat_manager is not None
+        ):
+            # /game end mid-combat: unwind through the single teardown owner
+            # (audit P0-3) first — otherwise the combat-manager, coordinator,
+            # and turn-lock registry entries stay keyed to this channel and
+            # the NEXT session inherits them (adversarial review, nit).
+            await self.end_combat(channel_id, session_key=session.session_key)
+
         session = self._sessions.pop(f"discord:{channel_id}", None)
         if session:
             session.state = SessionState.ENDED

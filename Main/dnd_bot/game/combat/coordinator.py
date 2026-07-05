@@ -28,7 +28,7 @@ from .actions import (
 )
 from ..mechanics.dice import get_roller
 from ..mechanics.conditions import ConditionResolver
-from ...models import Character, Combatant, Condition, AbilityScore
+from ...models import Character, Combatant, CombatState, Condition, AbilityScore
 from ...data.srd import get_srd
 from ...data.repositories import get_character_repo, get_inventory_repo
 
@@ -138,6 +138,37 @@ class CombatTurnCoordinator:
         """
         return get_turn_lock(self._lock_key())
 
+    def _combat_torn_down(self) -> bool:
+        """True when this coordinator's combat is over or was replaced.
+
+        A coroutine parked on the turn lock can resume AFTER teardown
+        (``GameSessionManager.end_combat`` finalizes the manager and clears
+        the registries while the waiter sleeps) or after a NEW combat
+        re-registered this channel. Its ``*_locked`` body would then mutate
+        a dead encounter — every locked impl guards on this first and
+        returns a typed no-op result instead (adversarial review,
+        should-fix 2).
+        """
+        if self.manager.combat.state == CombatState.COMBAT_END:
+            return True
+        registered = get_coordinator_by_key(self._lock_key())
+        # None means "not registered" (direct-constructed coordinators, e.g.
+        # the teardown owner's transient one) — only an entry pointing at a
+        # DIFFERENT coordinator marks this one stale.
+        return registered is not None and registered is not self
+
+    def _combat_over_result(self, effect_messages: Optional[list[str]] = None) -> TurnEndResult:
+        """A TurnEndResult signalling the encounter is over (no next turn)."""
+        return TurnEndResult(
+            next_combatant_id="",
+            next_combatant_name="",
+            next_is_player=False,
+            round_advanced=False,
+            new_round=self.manager.combat.current_round,
+            effect_messages=effect_messages or [],
+            combat_over=True,
+        )
+
     # ==================== Turn Management ====================
 
     async def start_turn(self, combatant: Combatant) -> TurnContext:
@@ -154,6 +185,23 @@ class CombatTurnCoordinator:
 
     async def _start_turn_locked(self, combatant: Combatant) -> TurnContext:
         """start_turn body — caller must hold the turn lock."""
+        if self._combat_torn_down():
+            # Teardown raced this call while it waited on the turn lock —
+            # do not mutate the dead encounter (review, should-fix 2).
+            return TurnContext(
+                combatant_id=combatant.id,
+                combatant_name=combatant.name,
+                is_player=combatant.is_player,
+                has_action=False,
+                has_bonus_action=False,
+                has_reaction=False,
+                movement_remaining=0,
+                hp_current=combatant.hp_current,
+                hp_max=combatant.hp_max,
+                armor_class=combatant.armor_class,
+                combat_over=True,
+            )
+
         # Reset turn-based states
         self.zone_tracker.on_turn_start(combatant.id)
         combatant.turn_resources.reset_for_new_turn(combatant.speed)
@@ -245,6 +293,11 @@ class CombatTurnCoordinator:
 
     async def _end_turn_locked(self, combatant: Combatant) -> TurnEndResult:
         """end_turn body — caller must hold the turn lock."""
+        if self._combat_torn_down():
+            # Teardown raced this call while it waited on the turn lock —
+            # do not advance the dead encounter (review, should-fix 2).
+            return self._combat_over_result()
+
         # SURPRISE: Surprise ends at the end of the creature's first turn
         if combatant.is_surprised:
             combatant.is_surprised = False
@@ -266,15 +319,7 @@ class CombatTurnCoordinator:
             # The advance ended combat (manager.next_turn() saw
             # is_combat_over() and finalized the encounter) — a first-class
             # outcome, not a crash (adversarial review, blocker 1b).
-            return TurnEndResult(
-                next_combatant_id="",
-                next_combatant_name="",
-                next_is_player=False,
-                round_advanced=False,
-                new_round=self.manager.combat.current_round,
-                effect_messages=effect_messages,
-                combat_over=True,
-            )
+            return self._combat_over_result(effect_messages)
 
         round_advanced = next_combatant.turn_order == 0
 
@@ -323,6 +368,15 @@ class CombatTurnCoordinator:
 
     async def _execute_action_locked(self, action: CombatAction) -> ActionResult:
         """execute_action body — caller must hold the turn lock."""
+        if self._combat_torn_down():
+            # Teardown raced this call while it waited on the turn lock —
+            # do not mutate the dead encounter (review, should-fix 2).
+            return ActionResult(
+                action=action,
+                success=False,
+                error="Combat has already ended",
+            )
+
         combatant = self.manager.get_combatant(action.combatant_id)
         if not combatant:
             return ActionResult(
@@ -1369,6 +1423,11 @@ class CombatTurnCoordinator:
 
     async def _run_npc_turn_locked(self, combatant: Combatant) -> list[ActionResult]:
         """run_npc_turn body — caller must hold the turn lock."""
+        if self._combat_torn_down():
+            # Teardown raced this call while it waited on the turn lock —
+            # no turn to run on the dead encounter (review, should-fix 2).
+            return []
+
         from .npc_brain import get_npc_brain
 
         brain = get_npc_brain()
