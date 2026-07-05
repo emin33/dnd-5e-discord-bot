@@ -157,9 +157,7 @@ module = [
     "kokoro.*",                # [voice] extra
     "elevenlabs.*",            # [voice] extra
     "riva.*",                  # [voice] extra
-    "deepgram.*",              # [voice] extra
     "livekit.*",               # [voice] extra
     "fastapi.*",               # [web] extra
-    "sentence_transformers.*", # optional NLI validator dependency
 ]
 ignore_missing_imports = true

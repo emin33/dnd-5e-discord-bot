@@ -14,6 +14,7 @@ import structlog
 from .blocks import CoreMemory, MessageBuffer, SessionSummary
 from .vector_store import get_vector_store
 from ..llm.client import get_ollama_client
+from ..llm.json_extract import extract_json_object
 
 logger = structlog.get_logger()
 
@@ -577,32 +578,9 @@ class MemoryManager:
                 raw_preview=response[:200],
             )
 
-            # Parse response
-            try:
-                response_text = response.strip()
-
-                # Strip markdown fences if present
-                if "```json" in response_text:
-                    start = response_text.find("```json") + 7
-                    end = response_text.find("```", start)
-                    if end > start:
-                        response_text = response_text[start:end].strip()
-                elif "```" in response_text:
-                    start = response_text.find("```") + 3
-                    end = response_text.find("```", start)
-                    if end > start:
-                        response_text = response_text[start:end].strip()
-
-                # Find JSON object boundaries
-                brace_start = response_text.find("{")
-                brace_end = response_text.rfind("}")
-                if brace_start != -1 and brace_end > brace_start:
-                    response_text = response_text[brace_start:brace_end + 1]
-
-                data = json.loads(response_text)
-                if not isinstance(data, dict):
-                    raise ValueError(f"Expected dict, got {type(data).__name__}")
-
+            # Parse response (shared fence-strip -> brace-extract -> parse)
+            data, parse_warnings = extract_json_object(response)
+            if data is not None:
                 summary = SessionSummary(
                     session_id=f"incremental_{self._message_count}",
                     campaign_id=self.campaign_id,
@@ -639,30 +617,28 @@ class MemoryManager:
                 )
                 return True
 
-            except Exception as parse_err:
-                logger.warning(
-                    "summary_json_parse_failed_using_raw",
-                    error_type=type(parse_err).__name__,
-                    error=str(parse_err)[:120],
-                    response_preview=response[:200],
+            logger.warning(
+                "summary_json_parse_failed_using_raw",
+                warnings=parse_warnings,
+                response_preview=response[:200],
+            )
+            # Fallback: use the raw response as a plain text summary
+            raw_summary = response.strip()
+            if raw_summary and len(raw_summary) > 20:
+                summary = SessionSummary(
+                    session_id=f"incremental_{self._message_count}",
+                    campaign_id=self.campaign_id,
+                    summary=raw_summary[:500],  # Cap length
+                    key_events=[],
+                    npcs_encountered=[],
+                    locations_visited=[],
+                    message_count=self._gate_min_messages,
                 )
-                # Fallback: use the raw response as a plain text summary
-                raw_summary = response.strip()
-                if raw_summary and len(raw_summary) > 20:
-                    summary = SessionSummary(
-                        session_id=f"incremental_{self._message_count}",
-                        campaign_id=self.campaign_id,
-                        summary=raw_summary[:500],  # Cap length
-                        key_events=[],
-                        npcs_encountered=[],
-                        locations_visited=[],
-                        message_count=self._gate_min_messages,
-                    )
-                    self._session_summaries.append(summary)
-                    self._last_summary_at = self._message_count
-                    self._last_summary_time = time.monotonic()
-                    return True
-                return False
+                self._session_summaries.append(summary)
+                self._last_summary_at = self._message_count
+                self._last_summary_time = time.monotonic()
+                return True
+            return False
 
         except Exception as e:
             import traceback

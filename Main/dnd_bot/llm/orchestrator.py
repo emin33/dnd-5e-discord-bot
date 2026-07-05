@@ -1433,19 +1433,6 @@ class DMOrchestrator:
             proposed_effects=proposed_effects,
         )
 
-    async def triage_action(
-        self,
-        action: str,
-        player_name: str,
-        context: BrainContext,
-    ) -> TriageResult:
-        """Public: classify a player action without executing it.
-
-        Used by voice frontend to parse spoken combat commands into
-        structured actions via the existing triage system.
-        """
-        return await self._triage_action(action, player_name, context)
-
     async def _triage_action(
         self,
         action: str,
