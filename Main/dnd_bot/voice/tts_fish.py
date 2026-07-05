@@ -105,38 +105,3 @@ class FishSpeechTTS:
         """Async wrapper -- runs sync HTTP call in executor."""
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, self.synthesize, text)
-
-    async def synthesize_stream(self, text: str):
-        """Streaming synthesis via WebSocket (for real-time playback).
-
-        Yields PCM int16 numpy chunks as they arrive.
-        """
-        try:
-            import aiohttp
-
-            payload = {
-                "text": text,
-                "format": "pcm",
-            }
-            if self.reference_id:
-                payload["reference_id"] = self.reference_id
-
-            async with aiohttp.ClientSession() as session:
-                async with session.ws_connect(
-                    f"{self.server_url}/v1/tts/stream"
-                ) as ws:
-                    import json
-                    await ws.send_str(json.dumps(payload))
-
-                    async for msg in ws:
-                        if msg.type == aiohttp.WSMsgType.BINARY:
-                            yield np.frombuffer(msg.data, dtype=np.int16)
-                        elif msg.type == aiohttp.WSMsgType.ERROR:
-                            logger.warning("fish_speech_stream_error", error=str(ws.exception()))
-                            break
-
-        except ImportError:
-            logger.warning("aiohttp_not_installed_for_fish_speech_streaming")
-            # Fallback to non-streaming
-            audio = await self.synthesize_async(text)
-            yield audio

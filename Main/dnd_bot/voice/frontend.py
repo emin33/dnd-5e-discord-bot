@@ -1,7 +1,6 @@
 """Voice frontend implementing GameFrontend protocol.
 
-Converts game events to speech (TTS) and accepts voice input (ASR).
-For combat, supports both voice commands (via triage) and web UI buttons.
+Converts game events to speech (TTS). For combat, supports web UI buttons.
 """
 
 from __future__ import annotations
@@ -13,12 +12,10 @@ from typing import Callable, Awaitable, Optional, TYPE_CHECKING
 import structlog
 
 from ..game.frontend import GameEvent, GameEventType
-from ..game.combat.actions import CombatAction, CombatActionType, TurnContext
-from .tts import TTSSentenceQueue
+from ..game.combat.actions import CombatAction, TurnContext
 
 if TYPE_CHECKING:
     from ..game.session import GameSession
-    from ..llm.orchestrator import DMOrchestrator
 
 logger = structlog.get_logger()
 
@@ -130,9 +127,8 @@ def _action_result_to_speech(result) -> str:
 class VoiceFrontend:
     """GameFrontend implementation for voice interaction.
 
-    Converts game events to speech via Riva TTS and accepts player
-    input via ASR transcriptions. For combat, supports both voice
-    commands (parsed through triage) and web UI button clicks.
+    Converts game events to speech via TTS. For combat, supports
+    web UI button clicks.
 
     The `speak` callback is provided by the transport layer (LiveKit
     or Discord voice) and handles actually playing audio.
@@ -140,28 +136,19 @@ class VoiceFrontend:
 
     def __init__(
         self,
-        tts,  # Any TTS provider (duck-typed: synthesize, synthesize_async, sample_rate)
         speak_fn: Callable[[str], Awaitable[None]],
-        orchestrator: Optional[DMOrchestrator] = None,
         session: Optional[GameSession] = None,
     ):
         """
         Args:
-            tts: Riva TTS instance for sentence-level synthesis.
             speak_fn: Async callable that takes text and speaks it via TTS.
                 Provided by the transport layer (LiveKit, Discord voice, etc.)
-            orchestrator: For triage_action() during voice combat.
             session: Current game session (for combat context building).
         """
-        self._tts = tts
         self._speak = speak_fn
-        self._orchestrator = orchestrator
         self._session = session
 
-        # Sentence queue for streaming narration via TTS
-        self._sentence_queue = TTSSentenceQueue(tts)
-
-        # Combat action future - resolved by either voice or web UI
+        # Combat action future - resolved by the web UI
         self._combat_action_future: Optional[asyncio.Future[CombatAction]] = None
 
         # Callback for web UI combat actions (set by transport layer)
@@ -182,19 +169,16 @@ class VoiceFrontend:
             logger.debug("unhandled_voice_event", event_type=event.type)
 
     async def get_combat_action(self, turn_context: TurnContext) -> CombatAction:
-        """Await player's combat action via voice command or web UI button.
+        """Await player's combat action via web UI button.
 
-        Speaks the turn prompt, then waits for either:
-        1. Voice: ASR transcription → triage → CombatAction
-        2. Web UI: button click → CombatAction directly
-
-        First one to resolve wins (asyncio race).
+        Speaks the turn prompt, then waits for the web UI to resolve
+        the action (button click → CombatAction).
         """
         # Speak the turn prompt
         prompt = _turn_context_to_speech(turn_context)
         await self._speak(prompt)
 
-        # Create a future that either voice or web UI can resolve
+        # Create a future that the web UI can resolve
         loop = asyncio.get_running_loop()
         self._combat_action_future = loop.create_future()
 
@@ -203,61 +187,6 @@ class VoiceFrontend:
             return action
         finally:
             self._combat_action_future = None
-
-    async def resolve_voice_combat(
-        self,
-        transcription: str,
-        turn_context: TurnContext,
-        player_name: str,
-    ) -> None:
-        """Resolve combat action from a voice transcription.
-
-        Called by the transport layer when ASR produces text during
-        a player's combat turn. Uses triage to classify the spoken
-        command into a CombatAction.
-        """
-        if not self._combat_action_future or self._combat_action_future.done():
-            return
-
-        if not self._orchestrator:
-            logger.warning("no_orchestrator_for_voice_combat")
-            return
-
-        # Use triage to classify the voice command
-        from ..llm.brains.base import BrainContext
-
-        # Build minimal context for triage
-        context = BrainContext(
-            player_input=transcription,
-            memory_context="",
-            character_context="",
-            world_state_yaml="",
-            scene_context="",
-            knowledge_context="",
-        )
-
-        try:
-            triage_result = await self._orchestrator.triage_action(
-                transcription, player_name, context
-            )
-        except Exception as e:
-            logger.warning("voice_triage_failed", error=str(e))
-            await self._speak(
-                "I didn't catch that. You can attack, cast a spell, "
-                "dash, dodge, disengage, or end your turn."
-            )
-            return
-
-        # Map triage result to CombatAction
-        action = self._triage_to_combat_action(triage_result, turn_context)
-        if action and not self._combat_action_future.done():
-            self._combat_action_future.set_result(action)
-        else:
-            await self._speak(
-                "I didn't understand that as a combat action. "
-                "Try saying something like 'I attack the goblin' "
-                "or 'I cast fireball'."
-            )
 
     def resolve_web_combat(self, action: CombatAction) -> None:
         """Resolve combat action from a web UI button click.
@@ -268,56 +197,6 @@ class VoiceFrontend:
         if self._combat_action_future and not self._combat_action_future.done():
             self._combat_action_future.set_result(action)
 
-    def _triage_to_combat_action(
-        self,
-        triage_result,
-        turn_context: TurnContext,
-    ) -> Optional[CombatAction]:
-        """Map a TriageResult to a CombatAction.
-
-        Handles fuzzy target matching and action type mapping.
-        """
-        action_type_map = {
-            "attack": CombatActionType.ATTACK,
-            "cast_spell": CombatActionType.CAST_SPELL,
-            "dash": CombatActionType.DASH,
-            "dodge": CombatActionType.DODGE,
-            "disengage": CombatActionType.DISENGAGE,
-            "help": CombatActionType.HELP,
-            "hide": CombatActionType.HIDE,
-            "end_turn": CombatActionType.END_TURN,
-        }
-
-        action_type = action_type_map.get(triage_result.action_type)
-        if not action_type:
-            # Triage classified it as something non-combat (social, roleplay, etc.)
-            return None
-
-        # Resolve target
-        target_ids = []
-        if triage_result.target_name and turn_context.in_melee_with:
-            # Fuzzy match target name against available targets
-            target_name_lower = triage_result.target_name.lower()
-            for target in turn_context.in_melee_with:
-                if target_name_lower in target.lower():
-                    target_ids.append(target)
-                    break
-            if not target_ids:
-                # Default to first melee target
-                target_ids.append(turn_context.in_melee_with[0])
-
-        return CombatAction(
-            action_type=action_type,
-            combatant_id=turn_context.combatant_id,
-            target_ids=target_ids,
-            weapon_index=(
-                turn_context.equipped_weapons[0].name
-                if turn_context.equipped_weapons
-                else None
-            ),
-            spell_index=triage_result.item_name if action_type == CombatActionType.CAST_SPELL else None,
-        )
-
     # --- Event handlers ---
 
     async def _handle_mechanics_ready(self, event: GameEvent) -> None:
@@ -327,10 +206,6 @@ class VoiceFrontend:
         )
         if text:
             await self._speak(text)
-
-    async def _handle_narrative_token(self, event: GameEvent) -> None:
-        # Buffer tokens into sentences for TTS streaming
-        self._sentence_queue.add_token(event.data["token"])
 
     async def _handle_narrative_complete(self, event: GameEvent) -> None:
         narrative = event.data["narrative"]
@@ -381,7 +256,6 @@ class VoiceFrontend:
 # Dispatch table for event handling
 _VOICE_EVENT_HANDLERS = {
     GameEventType.MECHANICS_READY: VoiceFrontend._handle_mechanics_ready,
-    GameEventType.NARRATIVE_TOKEN: VoiceFrontend._handle_narrative_token,
     GameEventType.NARRATIVE_COMPLETE: VoiceFrontend._handle_narrative_complete,
     GameEventType.COMBAT_START: VoiceFrontend._handle_combat_start,
     GameEventType.ACTION_RESULT: VoiceFrontend._handle_action_result,
