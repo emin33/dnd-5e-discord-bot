@@ -715,6 +715,14 @@ class SpellSelectionView(discord.ui.View):
             # Filter to combat-relevant casting times
             if info.casting_time not in ("1 action", "1 bonus action"):
                 continue
+            # Filter out leveled spells with no castable slot remaining —
+            # offering one dead-ended the turn in a fully disabled view
+            # (adversarial review, should-fix 3). Cantrips always castable.
+            if info.level > 0 and not any(
+                level >= info.level and remaining > 0
+                for level, remaining in self.parent.ctx.spell_slots.items()
+            ):
+                continue
             level_label = f"Cantrip" if info.level == 0 else f"Level {info.level}"
             options.append(discord.SelectOption(
                 label=info.name,
@@ -816,6 +824,10 @@ class SpellSelectionView(discord.ui.View):
                 )
             except Exception:
                 pass
+            # Recover instead of returning into a view whose every component
+            # — including Cancel — is already disabled (adversarial review,
+            # should-fix 3).
+            await self._restore_action_menu(interaction)
             return
 
         if len(valid_levels) == 1:
@@ -841,6 +853,32 @@ class SpellSelectionView(discord.ui.View):
         except Exception:
             # Fallback: use lowest valid slot
             await self._execute_cast(interaction, spell_index, valid_levels[0], target_ids)
+
+    async def _restore_action_menu(self, interaction: discord.Interaction) -> None:
+        """Replace a dead-ended sub-view with a fresh, unclaimed action menu.
+
+        Reached when the cast can no longer proceed (e.g. no castable slot
+        remained) AFTER the sub-view disabled all of its components. A fresh
+        CombatActionView resets the one-shot claim so the player can still
+        take their turn (adversarial review, should-fix 3).
+        """
+        self.stop()
+        fresh = CombatActionView(
+            coordinator=self.parent.coordinator,
+            turn_context=self.parent.ctx,
+            on_action_complete=self.parent.on_action_complete,
+            on_turn_end=self.parent.on_turn_end,
+            actor_user_id=self.parent.actor_user_id,
+        )
+        try:
+            message = interaction.message
+            if message is not None:
+                await message.edit(
+                    content=None, embed=fresh.get_embed(), view=fresh
+                )
+                fresh.message = message
+        except Exception:
+            pass
 
     async def _execute_cast(
         self,

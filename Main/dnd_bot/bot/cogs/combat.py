@@ -643,8 +643,10 @@ class CombatCog(commands.Cog):
             damage_roll = self.roller.roll_damage(damage_dice, critical=is_critical)
             damage_dealt = damage_roll.total
 
-            # Apply damage
-            actual_damage, is_unconscious, is_instant_death = manager.apply_damage(
+            # Apply damage — 4-tuple: the damage modifier is always "none"
+            # here (no damage_type given), so discard it. Unpacking 3 raised
+            # ValueError on every hit (adversarial review, should-fix 1).
+            actual_damage, is_unconscious, is_instant_death, _ = manager.apply_damage(
                 target_combatant.id,
                 damage_dealt,
                 is_critical=is_critical,
@@ -732,7 +734,9 @@ class CombatCog(commands.Cog):
             )
             return
 
-        actual_damage, is_unconscious, is_instant_death = manager.apply_damage(
+        # 4-tuple — unpacking 3 raised ValueError on every hit, AFTER the
+        # damage had already been applied (adversarial review, should-fix 1).
+        actual_damage, is_unconscious, is_instant_death, damage_modifier = manager.apply_damage(
             combatant.id,
             amount,
             damage_type=damage_type,
@@ -743,8 +747,13 @@ class CombatCog(commands.Cog):
             await self._sync_player_characters(manager)
 
         type_text = f" {damage_type}" if damage_type else ""
+        modifier_text = {
+            "resistance": " (resisted!)",
+            "immunity": " (immune!)",
+            "vulnerability": " (vulnerable!)",
+        }.get(damage_modifier, "")
         await ctx.respond(
-            f":boom: **{combatant.name}** takes **{actual_damage}{type_text}** damage! "
+            f":boom: **{combatant.name}** takes **{actual_damage}{type_text}** damage!{modifier_text} "
             f"(HP: {combatant.hp_current}/{combatant.hp_max})"
         )
 
