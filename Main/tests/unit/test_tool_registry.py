@@ -146,6 +146,34 @@ class TestExecutorCrossCheck:
             f"{sorted(t.value for t in missing)}"
         )
 
+    @staticmethod
+    def _effect_type_refs(source: str) -> set[str]:
+        """EffectType member names actually REFERENCED by code tokens.
+
+        The previous check was a raw substring over inspect.getsource,
+        which a mere COMMENT naming the branch satisfied (final review
+        NIT). Tokenizing and matching NAME '.' NAME triples ignores
+        comments and string literals.
+        """
+        import io
+        import textwrap
+        import tokenize
+
+        toks = [
+            t for t in tokenize.generate_tokens(
+                io.StringIO(textwrap.dedent(source)).readline
+            )
+            if t.type in (tokenize.NAME, tokenize.OP)
+        ]
+        refs = set()
+        for a, b, c in zip(toks, toks[1:], toks[2:]):
+            if (
+                a.type == tokenize.NAME and a.string == "EffectType"
+                and b.string == "." and c.type == tokenize.NAME
+            ):
+                refs.add(c.string)
+        return refs
+
     def test_every_world_sync_type_has_a_sync_branch(self):
         """Specs declaring world_sync=True must have a branch in the
         orchestrator's _sync_effect_to_world_state elif chain, or their
@@ -156,15 +184,43 @@ class TestExecutorCrossCheck:
         import inspect
         from dnd_bot.llm.orchestrator import DMOrchestrator
 
-        source = inspect.getsource(DMOrchestrator._sync_effect_to_world_state)
+        refs = self._effect_type_refs(
+            inspect.getsource(DMOrchestrator._sync_effect_to_world_state)
+        )
         for spec in tool_registry.all_specs():
             if not spec.world_sync:
                 continue
             for etype in spec.effect_types:
-                assert f"EffectType.{etype.name}" in source, (
+                assert etype.name in refs, (
                     f"{spec.name} declares world_sync but "
                     f"_sync_effect_to_world_state has no EffectType.{etype.name} branch"
                 )
+
+    def test_every_emittable_type_is_deliberately_validated(self):
+        """Every EffectType a registered converter can emit must have an
+        EffectValidator row, or sit on this explicit allowlist of types
+        that deliberately ride _validate_default:
+        - REF_ENTITY: recency signal, nothing to pre-validate
+        - REMOVE_ENTITY: the executor does the honest existence check
+          against the scene registry
+        A new tool whose type lands in neither fails here instead of
+        silently passing through the default validator."""
+        from dnd_bot.llm.effects import EffectValidator
+
+        default_validated = {EffectType.REF_ENTITY, EffectType.REMOVE_ENTITY}
+        validated = EffectValidator().validated_effect_types()
+        unaccounted = (
+            tool_registry.emittable_effect_types()
+            - validated
+            - default_validated
+        )
+        assert not unaccounted, (
+            f"emittable effect types with neither a validators-dict row nor "
+            f"an allowlist entry: {sorted(t.value for t in unaccounted)}"
+        )
+        # Allowlist hygiene: a type that gains a real validator row must
+        # leave the allowlist.
+        assert not (default_validated & validated)
 
     def test_signal_effects_declared(self):
         """start_combat and request_roll are the only no-world-sync signal

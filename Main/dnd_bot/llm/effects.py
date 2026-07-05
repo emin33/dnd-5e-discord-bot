@@ -214,11 +214,12 @@ class EffectValidator:
     def __init__(self, scene_registry=None, session=None):
         self.scene_registry = scene_registry
         self.session = session
-
-    def validate(self, effect: ProposedEffect) -> EffectValidationResult:
-        """Validate a single proposed effect."""
-        # Type-specific validation
-        validators = {
+        # Type-specific validators, hoisted from validate() so tests can
+        # introspect coverage (mirrors EffectExecutor._executors /
+        # handled_effect_types). Types without a row ride
+        # _validate_default deliberately — the exhaustiveness test keeps
+        # an explicit allowlist of those.
+        self._validators = {
             EffectType.SPAWN_OBJECT: self._validate_spawn_object,
             EffectType.ADD_NPC: self._validate_add_npc,
             EffectType.TRANSFER_ITEM: self._validate_transfer_item,
@@ -231,7 +232,13 @@ class EffectValidator:
             EffectType.CHANGE_LOCATION: self._validate_change_location,
         }
 
-        validator = validators.get(effect.effect_type, self._validate_default)
+    def validated_effect_types(self) -> set[EffectType]:
+        """The EffectTypes with a type-specific validator row."""
+        return set(self._validators)
+
+    def validate(self, effect: ProposedEffect) -> EffectValidationResult:
+        """Validate a single proposed effect."""
+        validator = self._validators.get(effect.effect_type, self._validate_default)
         return validator(effect)
 
     def _validate_spawn_object(self, effect: ProposedEffect) -> EffectValidationResult:
