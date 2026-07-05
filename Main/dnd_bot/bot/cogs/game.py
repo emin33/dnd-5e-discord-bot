@@ -395,6 +395,20 @@ class GameCog(commands.Cog):
         except Exception:
             logger.debug("persist_notice_send_failed", exc_info=True)
 
+    async def _teardown_after_combat_over(self, channel: discord.TextChannel, manager) -> None:
+        """Route a combat-over signal to the single teardown owner (P0-3).
+
+        Teardown FIRST, embed second — a failed send must not skip teardown —
+        and no embed when ``end_combat`` reports another path already finished
+        the job (it is idempotent and returns False then). If a NEW encounter
+        has re-registered this channel, the signal is stale: touch nothing.
+        """
+        current = get_combat_for_channel(channel.id)
+        if current is not None and current is not manager:
+            return
+        if await get_session_manager().end_combat(channel.id):
+            await channel.send(embed=build_combat_over_embed(manager.combat))
+
     async def _show_player_turn_ui(
         self,
         channel: discord.TextChannel,
@@ -405,9 +419,12 @@ class GameCog(commands.Cog):
         """Show the player action UI for a combatant's turn."""
         turn_ctx = await coordinator.start_turn(combatant)
         if turn_ctx.combat_over:
-            # Teardown raced us while waiting on the turn lock — the
-            # encounter is already over, nothing to show (adversarial
-            # review, should-fix 2).
+            # The encounter ended under us — teardown raced this call on the
+            # turn lock, or a caller fell through here after an ignored
+            # combat-over advance. Returning silently stranded the session
+            # in COMBAT (final review, blocker); route the idempotent
+            # single-owner teardown instead.
+            await self._teardown_after_combat_over(channel, manager)
             return
 
         async def on_action_complete(result):
@@ -660,13 +677,39 @@ class GameCog(commands.Cog):
 
         coordinator = get_coordinator(manager)
 
-        # Auto-skip surprised NPCs — they can't act but their turn must be processed
+        # Auto-skip surprised NPCs — they can't act but their turn must be
+        # processed. The typed results MUST be handled here (final review,
+        # blocker): under the torn-down no-op guard end_turn returns without
+        # clearing surprise or advancing, which previously spun this loop
+        # forever, spamming the channel; and a real combat-over advance must
+        # route teardown, not fall through to the player UI.
+        max_skips = len(manager.combat.combatants)
+        skips = 0
         while current and not current.is_player and current.is_surprised:
+            skips += 1
+            if skips > max_skips:
+                # Backstop: every combatant can be surprise-skipped at most
+                # once — more means the turn order is not advancing.
+                logger.error(
+                    "surprise_skip_loop_capped",
+                    channel=channel.id,
+                    combatant=current.name,
+                )
+                break
+            turn_ctx = await coordinator.start_turn(current)
+            if turn_ctx.combat_over:
+                # Torn down while we waited on the turn lock — whoever tore
+                # it down owns the messaging; do not announce or advance.
+                return
             await channel.send(
                 f":dizzy_face: **{current.name}** is surprised and cannot act!"
             )
-            await coordinator.start_turn(current)
-            await coordinator.end_turn(current)
+            end_result = await coordinator.end_turn(current)
+            if end_result.combat_over:
+                # The advance ended the encounter (or teardown raced us) —
+                # route the idempotent single-owner teardown.
+                await self._teardown_after_combat_over(channel, manager)
+                return
             current = manager.combat.get_current_combatant()
 
         if not current:
