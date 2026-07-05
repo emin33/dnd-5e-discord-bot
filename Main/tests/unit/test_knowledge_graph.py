@@ -54,6 +54,16 @@ class TestSlugify:
     def test_numbers_preserved(self):
         assert slugify("Level 3 Dungeon") == "level-3-dungeon"
 
+    def test_scene_registry_uses_canonical_slugify(self):
+        """Scene entity refs and KG node IDs must share one slugify.
+
+        A one-sided tweak would silently decouple scene refs from KG
+        nodes (slug-vs-UUID identity was a dataflow-audit root cause).
+        """
+        from dnd_bot.game.scene import registry as scene_registry
+
+        assert scene_registry.slugify is slugify
+
 
 # ======================================================================
 # Entity model
