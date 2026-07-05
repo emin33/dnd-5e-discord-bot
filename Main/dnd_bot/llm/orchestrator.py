@@ -25,7 +25,6 @@ from .narrator_tools import (
 )
 from .extractors.entity_extractor import get_entity_extractor, EntityExtractor
 from .extractors.state_extractor import get_state_extractor, StateExtractor
-from .validators.nli_validator import get_nli_validator, NLIValidator
 from .turn_logger import get_turn_logger, TurnLogger
 from .effects import (
     ProposedEffect,
@@ -551,7 +550,6 @@ class DMOrchestrator:
         self._scene_registry: Optional[SceneEntityRegistry] = None
         self._entity_extractor: EntityExtractor = get_entity_extractor()
         self._state_extractor: StateExtractor = get_state_extractor()
-        self._nli_validator: NLIValidator = get_nli_validator()
         self._turn_logger: TurnLogger = get_turn_logger()
 
         # Effect processing (replaces mechanics extraction)
@@ -1252,19 +1250,6 @@ class DMOrchestrator:
                 scene_seeds=_kg_scene_seeds,
                 vector_match_seeds=_kg_vector_match_seeds,
             )
-
-        # Step 3.7: NLI contradiction check — DISABLED
-        # The NLI layer detects contradictions but doesn't act on them (no re-narration
-        # or correction wired up). It adds 1-1.5s latency per turn for logging only.
-        # Re-enable when wired to trigger re-narration on contradiction.
-        # See roadmap: "NLI Correction Loop" under needs-work items.
-        nli_contradictions = []
-        _turn_record.record_nli(
-            pairs_checked=0,
-            contradictions=[],
-            ambiguous_count=0,
-            tiebreaker_results=0,
-        )
 
         # Step 4: Process narrator output - entity extraction + proposed effects
         # Skip entity extraction during combat or for simple actions (saves API calls)

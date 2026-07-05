@@ -123,16 +123,6 @@ class TurnRecord:
         if parse_warnings:
             self.data["state_delta"]["parse_warnings"] = parse_warnings
 
-    def record_nli(self, pairs_checked: int, contradictions: list[dict],
-                    ambiguous_count: int = 0, tiebreaker_results: int = 0) -> None:
-        """Record NLI validation results."""
-        self.data["nli"] = {
-            "pairs_checked": pairs_checked,
-            "contradictions": contradictions,
-            "ambiguous_count": ambiguous_count,
-            "tiebreaker_confirmed": tiebreaker_results,
-        }
-
     def record_effects(self, proposed: list[dict], executed: list[dict],
                         rejected: list[dict]) -> None:
         """Record proposed, executed, and rejected effects."""
