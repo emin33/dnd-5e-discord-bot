@@ -24,13 +24,14 @@ from dnd_bot.llm import client as llm_client
 from dnd_bot.llm import orchestrator as orchestrator_module
 from dnd_bot.llm.orchestrator import DMOrchestrator
 from dnd_bot.llm.brains.base import BrainContext
-from dnd_bot.llm.effects import EffectType
+from dnd_bot.llm.effects import EffectExecutor, EffectType, ProposedEffect
 from dnd_bot.llm.extractors.dedup_judge import get_dedup_judge
 from dnd_bot.game.session import GameSession, PlayerInfo
 from dnd_bot.game.scene.registry import SceneEntityRegistry
 from dnd_bot.game.world_state import WorldState
 from dnd_bot.models import (
-    AbilityScore, AbilityScores, Character, HitPoints, HitDice, SpellSlots,
+    AbilityScore, AbilityScores, Character, HitPoints, HitDice, InventoryItem,
+    SpellSlots,
 )
 from dnd_bot.models.npc import SceneEntity, EntityType, Disposition
 
@@ -43,6 +44,10 @@ def _async_return(value):
     async def _coro():
         return value
     return _coro()
+
+
+async def _async_none(*args, **kwargs):
+    return None
 
 
 class _Net:
@@ -262,3 +267,280 @@ async def test_guard_blocks_unmocked_real_calls(net):
 
     with pytest.raises(RuntimeError, match="ALLOW_MODEL_REQUESTS is False"):
         await OllamaClient().chat(messages=[{"role": "user", "content": "hi"}])
+
+
+# ── Step-1 net expansion: per-tool producer paths ────────────────────────────
+# REFACTOR_PLAN.md "real Step 1" wants these turns BEFORE the tool-registry
+# cut: add_npc / spawn_object / purchase / inventory, plus a pinned
+# remove_entity no-op. Tests marked PINNED-BROKEN assert today's defective
+# behavior on purpose — the registry step flips them (see inline arrows).
+
+
+@pytest.mark.asyncio
+async def test_add_npc_tool_registers_npc_in_registry_and_world_state(net):
+    """An add_npc tool call lands in BOTH stores the live path writes.
+
+    Producer path: narrator tool → _convert_tool_call('add_npc') →
+    EffectExecutor._execute_add_npc (SceneEntityRegistry) →
+    _sync_effect_to_world_state (mints an NPCState in WorldState.npcs).
+    The dedup judge is skipped here because the roster starts empty.
+    """
+    # _execute_add_npc's best-effort voice auto-assign reaches for the GLOBAL
+    # immersion repo/DB — stub it out to keep the test hermetic.
+    net.monkeypatch.setattr(
+        "dnd_bot.immersion.voice_assigner.assign_voice", _async_none
+    )
+
+    result = await net.run(
+        action="I wave the old miner over to our table",
+        triage=triage_response("social", needs_roll=False),
+        narration=narration_response(
+            "A grizzled miner shuffles over, lantern swinging.",
+            tool_calls=[{
+                "name": "add_npc",
+                "arguments": {
+                    "npc_id": "old-bram",
+                    "name": "Old Bram",
+                    "description": "A grizzled old miner",
+                    "disposition": "friendly",
+                },
+            }],
+        ),
+    )
+
+    assert [e.effect_type for e in result.proposed_effects] == [EffectType.ADD_NPC]
+
+    # Scene-registry diff: the executor registered the NPC.
+    entity = net.registry.get_by_name("Old Bram")
+    assert entity is not None
+    assert entity.entity_type == EntityType.NPC
+    assert entity.disposition == Disposition.FRIENDLY
+    assert entity.description == "A grizzled old miner"
+
+    # World-state diff: the orchestrator sync minted an NPCState at the
+    # current location.
+    npcs = [n for n in net.session.world_state.npcs.values() if n.name == "Old Bram"]
+    assert len(npcs) == 1
+    assert npcs[0].location == "Tavern"
+    assert npcs[0].disposition == "friendly"
+
+
+@pytest.mark.asyncio
+async def test_spawn_object_tool_registers_object_and_scene_item(net):
+    """A spawn_object tool call registers an OBJECT entity + a scene item.
+
+    Producer path: narrator tool → _convert_tool_call('spawn_object') →
+    EffectExecutor._execute_spawn_object (registry) →
+    _sync_effect_to_world_state (WorldState.spawn_item + transfer log).
+    The live converter carries only object_id/name/description — nothing on
+    the tool path populates ProposedEffect.object_properties, so the
+    SceneEntity's `properties` field stays empty (registry-step design input).
+    """
+    result = await net.run(
+        action="I search behind the bar",
+        triage=triage_response("social", needs_roll=False),
+        narration=narration_response(
+            "Behind the bar, a rusty key hangs on a hook.",
+            tool_calls=[{
+                "name": "spawn_object",
+                "arguments": {
+                    "object_id": "rusty_key_1",
+                    "name": "Rusty Key",
+                    "description": "A rusty iron key on a hook",
+                },
+            }],
+        ),
+    )
+
+    assert [e.effect_type for e in result.proposed_effects] == [EffectType.SPAWN_OBJECT]
+
+    # Scene-registry diff: object entity present with its description.
+    entity = net.registry.get_by_name("Rusty Key")
+    assert entity is not None
+    assert entity.entity_type == EntityType.OBJECT
+    assert entity.description == "A rusty iron key on a hook"
+    assert entity.properties == {}  # no tool-path producer for properties
+
+    # World-state diff: scene item + transfer log entry.
+    ws = net.session.world_state
+    assert ws.scene_items == {"Rusty Key": "A rusty iron key on a hook"}
+    assert ws.recent_transfers == ["A rusty iron key on a hook appeared in the scene"]
+
+
+@pytest.mark.asyncio
+async def test_purchase_turn_currently_fails_character_resolution(net):
+    """PINNED-BROKEN: the live purchase route can never complete a purchase.
+
+    Producer path: triage 'purchase' → _handle_purchase →
+    _execute_purchase_item → inventory repo. _handle_purchase resolves the
+    player and passes character.id (a UUID) as buyer_id, but
+    _execute_purchase_item re-resolves that UUID through
+    _resolve_character_by_name, which matches character NAMES only — so the
+    lookup always fails and every purchase is refused with 'not found'
+    before touching gold or inventory. This is the path REFACTOR_PLAN.md
+    (Step 1a, "KEPT ... LIVE but UNTESTED") preserved; first covered here.
+    The registry step fixes the id-vs-name contract and flips the arrows.
+    """
+    await net.inv_repo.add_gold(net.character.id, 100)
+
+    result = await net.run(
+        action="I buy a healing potion from the merchant",
+        triage=triage_response(
+            "purchase", needs_roll=False,
+            item_name="Healing Potion", item_cost=30, quantity=1,
+        ),
+        narration=narration_response("The merchant frowns and shakes his head."),
+    )
+
+    mech = result.mechanical_result
+    assert mech["action_type"] == "purchase"
+    assert mech["success"] is False                      # ← True when fixed
+    assert "not found" in (mech["error"] or "")          # ← None when fixed
+
+    # The commerce tool call is surfaced even on failure.
+    assert [t["name"] for t in result.tool_calls_made] == ["purchase_item"]
+    assert result.tool_calls_made[0]["result"]["purchased"] is False
+
+    # State diff: nothing changed — gold intact, no item row.
+    currency = await net.inv_repo.get_currency(net.character.id)
+    assert currency.gold == 100                          # ← 70 when fixed
+    assert await net.inv_repo.get_all_items(net.character.id) == []
+
+    # The refusal is still narrated via the mechanical-result path.
+    assert net.narrator.calls
+    assert result.proposed_effects == []
+
+
+@pytest.mark.asyncio
+async def test_inventory_pickup_turn_currently_pgi_blocked(net):
+    """PINNED-BROKEN: the live pickup route never adds the item AND gets blocked.
+
+    Producer path: triage 'inventory' → _handle_inventory (keyword 'pick up')
+    → _execute_add_item. Same defect as purchase: _handle_inventory passes
+    character.id as character_id and _execute_add_item re-resolves it by
+    NAME, so the add fails silently. PGI then runs validate_item_exists
+    against the (still-empty) inventory — an acquisition validated as if it
+    were consumption — and HARD-fails the turn: pgi_blocked response, no
+    narration. Both layers must change for pickups to work; the registry
+    step flips this to: item row present + narrated turn.
+    """
+    result = await net.run(
+        action="I pick up the brass lantern",
+        triage=triage_response(
+            "inventory", needs_roll=False, item_name="brass lantern",
+        ),
+    )
+
+    assert result.mechanical_result.get("pgi_blocked") is True  # ← absent when fixed
+    assert net.narrator.calls == []       # blocked before narration ← flips
+    assert result.proposed_effects == []
+    # No row was ever written.
+    assert await net.inv_repo.get_all_items(net.character.id) == []
+
+
+@pytest.mark.asyncio
+async def test_update_player_item_grant_and_currency_persist(net):
+    """The WORKING narrator-tool inventory path: update_player persists.
+
+    Producer path: narrator tool → _convert_tool_call('update_player') →
+    EffectExecutor._execute_update_player → inventory repo (item + currency
+    tables). Unlike the triage routes above, this path resolves the acting
+    character via acting_character_id (set from context.player_name each
+    turn) — so it actually lands. The registry step must keep this green.
+    """
+    result = await net.run(
+        action="I take the torches and the coin pouch from the chest",
+        triage=triage_response("social", needs_roll=False),
+        narration=narration_response(
+            "You pocket two torches and a small pouch of gold.",
+            tool_calls=[{
+                "name": "update_player",
+                "arguments": {
+                    "item_grant": [{"name": "Torch", "quantity": 2}],
+                    "currency_delta": {"gp": 25},
+                },
+            }],
+        ),
+    )
+
+    assert [e.effect_type for e in result.proposed_effects] == [EffectType.UPDATE_PLAYER]
+
+    # DB round-trip: item row + currency row both persisted.
+    items = await net.inv_repo.get_all_items(net.character.id)
+    assert [(i.item_name, i.quantity) for i in items] == [("Torch", 2)]
+    currency = await net.inv_repo.get_currency(net.character.id)
+    assert currency.gold == 25
+
+
+@pytest.mark.asyncio
+async def test_update_player_item_remove_persists(net):
+    """update_player item_remove reduces the persisted inventory row."""
+    await net.inv_repo.add_item(InventoryItem(
+        character_id=net.character.id, item_index="torch",
+        item_name="Torch", quantity=2,
+    ))
+
+    result = await net.run(
+        action="I hand one of my torches to the guide",
+        triage=triage_response("social", needs_roll=False),
+        narration=narration_response(
+            "The guide takes the torch with a nod.",
+            tool_calls=[{
+                "name": "update_player",
+                "arguments": {"item_remove": [{"name": "Torch", "quantity": 1}]},
+            }],
+        ),
+    )
+
+    assert [e.effect_type for e in result.proposed_effects] == [EffectType.UPDATE_PLAYER]
+
+    items = await net.inv_repo.get_all_items(net.character.id)
+    assert [(i.item_name, i.quantity) for i in items] == [("Torch", 1)]
+
+
+@pytest.mark.asyncio
+async def test_remove_entity_is_a_silent_noop_end_to_end(net):
+    """PINNED-BROKEN: remove_entity does nothing on ANY live layer.
+
+    AUDIT_QUALITY_2026_06_09 (Duplication P0, effects.py:686): the effect-type
+    dispatch sites have drifted — remove_entity is not a narrator tool
+    (_convert_tool_call logs unknown_narrator_tool and drops it), and even a
+    constructed REMOVE_ENTITY effect has no row in EffectExecutor's dict, so
+    execute() fails and the world-state sync (which only runs on success)
+    never fires: a silent end-to-end no-op. The registry step gives every
+    EffectType exactly one registration — this test then flips from pinning
+    the no-op to asserting the removal.
+    """
+    net.registry.register_entity(SceneEntity(
+        name="Cellar Rat", entity_type=EntityType.CREATURE,
+        description="A fat cellar rat",
+    ))
+
+    result = await net.run(
+        action="I stomp on the rat, killing it",
+        triage=triage_response("social", needs_roll=False),
+        narration=narration_response(
+            "The rat is flattened under your boot.",
+            tool_calls=[{
+                "name": "remove_entity",
+                "arguments": {"entity_id": "Cellar Rat", "reason": "killed"},
+            }],
+        ),
+    )
+
+    # Layer 1 (converter): the tool call is dropped → zero effects proposed.
+    assert result.proposed_effects == []        # ← [REMOVE_ENTITY] when fixed
+    # The scene still contains the 'removed' entity.
+    assert net.registry.get_by_name("Cellar Rat") is not None  # ← None when fixed
+
+    # Layer 2 (executor): even a hand-built REMOVE_ENTITY effect has no
+    # executor row ("No executor for effect type").
+    executor = EffectExecutor(
+        scene_registry=net.registry, session=net.session,
+        inventory_repo=net.inv_repo,
+    )
+    exec_result = await executor.execute(ProposedEffect(
+        effect_type=EffectType.REMOVE_ENTITY, target="Cellar Rat",
+    ))
+    assert exec_result.success is False         # ← True when fixed
+    assert "No executor" in (exec_result.error or "")
