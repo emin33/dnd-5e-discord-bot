@@ -7,7 +7,6 @@ must be saved when a manager is evicted from the LRU cache. Legacy or corrupt
 persisted state must load as a fresh manager, never crash.
 """
 
-import asyncio
 import json
 from pathlib import Path
 
@@ -193,7 +192,6 @@ async def mem_db(tmp_path: Path, monkeypatch):
 
     monkeypatch.setattr(database_module, "_db", db)
     monkeypatch.setattr(manager_module, "_managers", {})
-    monkeypatch.setattr(manager_module, "_pending_saves", set())
 
     try:
         yield db
@@ -206,7 +204,7 @@ class TestDbRoundTrip:
     """save_memory_state / get_memory_manager against the campaign_memory table."""
 
     async def test_save_then_load_round_trips_tiers(self, mem_db):
-        mgr = manager_module.get_memory_manager_sync("camp-a")
+        mgr = await manager_module.get_memory_manager("camp-a")
         _populate(mgr)
         await manager_module.save_memory_state("camp-a")
 
@@ -275,7 +273,7 @@ class TestEvictionSavesState:
 
     async def test_async_eviction_saves_state(self, mem_db, monkeypatch):
         monkeypatch.setattr(manager_module, "_MAX_CACHED_MANAGERS", 1)
-        mgr_a = manager_module.get_memory_manager_sync("camp-a")
+        mgr_a = await manager_module.get_memory_manager("camp-a")
         _populate(mgr_a)
 
         await manager_module.get_memory_manager("camp-b")  # evicts camp-a
@@ -287,21 +285,3 @@ class TestEvictionSavesState:
         assert row is not None
         data = json.loads(row[0])
         assert data["buffer"]["pinned_facts"] == mgr_a.buffer.pinned_facts
-
-    async def test_sync_eviction_schedules_save(self, mem_db, monkeypatch):
-        monkeypatch.setattr(manager_module, "_MAX_CACHED_MANAGERS", 1)
-        mgr_a = manager_module.get_memory_manager_sync("camp-a")
-        _populate(mgr_a)
-
-        manager_module.get_memory_manager_sync("camp-b")  # evicts camp-a
-
-        pending = list(manager_module._pending_saves)
-        assert pending, "sync eviction should schedule a best-effort save"
-        await asyncio.gather(*pending)
-
-        row = await mem_db.fetch_one(
-            "SELECT content FROM campaign_memory WHERE id = ?", ("camp-a-state",)
-        )
-        assert row is not None
-        data = json.loads(row[0])
-        assert data["buffer"]["running_summary"] == mgr_a.buffer.running_summary
