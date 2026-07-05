@@ -14,6 +14,7 @@ from ...game.character.creation import (
     STANDARD_ARRAY,
     AbilityScoreMethod,
 )
+from ..views.base import SafeView
 from ..views.campaign_lobby import (
     CampaignLobbyView,
     set_active_campaign,
@@ -336,7 +337,7 @@ class CampaignCog(commands.Cog):
             await self._show_ability_method(modal_interaction, campaign)
 
         # Create a simple view with a button to open the name modal
-        class StartCreationView(discord.ui.View):
+        class StartCreationView(SafeView):
             def __init__(self, cog, campaign_ref, state_ref):
                 super().__init__(timeout=300)
                 self.cog = cog

@@ -4,9 +4,10 @@ from typing import Callable, Awaitable, Optional
 import discord
 
 from ...models import Campaign
+from .base import SafeView
 
 
-class CampaignLobbyView(discord.ui.View):
+class CampaignLobbyView(SafeView):
     """Persistent lobby view for a campaign with Join and Start Game buttons."""
 
     def __init__(

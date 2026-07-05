@@ -18,6 +18,7 @@ from ...game.combat.coordinator import CombatTurnCoordinator
 from ...game.session import get_session_manager
 from ...models import CombatState
 from ..embeds.combat_embed import build_combat_over_embed
+from .base import SafeView
 
 
 async def _reject_interaction(interaction: discord.Interaction, message: str) -> None:
@@ -46,7 +47,41 @@ async def _disable_items_and_ack(view: discord.ui.View, interaction: discord.Int
             pass
 
 
-class CombatActionView(discord.ui.View):
+async def _replace_with_fresh_action_menu(
+    view: discord.ui.View,
+    parent: "CombatActionView",
+    interaction: discord.Interaction,
+) -> None:
+    """Replace a dead-ended view with a fresh, unclaimed action menu.
+
+    Shared by the no-castable-slot dead end (adversarial review,
+    should-fix 3) and the on_error recovery hooks: a fresh CombatActionView
+    resets the one-shot claim so the player can still take their turn.
+    Tries the interaction's own message first, then the action menu's
+    original message (the slot-level sub-view lives on an ephemeral
+    followup that can't host the recovered menu).
+    """
+    view.stop()
+    fresh = CombatActionView(
+        coordinator=parent.coordinator,
+        turn_context=parent.ctx,
+        on_action_complete=parent.on_action_complete,
+        on_turn_end=parent.on_turn_end,
+        actor_user_id=parent.actor_user_id,
+    )
+    embed = fresh.get_embed()
+    for message in (interaction.message, parent.message):
+        if message is None:
+            continue
+        try:
+            await message.edit(content=None, embed=embed, view=fresh)
+            fresh.message = message
+            return
+        except Exception:
+            continue
+
+
+class CombatActionView(SafeView):
     """
     Main action menu for a combatant's turn.
 
@@ -109,6 +144,32 @@ class CombatActionView(discord.ui.View):
         self._acted = True
         await _disable_items_and_ack(self, interaction)
         return True
+
+    async def on_error_recover(
+        self,
+        error: Exception,
+        item: discord.ui.Item,
+        interaction: discord.Interaction,
+    ) -> None:
+        """A failed callback must not leave the turn bricked: release the
+        one-shot claim and re-enable the buttons. The coordinator's resource
+        tracking + per-channel turn lock remain the guards against double
+        execution (audit P0-6).
+        """
+        self._acted = False
+        if self.is_finished():
+            # End Turn stops the view before its callback runs — a stopped
+            # view no longer dispatches, so hand out a fresh menu instead.
+            await _replace_with_fresh_action_menu(self, self, interaction)
+            return
+        for child in self.children:
+            child.disabled = False
+        try:
+            message = interaction.message or self.message
+            if message is not None:
+                await message.edit(view=self)
+        except Exception:
+            pass
 
     def _build_buttons(self):
         """Build action buttons based on available resources."""
@@ -216,6 +277,7 @@ class AttackButton(discord.ui.Button):
             on_select=self._on_target_selected,
             on_cancel=self._on_cancel,
             actor_user_id=self.parent.actor_user_id,
+            parent=self.parent,
         )
         await interaction.response.edit_message(
             embed=view.get_embed(),
@@ -379,6 +441,7 @@ class HelpButton(discord.ui.Button):
             on_cancel=self._on_cancel,
             allies_only=True,
             actor_user_id=self.parent.actor_user_id,
+            parent=self.parent,
         )
         await interaction.response.edit_message(
             embed=view.get_embed(),
@@ -455,7 +518,7 @@ class EndTurnButton(discord.ui.Button):
         await self.parent.on_turn_end()
 
 
-class TargetSelectionView(discord.ui.View):
+class TargetSelectionView(SafeView):
     """
     View for selecting a target for an action.
 
@@ -471,6 +534,7 @@ class TargetSelectionView(discord.ui.View):
         on_cancel: Callable[[discord.Interaction], Awaitable[None]],
         allies_only: bool = False,
         actor_user_id: Optional[int] = None,
+        parent: Optional[CombatActionView] = None,
     ):
         super().__init__(timeout=60)
         self.coordinator = coordinator
@@ -480,6 +544,9 @@ class TargetSelectionView(discord.ui.View):
         self.on_cancel = on_cancel
         self.allies_only = allies_only
         self.actor_user_id = actor_user_id
+        # Action menu that spawned this sub-view — used by on_error recovery
+        # to hand out a fresh, unclaimed menu.
+        self.parent = parent
         # One-shot guard (audit P0-6): a double-select must not fire twice
         self._acted = False
 
@@ -505,6 +572,20 @@ class TargetSelectionView(discord.ui.View):
             )
             return False
         return True
+
+    async def on_error_recover(
+        self,
+        error: Exception,
+        item: discord.ui.Item,
+        interaction: discord.Interaction,
+    ) -> None:
+        """The target select claims + stops this view BEFORE on_select runs,
+        so releasing _acted alone can't revive it — hand out a fresh action
+        menu instead (same recovery as the no-castable-slot dead end).
+        """
+        self._acted = False
+        if self.parent is not None:
+            await _replace_with_fresh_action_menu(self, self.parent, interaction)
 
     def _build_view(self):
         """Build the selection view."""
@@ -660,7 +741,7 @@ class TargetSelectionView(discord.ui.View):
         await self.on_cancel(interaction)
 
 
-class SpellSelectionView(discord.ui.View):
+class SpellSelectionView(SafeView):
     """
     View for selecting a spell to cast during combat.
 
@@ -701,6 +782,17 @@ class SpellSelectionView(discord.ui.View):
             )
             return False
         return True
+
+    async def on_error_recover(
+        self,
+        error: Exception,
+        item: discord.ui.Item,
+        interaction: discord.Interaction,
+    ) -> None:
+        """A failed spell flow may have disabled everything before raising —
+        same dead-end shape as should-fix 3, same recovery.
+        """
+        await self._restore_action_menu(interaction)
 
     def _build_view(self):
         """Build spell selection dropdown."""
@@ -784,6 +876,7 @@ class SpellSelectionView(discord.ui.View):
                 on_cancel=self.on_cancel_cb,
                 allies_only=is_healing,
                 actor_user_id=self.parent.actor_user_id,
+                parent=self.parent,
             )
             await interaction.response.edit_message(
                 content=f"Casting **{info.name}** — choose a target:",
@@ -863,23 +956,7 @@ class SpellSelectionView(discord.ui.View):
         CombatActionView resets the one-shot claim so the player can still
         take their turn (adversarial review, should-fix 3).
         """
-        self.stop()
-        fresh = CombatActionView(
-            coordinator=self.parent.coordinator,
-            turn_context=self.parent.ctx,
-            on_action_complete=self.parent.on_action_complete,
-            on_turn_end=self.parent.on_turn_end,
-            actor_user_id=self.parent.actor_user_id,
-        )
-        try:
-            message = interaction.message
-            if message is not None:
-                await message.edit(
-                    content=None, embed=fresh.get_embed(), view=fresh
-                )
-                fresh.message = message
-        except Exception:
-            pass
+        await _replace_with_fresh_action_menu(self, self.parent, interaction)
 
     async def _execute_cast(
         self,
@@ -912,7 +989,7 @@ class SpellSelectionView(discord.ui.View):
         await self.on_cancel_cb(interaction)
 
 
-class SlotLevelSelectionView(discord.ui.View):
+class SlotLevelSelectionView(SafeView):
     """View for selecting which spell slot level to use when upcasting."""
 
     def __init__(
@@ -976,6 +1053,20 @@ class SlotLevelSelectionView(discord.ui.View):
             )
             return False
         return True
+
+    async def on_error_recover(
+        self,
+        error: Exception,
+        item: discord.ui.Item,
+        interaction: discord.Interaction,
+    ) -> None:
+        """The slot select claims + stops this view BEFORE the cast runs, so
+        releasing _acted alone can't revive it — hand out a fresh action menu
+        (this view lives on an ephemeral followup, so the helper falls back
+        to the action menu's original message).
+        """
+        self._acted = False
+        await _replace_with_fresh_action_menu(self, self.parent, interaction)
 
     async def _on_select(self, interaction: discord.Interaction):
         slot_level = int(interaction.data["values"][0])
@@ -1092,11 +1183,16 @@ class ActionResultEmbed:
         return embed
 
 
-class NPCTurnView(discord.ui.View):
+class NPCTurnView(SafeView):
     """
     Simple view for when NPCs go first in combat.
 
     Provides a button to run NPC turns automatically.
+
+    No on_error_recover override: both button callbacks already release
+    _busy and re-enable the buttons in their try/finally (adversarial
+    review, blocker 1d) before the exception reaches SafeView.on_error,
+    which only needs to log and notify.
     """
 
     def __init__(

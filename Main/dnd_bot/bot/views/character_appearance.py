@@ -10,10 +10,12 @@ from typing import Optional, Callable, Awaitable
 import discord
 import structlog
 
+from .base import SafeModal, SafeView
+
 logger = structlog.get_logger()
 
 
-class AppearanceModal(discord.ui.Modal):
+class AppearanceModal(SafeModal):
     """Modal for entering character appearance description."""
 
     def __init__(self, callback: Callable[[str], Awaitable[None]]):
@@ -35,7 +37,7 @@ class AppearanceModal(discord.ui.Modal):
         await self._callback(description)
 
 
-class PortraitGenerationView(discord.ui.View):
+class PortraitGenerationView(SafeView):
     """View for generating and approving a character portrait."""
 
     def __init__(
@@ -146,7 +148,7 @@ class PortraitGenerationView(discord.ui.View):
                 logger.warning("portrait_retry_failed", error=str(e), exc_info=True)
 
 
-class _PortraitApproveView(discord.ui.View):
+class _PortraitApproveView(SafeView):
     """Sub-view for approving/retrying a generated portrait."""
 
     def __init__(

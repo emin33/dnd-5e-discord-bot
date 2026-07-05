@@ -4,9 +4,10 @@ from typing import Callable, Awaitable, Optional
 import discord
 
 from ...models import Character
+from .base import SafeView
 
 
-class CharacterSelectView(discord.ui.View):
+class CharacterSelectView(SafeView):
     """View for selecting an existing character or creating a new one."""
 
     def __init__(

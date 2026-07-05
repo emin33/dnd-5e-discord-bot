@@ -11,9 +11,10 @@ from ...game.character.creation import (
     PointBuyState,
     get_creator,
 )
+from .base import SafeModal, SafeView
 
 
-class NameModal(discord.ui.Modal):
+class NameModal(SafeModal):
     """Modal for entering character name."""
 
     def __init__(self, state: CharacterCreationState, on_complete: Callable[[discord.Interaction], Awaitable[None]]):
@@ -36,7 +37,7 @@ class NameModal(discord.ui.Modal):
         await self.on_complete(interaction)
 
 
-class AbilityScoreMethodView(discord.ui.View):
+class AbilityScoreMethodView(SafeView):
     """View for selecting ability score generation method."""
 
     def __init__(
@@ -74,7 +75,7 @@ class AbilityScoreMethodView(discord.ui.View):
         await self.on_complete(interaction)
 
 
-class AbilityAssignmentView(discord.ui.View):
+class AbilityAssignmentView(SafeView):
     """View for assigning rolled/array scores to abilities one at a time."""
 
     ABILITIES = [
@@ -169,7 +170,7 @@ class AbilityAssignmentView(discord.ui.View):
             await interaction.response.edit_message(embed=self.get_embed(), view=self)
 
 
-class PointBuyView(discord.ui.View):
+class PointBuyView(SafeView):
     """View for point buy ability score allocation."""
 
     def __init__(
@@ -267,7 +268,7 @@ class PointBuyView(discord.ui.View):
         await interaction.response.edit_message(embed=self.get_embed(), view=self)
 
 
-class RaceSelectView(discord.ui.View):
+class RaceSelectView(SafeView):
     """View for selecting race."""
 
     def __init__(
@@ -306,7 +307,7 @@ class RaceSelectView(discord.ui.View):
         await self.on_complete(interaction)
 
 
-class ClassSelectView(discord.ui.View):
+class ClassSelectView(SafeView):
     """View for selecting class."""
 
     def __init__(
@@ -345,7 +346,7 @@ class ClassSelectView(discord.ui.View):
         await self.on_complete(interaction)
 
 
-class SkillSelectView(discord.ui.View):
+class SkillSelectView(SafeView):
     """View for selecting skill proficiencies."""
 
     def __init__(
@@ -389,7 +390,7 @@ class SkillSelectView(discord.ui.View):
         await self.on_complete(interaction)
 
 
-class ConfirmCharacterView(discord.ui.View):
+class ConfirmCharacterView(SafeView):
     """View for confirming character creation."""
 
     def __init__(
