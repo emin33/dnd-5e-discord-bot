@@ -525,7 +525,7 @@ class DeltaBridge:
                 if promo:
                     promotions.append(promo)
             elif etype == EffectType.REMOVE_ENTITY:
-                ops.extend(self._effect_remove_entity(effect))
+                ops.extend(self._effect_remove_entity(effect, world_state))
 
         if ops or promotions:
             logger.debug(
@@ -693,14 +693,44 @@ class DeltaBridge:
     def _effect_remove_entity(
         self,
         effect: "ProposedEffect",
+        world_state: "WorldState" = None,
     ) -> list[GraphOperation]:
-        """REMOVE_ENTITY → clear location, remove LOCATED_AT edge (keep node)."""
+        """REMOVE_ENTITY → clear location, remove LOCATED_AT edge (keep node).
+
+        NPC/creature nodes are anchored on the WorldState NPCState UUID
+        (see ``_effect_add_npc``), so the target — a UUID, a name, or the
+        roster's ``[id: slug]`` dialect — must resolve UUID-first, mirroring
+        the delta path's ``_handle_removed_npc`` (final review): a raw
+        ``slugify(target)`` produced an id no NPC node has, so the
+        UpdateNode was rejected and LOCATED_AT edges survived removal.
+        The slug fallback still serves non-NPC / legacy slug-anchored nodes.
+        """
         ops: list[GraphOperation] = []
-        target = effect.target
+        target = (effect.target or "").strip()
         if not target:
             return ops
 
-        node_id = slugify(target)
+        node_id = target
+        if world_state is not None and node_id not in world_state.npcs:
+            existing = world_state._find_npc(node_id)
+            if existing is None:
+                # Roster-slug dialect ('old-bram' for 'Old Bram'):
+                # _find_npc matches exact names/aliases only, so bridge
+                # via slug equality.
+                target_slug = slugify(node_id)
+                if target_slug:
+                    existing = next(
+                        (npc for npc in world_state.npcs.values()
+                         if slugify(npc.name or "") == target_slug),
+                        None,
+                    )
+            if existing is not None:
+                node_id = existing.id
+            else:
+                node_id = slugify(node_id)
+        elif world_state is None:
+            node_id = slugify(node_id)
+
         if node_id:
             ops.append(UpdateNode(node_id=node_id, properties={"location": ""}))
             ops.append(RemoveEdge(

@@ -116,15 +116,27 @@ class SceneEntityRegistry:
         return self._entities.get(entity_id)
 
     def get_by_name(self, name: str) -> Optional[SceneEntity]:
-        """Get entity by name or alias (case-insensitive partial match)."""
+        """Get entity by name or alias (case-insensitive partial match).
+
+        Also accepts the roster id dialect (final review): the narrator
+        context lists entities as ``[id: slug]`` — ``slugify(name)``,
+        hyphenated — which the substring check cannot bridge to spaced
+        names ('old-bram' vs 'Old Bram'). Slugified equality on the name
+        and aliases covers it.
+        """
         name_lower = name.lower()
+        query_slug = slugify(name)
         for entity in self._entities.values():
             # Check main name
             if name_lower in entity.name.lower() or entity.name.lower() in name_lower:
                 return entity
+            if query_slug and query_slug == slugify(entity.name):
+                return entity
             # Check aliases
             for alias in (entity.aliases or []):
                 if name_lower in alias.lower() or alias.lower() in name_lower:
+                    return entity
+                if query_slug and query_slug == slugify(alias):
                     return entity
         return None
 

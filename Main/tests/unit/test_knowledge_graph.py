@@ -947,6 +947,29 @@ class TestEffectBridge:
         assert isinstance(ops[1], RemoveEdge)
         assert ops[1].source_id == "grimjaw"
 
+    def test_remove_entity_resolves_uuid_anchored_npc(self, bridge, world_state):
+        """NPC nodes are UUID-anchored (_effect_add_npc), so the removal ops
+        must target the NPCState UUID — a raw slugify(target) produced a
+        node id no NPC node has, the UpdateNode was rejected at debug level
+        and LOCATED_AT edges survived (final review). The target here uses
+        the roster's [id: slug] dialect for a multi-word name."""
+        from dnd_bot.llm.effects import EffectType
+        from dnd_bot.game.world_state import NPCState
+
+        npc = NPCState(name="Old Bram", description="A weathered farmer")
+        world_state.npcs[npc.id] = npc
+
+        effect = self._make_effect(
+            effect_type=EffectType.REMOVE_ENTITY,
+            target="old-bram",
+        )
+        ops, _ = bridge.convert_effects([effect], world_state)
+        assert len(ops) == 2
+        assert isinstance(ops[0], UpdateNode)
+        assert ops[0].node_id == npc.id
+        assert isinstance(ops[1], RemoveEdge)
+        assert ops[1].source_id == npc.id
+
     def test_mixed_effects_batch(self, bridge, world_state):
         from dnd_bot.llm.effects import EffectType
         effects = [

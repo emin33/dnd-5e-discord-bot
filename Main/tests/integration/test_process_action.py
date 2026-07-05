@@ -508,6 +508,11 @@ async def test_remove_entity_tool_removes_entity_end_to_end(net):
     runs on success) never fired. The registry wires all layers: full-tier
     tool → registry converter → EffectExecutor._execute_remove_entity
     (scene-registry removal) → REMOVE_ENTITY sync branch.
+
+    The tool call uses the DOCUMENTED id dialect (final review): the roster
+    the narrator sees lists entities as [id: slug] — slugify(name),
+    hyphenated — so 'cellar-rat' for a multi-word name is the contract the
+    executor's lookup must honor, not just the display name.
     """
     net.registry.register_entity(SceneEntity(
         name="Cellar Rat", entity_type=EntityType.CREATURE,
@@ -521,7 +526,7 @@ async def test_remove_entity_tool_removes_entity_end_to_end(net):
             "The rat is flattened under your boot.",
             tool_calls=[{
                 "name": "remove_entity",
-                "arguments": {"entity_id": "Cellar Rat", "reason": "killed"},
+                "arguments": {"entity_id": "cellar-rat", "reason": "killed"},
             }],
         ),
     )

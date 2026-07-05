@@ -3078,9 +3078,18 @@ Write your narration directly."""
                 world_state.global_flags[effect.flag_name] = effect.flag_value
 
         elif etype == EffectType.REMOVE_ENTITY:
-            # Remove from scene items if present
+            # Remove from scene items if present. Keys are object names but
+            # the target may arrive in the roster's [id: slug] dialect, so
+            # exact-pop alone missed 'rusty-key' vs 'Rusty Key' — compare
+            # slugified too (final review).
             if effect.target:
-                world_state.remove_item(effect.target)
+                from ..game.knowledge.models import slugify
+                target_slug = slugify(effect.target)
+                for key in list(world_state.scene_items):
+                    if key == effect.target or (
+                        target_slug and slugify(key) == target_slug
+                    ):
+                        world_state.remove_item(key)
 
         elif etype == EffectType.CHANGE_LOCATION:
             # Narrator-authoritative location change: overrides whatever the
