@@ -29,11 +29,7 @@ from .character import (
     HitPoints,
     SpellSlots,
 )
-from .campaign import (
-    Campaign,
-    GameSession,
-    SessionSnapshot,
-)
+from .campaign import Campaign
 from .combat import (
     Combat,
     CombatEffect,
@@ -101,8 +97,6 @@ __all__ = [
     "SpellSlots",
     # Campaign
     "Campaign",
-    "GameSession",
-    "SessionSnapshot",
     # Combat
     "Combat",
     "CombatEffect",
