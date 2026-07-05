@@ -554,10 +554,6 @@ async def player_action(req: PlayerActionRequest):
                 "data": _serialize_event_data(event.data),
             })
 
-        async def get_combat_action(self, turn_context):
-            # Combat actions come via separate endpoint or buttons
-            raise NotImplementedError("Use combat action buttons")
-
     try:
         response = await session_manager.process_message(
             channel_id=0,

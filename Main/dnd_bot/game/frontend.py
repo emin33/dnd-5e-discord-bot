@@ -24,15 +24,6 @@ class GameEventType(str, Enum):
     NARRATIVE_TOKEN = "narrative_token"
     NARRATIVE_COMPLETE = "narrative_complete"
 
-    # Dead combat-protocol members: never emitted anywhere; kept only
-    # because dnd_bot/voice/frontend.py still registers handlers for them
-    # at import time. Delete alongside that handler suite.
-    COMBAT_START = "combat_start"
-    ACTION_RESULT = "action_result"
-    TURN_END = "turn_end"
-    COMBAT_END = "combat_end"
-    ERROR = "error"
-
 
 @dataclass
 class GameEvent:
