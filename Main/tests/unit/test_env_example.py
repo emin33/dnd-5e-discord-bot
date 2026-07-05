@@ -83,6 +83,15 @@ def test_env_example_boots_settings(tmp_path, isolated_settings_env):
     assert settings.active_profile == "production"
 
 
+def test_settings_forbids_unknown_keys():
+    """Pin the mechanism these guards rely on: Settings rejects extras.
+
+    If extra='forbid' is ever relaxed, stale .env keys stop failing at boot
+    AND the lockstep tests above stop proving anything — fail here instead.
+    """
+    assert Settings.model_config.get("extra") == "forbid"
+
+
 def test_env_example_keys_match_settings_fields():
     """Every key in .env.example is a real Settings field, and vice versa."""
     active, commented = _parse_example()

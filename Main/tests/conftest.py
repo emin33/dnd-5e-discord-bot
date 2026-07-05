@@ -1,9 +1,97 @@
 """Pytest configuration and fixtures."""
 
+import itertools
+
 import pytest
 from unittest.mock import MagicMock, AsyncMock
 
 from dnd_bot.models import Character, AbilityScores, HitPoints, HitDice, SpellSlots
+
+# The combat-manager / coordinator / turn-lock registries are module-level
+# globals keyed by channel id, so hand-picked constants in different test
+# files can silently collide and share state. This counter guarantees every
+# test that asks gets a channel id unique across the whole run.
+_unique_channel_ids = itertools.count(900_001)
+
+
+@pytest.fixture
+def unique_channel_ids():
+    """Factory allocating run-unique Discord channel ids.
+
+    Cleans the module-global combat registries for every id it handed out,
+    so a failing test can't leave a combat/coordinator/turn-lock entry
+    behind.
+    """
+    allocated: list[int] = []
+
+    def _alloc() -> int:
+        channel_id = next(_unique_channel_ids)
+        allocated.append(channel_id)
+        return channel_id
+
+    yield _alloc
+
+    from dnd_bot.game.combat.coordinator import clear_coordinator_by_key
+    from dnd_bot.game.combat.manager import clear_combat_by_key
+
+    for channel_id in allocated:
+        key = f"discord:{channel_id}"
+        clear_combat_by_key(key)
+        clear_coordinator_by_key(key)
+
+
+@pytest.fixture
+def unique_channel_id(unique_channel_ids) -> int:
+    """A Discord channel id no other test in this run uses."""
+    return unique_channel_ids()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _llm_singletons_not_left_faked():
+    """Seam-leak regression net: no test may leak an LLM fake into a
+    module singleton.
+
+    The dedup-judge / state-extractor / entity-extractor singletons capture
+    ``get_llm_client()`` at first construction. A test that swaps a fake in
+    (or constructs the singleton while the client seam is patched) without
+    restoring it poisons every later test in the run. This net turns a
+    reintroduced leak into a loud session-end failure instead of downstream
+    weirdness.
+    """
+    import dnd_bot.llm.extractors.dedup_judge as dedup_judge_mod
+    import dnd_bot.llm.extractors.entity_extractor as entity_extractor_mod
+    import dnd_bot.llm.extractors.state_extractor as state_extractor_mod
+
+    def _singletons() -> dict:
+        return {
+            "dedup_judge": dedup_judge_mod._JUDGE,
+            "state_extractor": state_extractor_mod._state_extractor,
+            "entity_extractor": entity_extractor_mod._extractor,
+        }
+
+    started_with = {
+        name: type(getattr(instance, "client", None)).__name__
+        for name, instance in _singletons().items()
+        if instance is not None
+    }
+
+    yield
+
+    from tests.fakes import FunctionBrain, ScriptedBrain
+
+    leaked = {}
+    for name, instance in _singletons().items():
+        if instance is None:
+            continue
+        client = getattr(instance, "client", None)
+        if isinstance(client, (FunctionBrain, ScriptedBrain)):
+            leaked[name] = type(client).__name__
+    assert not leaked, (
+        f"Test fakes leaked into LLM extractor singletons: {leaked} "
+        f"(client types at session start: {started_with or 'none built yet'}). "
+        "A test replaced the singleton's client, or built the singleton "
+        "under a patched get_llm_client, without restoring it."
+    )
 
 
 @pytest.fixture

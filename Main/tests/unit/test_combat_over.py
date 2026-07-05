@@ -35,17 +35,15 @@ from dnd_bot.game.combat.manager import (
 from dnd_bot.game.session import GameSession, GameSessionManager, SessionState
 from dnd_bot.models import CombatState
 
-# Distinct from channel ids used elsewhere in the suite — the combat,
-# coordinator, and turn-lock registries are module-level globals.
-CHANNEL = 557_001
-KEY = f"discord:{CHANNEL}"
+# Channel ids come from the run-unique ``unique_channel_id`` fixture — the
+# combat, coordinator, and turn-lock registries are module-level globals.
 
 
-def _make_combat(character) -> CombatManager:
+def _make_combat(channel_id: int, character) -> CombatManager:
     """Mid-combat encounter with a pinned order: player first, goblin second."""
     manager = CombatManager.create_encounter(
         session_id="combat-over-test-session",
-        channel_id=CHANNEL,
+        channel_id=channel_id,
         name="Combat Over Test",
     )
     manager.add_player(character)
@@ -60,25 +58,15 @@ def _make_combat(character) -> CombatManager:
     return manager
 
 
-@pytest.fixture(autouse=True)
-def _isolated_registries():
-    """Leave the module-global registries (and lock entries) clean."""
-    clear_combat_by_key(KEY)
-    clear_coordinator_by_key(KEY)
-    yield
-    clear_combat_by_key(KEY)
-    clear_coordinator_by_key(KEY)
-
-
 class TestCombatEndingAdvance:
     """end_turn / next_turn when the outgoing turn ended the encounter."""
 
     async def test_end_turn_after_last_player_downed_returns_combat_over(
-        self, mock_character
+        self, mock_character, unique_channel_id
     ):
         """The empirical repro: goblin downs the last conscious player, then
         its turn ends. Previously AttributeError; now a typed result."""
-        manager = _make_combat(mock_character)
+        manager = _make_combat(unique_channel_id, mock_character)
         player = next(c for c in manager.combat.combatants if c.is_player)
         goblin = next(c for c in manager.combat.combatants if not c.is_player)
         player.hp_current = 0  # last conscious player just went down
@@ -93,9 +81,11 @@ class TestCombatEndingAdvance:
         assert manager.combat.state == CombatState.COMBAT_END
         assert manager.combat.ended_at is not None
 
-    async def test_next_turn_ending_combat_reaches_combat_end(self, mock_character):
+    async def test_next_turn_ending_combat_reaches_combat_end(
+        self, mock_character, unique_channel_id
+    ):
         """Manager-level pin of the AWAITING_ACTION -> COMBAT_END edge."""
-        manager = _make_combat(mock_character)
+        manager = _make_combat(unique_channel_id, mock_character)
         player = next(c for c in manager.combat.combatants if c.is_player)
         player.hp_current = 0
         assert manager.combat.state == CombatState.AWAITING_ACTION
@@ -106,11 +96,11 @@ class TestCombatEndingAdvance:
         assert manager.combat.state == CombatState.COMBAT_END
 
     async def test_dead_encounter_does_not_reprocess_end_of_turn_effects(
-        self, mock_character, monkeypatch
+        self, mock_character, unique_channel_id, monkeypatch
     ):
         """Blocker 2 follow-through: repeated advances on an ended encounter
         must be inert — no second end-of-turn effect tick (DoT double-tick)."""
-        manager = _make_combat(mock_character)
+        manager = _make_combat(unique_channel_id, mock_character)
         player = next(c for c in manager.combat.combatants if c.is_player)
         player.hp_current = 0
 
@@ -137,9 +127,10 @@ class TestNpcTurnTpk:
     """run_npc_turn completing a TPK, then teardown via the single owner."""
 
     async def test_npc_turn_downing_last_player_ends_cleanly(
-        self, mock_character, monkeypatch
+        self, mock_character, unique_channel_id, monkeypatch
     ):
-        manager = _make_combat(mock_character)
+        key = f"discord:{unique_channel_id}"
+        manager = _make_combat(unique_channel_id, mock_character)
         player = next(c for c in manager.combat.combatants if c.is_player)
         goblin = next(c for c in manager.combat.combatants if not c.is_player)
 
@@ -169,13 +160,13 @@ class TestNpcTurnTpk:
 
         session = GameSession(
             id="combat-over-session",
-            channel_id=CHANNEL,
+            channel_id=unique_channel_id,
             guild_id=1,
             campaign_id="combat-over-campaign",
             state=SessionState.COMBAT,
         )
         session.combat_manager = manager
-        set_combat_for_channel(CHANNEL, manager)
+        set_combat_for_channel(unique_channel_id, manager)
         coordinator = get_coordinator(manager)
         sessions = GameSessionManager()
         sessions._sessions[session.session_key] = session
@@ -188,12 +179,12 @@ class TestNpcTurnTpk:
         assert player.hp_current == 0
 
         # Teardown through the single owner unwinds everything.
-        assert await sessions.end_combat(CHANNEL) is True
+        assert await sessions.end_combat(unique_channel_id) is True
         assert manager.combat.state == CombatState.COMBAT_END
         assert session.state == SessionState.ACTIVE
         assert session.combat_manager is None
-        assert get_combat_by_key(KEY) is None
-        assert get_coordinator_by_key(KEY) is None
+        assert get_combat_by_key(key) is None
+        assert get_coordinator_by_key(key) is None
 
 
 class TestTornDownCoordinatorGuards:
@@ -202,10 +193,10 @@ class TestTornDownCoordinatorGuards:
     cleared the registries. The ``*_locked`` bodies must return typed no-op
     results against the torn-down combat instead of mutating or crashing."""
 
-    async def _torn_down(self, mock_character, monkeypatch):
+    async def _torn_down(self, channel_id, mock_character, monkeypatch):
         """A registered combat torn down through the single owner."""
-        manager = _make_combat(mock_character)
-        set_combat_for_channel(CHANNEL, manager)
+        manager = _make_combat(channel_id, mock_character)
+        set_combat_for_channel(channel_id, manager)
         coordinator = get_coordinator(manager)
 
         async def _fake_persist(self):
@@ -215,14 +206,16 @@ class TestTornDownCoordinatorGuards:
             CombatTurnCoordinator, "persist_player_characters", _fake_persist
         )
         sessions = GameSessionManager()
-        assert await sessions.end_combat(CHANNEL) is True
+        assert await sessions.end_combat(channel_id) is True
         assert manager.combat.state == CombatState.COMBAT_END
         return manager, coordinator
 
     async def test_locked_calls_after_teardown_are_noops(
-        self, mock_character, monkeypatch
+        self, mock_character, unique_channel_id, monkeypatch
     ):
-        manager, coordinator = await self._torn_down(mock_character, monkeypatch)
+        manager, coordinator = await self._torn_down(
+            unique_channel_id, mock_character, monkeypatch
+        )
         goblin = next(c for c in manager.combat.combatants if not c.is_player)
         goblin.turn_resources.action = True
         turn_index_before = manager.combat.current_turn_index
@@ -251,16 +244,19 @@ class TestTornDownCoordinatorGuards:
         # run_npc_turn: no actions executed
         assert await coordinator.run_npc_turn(goblin) == []
 
-    async def test_replaced_coordinator_is_stale(self, mock_character):
+    async def test_replaced_coordinator_is_stale(
+        self, mock_character, unique_channel_id
+    ):
         """A NEW combat re-registering the channel makes calls from the OLD
         coordinator no-ops even though its own manager was never finalized."""
-        manager_old = _make_combat(mock_character)
-        set_combat_for_channel(CHANNEL, manager_old)
+        key = f"discord:{unique_channel_id}"
+        manager_old = _make_combat(unique_channel_id, mock_character)
+        set_combat_for_channel(unique_channel_id, manager_old)
         coordinator_old = get_coordinator(manager_old)
 
-        clear_coordinator_by_key(KEY)
-        manager_new = _make_combat(mock_character)
-        set_combat_for_channel(CHANNEL, manager_new)
+        clear_coordinator_by_key(key)
+        manager_new = _make_combat(unique_channel_id, mock_character)
+        set_combat_for_channel(unique_channel_id, manager_new)
         coordinator_new = get_coordinator(manager_new)
         assert coordinator_new is not coordinator_old
         assert manager_old.combat.state == CombatState.AWAITING_ACTION

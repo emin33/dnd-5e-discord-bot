@@ -12,23 +12,19 @@ combat is over.
 
 import pytest
 
-from dnd_bot.game.combat.coordinator import (
-    CombatTurnCoordinator,
-    clear_coordinator_by_key,
-)
-from dnd_bot.game.combat.manager import CombatManager, clear_combat_by_key
-
-# Distinct from channel ids used elsewhere in the suite — the combat,
-# coordinator, and turn-lock registries are module-level globals.
-CHANNEL = 556_001
-KEY = f"discord:{CHANNEL}"
+from dnd_bot.game.combat.coordinator import CombatTurnCoordinator
+from dnd_bot.game.combat.manager import CombatManager
 
 
-def _make_combat(character) -> CombatManager:
-    """Mid-combat encounter with a pinned order: player first, goblin second."""
+def _make_combat(channel_id: int, character) -> CombatManager:
+    """Mid-combat encounter with a pinned order: player first, goblin second.
+
+    ``channel_id`` comes from the run-unique ``unique_channel_id`` fixture —
+    the combat/coordinator/turn-lock registries are module-level globals.
+    """
     manager = CombatManager.create_encounter(
         session_id="force-advance-test-session",
-        channel_id=CHANNEL,
+        channel_id=channel_id,
         name="Force Advance Test",
     )
     manager.add_player(character)
@@ -43,23 +39,13 @@ def _make_combat(character) -> CombatManager:
     return manager
 
 
-@pytest.fixture(autouse=True)
-def _isolated_registries():
-    """Leave the module-global registries (and lock entries) clean."""
-    clear_combat_by_key(KEY)
-    clear_coordinator_by_key(KEY)
-    yield
-    clear_combat_by_key(KEY)
-    clear_coordinator_by_key(KEY)
-
-
 class TestForceAdvanceTurn:
     """The last-resort advance primitive behind the cog's recovery ladder."""
 
     async def test_advances_initiative_and_returns_next_combatant(
-        self, mock_character
+        self, mock_character, unique_channel_id
     ):
-        manager = _make_combat(mock_character)
+        manager = _make_combat(unique_channel_id, mock_character)
         coordinator = CombatTurnCoordinator(manager)
         goblin = next(c for c in manager.combat.combatants if not c.is_player)
 
@@ -69,11 +55,11 @@ class TestForceAdvanceTurn:
         assert manager.combat.get_current_combatant() is goblin
 
     async def test_recovers_after_end_turn_failure(
-        self, mock_character, monkeypatch
+        self, mock_character, unique_channel_id, monkeypatch
     ):
         """The audit P1-15 wedge: end_turn raises and initiative stays parked
         on the broken combatant — force_advance_turn must still move it."""
-        manager = _make_combat(mock_character)
+        manager = _make_combat(unique_channel_id, mock_character)
         coordinator = CombatTurnCoordinator(manager)
         player = manager.combat.get_current_combatant()
         goblin = next(c for c in manager.combat.combatants if not c.is_player)
@@ -95,10 +81,12 @@ class TestForceAdvanceTurn:
         assert advanced is goblin
         assert manager.combat.get_current_combatant() is goblin
 
-    async def test_returns_none_when_combat_is_over(self, mock_character):
+    async def test_returns_none_when_combat_is_over(
+        self, mock_character, unique_channel_id
+    ):
         """None is the caller's abort signal — the cog ends combat via the
         single teardown owner (GameSessionManager.end_combat)."""
-        manager = _make_combat(mock_character)
+        manager = _make_combat(unique_channel_id, mock_character)
         coordinator = CombatTurnCoordinator(manager)
         goblin = next(c for c in manager.combat.combatants if not c.is_player)
         goblin.hp_current = 0  # last enemy down -> combat over during advance
@@ -107,10 +95,12 @@ class TestForceAdvanceTurn:
 
         assert advanced is None
 
-    async def test_runs_under_the_turn_lock(self, mock_character, monkeypatch):
+    async def test_runs_under_the_turn_lock(
+        self, mock_character, unique_channel_id, monkeypatch
+    ):
         """Matches the P0-6 locking discipline: the advance mutates turn
         state, so it must hold the per-channel turn lock."""
-        manager = _make_combat(mock_character)
+        manager = _make_combat(unique_channel_id, mock_character)
         coordinator = CombatTurnCoordinator(manager)
         locked_during_advance: list[bool] = []
         real_next_turn = manager.next_turn

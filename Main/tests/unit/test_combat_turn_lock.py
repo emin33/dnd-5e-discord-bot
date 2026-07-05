@@ -35,16 +35,13 @@ from dnd_bot.game.combat.manager import (
 )
 from dnd_bot.game.session import GameSession, GameSessionManager
 
-# Distinct from channel ids used elsewhere in the suite — the combat,
-# coordinator, and turn-lock registries are module-level globals.
-CHANNEL = 555_001
-OTHER_CHANNEL = 555_002
-KEY = f"discord:{CHANNEL}"
-OTHER_KEY = f"discord:{OTHER_CHANNEL}"
+# Channel ids come from the run-unique ``unique_channel_id`` fixture — the
+# combat, coordinator, and turn-lock registries are module-level globals.
+# Voice keys aren't channel-derived, so this one stays a constant.
 VOICE_KEY = "voice:turn-lock-room"
 
 
-def _make_combat(character=None, channel_id: int = CHANNEL) -> CombatManager:
+def _make_combat(channel_id: int, character=None) -> CombatManager:
     """A mid-combat encounter (initiative rolled, AWAITING_ACTION)."""
     manager = CombatManager.create_encounter(
         session_id="turn-lock-test-session",
@@ -66,22 +63,22 @@ def _dash(combatant_id: str) -> CombatAction:
 
 
 @pytest.fixture(autouse=True)
-def _isolated_registries():
-    """Leave the module-global registries (and lock entries) clean."""
-    for key in (KEY, OTHER_KEY, VOICE_KEY):
-        clear_combat_by_key(key)
-        clear_coordinator_by_key(key)
+def _isolated_voice_registry():
+    """Leave the VOICE_KEY registry (and lock) entries clean."""
+    clear_combat_by_key(VOICE_KEY)
+    clear_coordinator_by_key(VOICE_KEY)
     yield
-    for key in (KEY, OTHER_KEY, VOICE_KEY):
-        clear_combat_by_key(key)
-        clear_coordinator_by_key(key)
+    clear_combat_by_key(VOICE_KEY)
+    clear_coordinator_by_key(VOICE_KEY)
 
 
 class TestTurnMutationSerialization:
     """Concurrent mutating calls must run one at a time, not interleave."""
 
-    async def test_concurrent_execute_action_runs_atomically(self, monkeypatch):
-        combat = _make_combat()
+    async def test_concurrent_execute_action_runs_atomically(
+        self, unique_channel_id, monkeypatch
+    ):
+        combat = _make_combat(unique_channel_id)
         coordinator = CombatTurnCoordinator(combat)
         events: list[str] = []
 
@@ -109,11 +106,11 @@ class TestTurnMutationSerialization:
         assert events == ["enter-a", "exit-a", "enter-b", "exit-b"]
 
     async def test_npc_turn_holds_lock_across_brain_decision(
-        self, mock_character, monkeypatch
+        self, mock_character, unique_channel_id, monkeypatch
     ):
         """The decide->execute window stays under the lock (turn atomicity),
         and run_npc_turn's internal start/execute/end calls don't deadlock."""
-        combat = _make_combat(mock_character)
+        combat = _make_combat(unique_channel_id, mock_character)
         coordinator = CombatTurnCoordinator(combat)
         goblin = next(c for c in combat.combat.combatants if not c.is_player)
         goblin.is_surprised = False
@@ -144,18 +141,19 @@ class TestTurnMutationSerialization:
 class TestLockKeying:
     """One lock per channel/session key, mirroring the coordinator registry."""
 
-    def test_lock_key_mirrors_registry_keying(self):
-        combat = _make_combat()
+    def test_lock_key_mirrors_registry_keying(self, unique_channel_id):
+        key = f"discord:{unique_channel_id}"
+        combat = _make_combat(unique_channel_id)
 
         # Channel-keyed (no session) — the /combat cog path
         coordinator = CombatTurnCoordinator(combat)
-        assert coordinator.turn_lock is get_turn_lock(KEY)
-        assert get_turn_lock_for_channel(CHANNEL) is get_turn_lock(KEY)
+        assert coordinator.turn_lock is get_turn_lock(key)
+        assert get_turn_lock_for_channel(unique_channel_id) is get_turn_lock(key)
 
         # Session-keyed — voice/web frontends
         session = GameSession(
             id="turn-lock-session",
-            channel_id=CHANNEL,
+            channel_id=unique_channel_id,
             guild_id=1,
             campaign_id="turn-lock-campaign",
             session_key=VOICE_KEY,
@@ -164,8 +162,12 @@ class TestLockKeying:
         assert keyed.turn_lock is get_turn_lock(VOICE_KEY)
         assert keyed.turn_lock is not coordinator.turn_lock
 
-    async def test_channel_a_lock_does_not_block_channel_b(self, monkeypatch):
-        combat_b = _make_combat(channel_id=OTHER_CHANNEL)
+    async def test_channel_a_lock_does_not_block_channel_b(
+        self, unique_channel_ids, monkeypatch
+    ):
+        channel_a = unique_channel_ids()
+        channel_b = unique_channel_ids()
+        combat_b = _make_combat(channel_b)
         coordinator_b = CombatTurnCoordinator(combat_b)
 
         async def quick(self, action):
@@ -175,12 +177,12 @@ class TestLockKeying:
             CombatTurnCoordinator, "_execute_action_locked", quick
         )
 
-        assert get_turn_lock_for_channel(CHANNEL) is not get_turn_lock_for_channel(
-            OTHER_CHANNEL
+        assert get_turn_lock_for_channel(channel_a) is not get_turn_lock_for_channel(
+            channel_b
         )
 
         # Hold channel A's lock; channel B's turn must complete immediately.
-        async with get_turn_lock_for_channel(CHANNEL):
+        async with get_turn_lock_for_channel(channel_a):
             result = await asyncio.wait_for(
                 coordinator_b.execute_action(_dash("b")), timeout=1
             )
@@ -191,10 +193,11 @@ class TestTeardownTakesTheLock:
     """end_combat serializes behind in-flight turns and drops the lock entry."""
 
     async def test_teardown_waits_for_inflight_turn_and_drops_lock(
-        self, mock_character, monkeypatch
+        self, mock_character, unique_channel_id, monkeypatch
     ):
-        combat = _make_combat(mock_character)
-        set_combat_for_channel(CHANNEL, combat)
+        key = f"discord:{unique_channel_id}"
+        combat = _make_combat(unique_channel_id, mock_character)
+        set_combat_for_channel(unique_channel_id, combat)
         coordinator = get_coordinator(combat)
 
         async def _fake_persist(self):
@@ -216,15 +219,22 @@ class TestTeardownTakesTheLock:
             CombatTurnCoordinator, "_execute_action_locked", slow_action
         )
 
-        lock_before = get_turn_lock(KEY)
+        lock_before = get_turn_lock(key)
         sessions = GameSessionManager()
 
         turn = asyncio.create_task(coordinator.execute_action(_dash("x")))
-        # Let the turn enter its critical section before teardown fires
-        while not events:
-            await asyncio.sleep(0)
 
-        assert await asyncio.wait_for(sessions.end_combat(CHANNEL), timeout=5) is True
+        # Let the turn enter its critical section before teardown fires —
+        # bounded, so a regression fails instead of hanging the run.
+        async def _turn_entered():
+            while not events:
+                await asyncio.sleep(0)
+
+        await asyncio.wait_for(_turn_entered(), timeout=5)
+
+        assert await asyncio.wait_for(
+            sessions.end_combat(unique_channel_id), timeout=5
+        ) is True
         events.append("teardown-done")
         await turn
 
@@ -232,4 +242,4 @@ class TestTeardownTakesTheLock:
         assert events == ["turn-enter", "turn-exit", "teardown-done"]
         # Clearing the coordinator registry dropped the lock entry:
         # a later combat on this channel gets a fresh lock.
-        assert get_turn_lock(KEY) is not lock_before
+        assert get_turn_lock(key) is not lock_before
