@@ -43,12 +43,6 @@ class TTSConfig:
     voice: str = ""            # Voice name/ID (provider-specific)
 
 @dataclass
-class ASRConfig:
-    """Configuration for speech recognition provider."""
-    provider: str = "browser"  # browser | riva | openai
-    model: str = ""            # e.g. "whisper-1" for OpenAI
-
-@dataclass
 class ImmersionConfig:
     """Configuration for immersion features (TTS voices + image generation)."""
     tts_enabled: bool = False
@@ -79,7 +73,6 @@ class LLMProfile:
     brain: ProviderConfig = field(default_factory=ProviderConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     tts: TTSConfig = field(default_factory=TTSConfig)
-    asr: ASRConfig = field(default_factory=ASRConfig)
     immersion: ImmersionConfig = field(default_factory=ImmersionConfig)
 
 
@@ -106,7 +99,6 @@ def load_profile(profile_name: str) -> LLMProfile:
     brain_data = data.get("brain", {})
     memory_data = data.get("memory", {})
     tts_data = data.get("tts", {})
-    asr_data = data.get("asr", {})
     immersion_data = data.get("immersion", {})
 
     def _provider_config_or_none(d: Optional[dict[str, Any]]) -> Optional[ProviderConfig]:
@@ -147,10 +139,6 @@ def load_profile(profile_name: str) -> LLMProfile:
             provider=tts_data.get("provider", "browser"),
             model=tts_data.get("model", ""),
             voice=tts_data.get("voice", ""),
-        ),
-        asr=ASRConfig(
-            provider=asr_data.get("provider", "browser"),
-            model=asr_data.get("model", ""),
         ),
         immersion=ImmersionConfig(
             tts_enabled=immersion_data.get("tts_enabled", False),
@@ -217,12 +205,6 @@ def switch_profile(profile_name: str) -> LLMProfile:
     except ImportError:
         pass
 
-    try:
-        from .voice.asr_factory import _reset_asr
-        _reset_asr()
-    except ImportError:
-        pass
-
     import structlog
     logger = structlog.get_logger()
     logger.info(
@@ -231,7 +213,6 @@ def switch_profile(profile_name: str) -> LLMProfile:
         narrator=f"{profile.narrator.provider}/{profile.narrator.model}",
         brain=f"{profile.brain.provider}/{profile.brain.model}",
         tts=profile.tts.provider,
-        asr=profile.asr.provider,
     )
 
     return profile
@@ -286,7 +267,6 @@ class Settings(BaseSettings):
     deepseek_api_key: str = ""
     gemini_api_key: str = ""
     elevenlabs_api_key: str = ""
-    deepgram_api_key: str = ""
 
     # LLM Temperature
     narrator_temperature: float = 0.75

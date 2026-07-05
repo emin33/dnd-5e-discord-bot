@@ -734,8 +734,7 @@ haiku_immersive_schnell:
 
 # ===== Voice profiles =====
 # tts: provider (riva|openai|elevenlabs|browser), model, voice
-# asr: provider (riva|openai|browser), model
-# Profiles without tts/asr sections default to browser (JS handles it)
+# Profiles without a tts section default to browser (JS handles it)
 
 # Voice cloud: zero GPU — OpenAI TTS + browser ASR + cloud LLM
 voice_cloud:
@@ -750,8 +749,6 @@ voice_cloud:
     provider: openai
     model: tts-1
     voice: onyx
-  asr:
-    provider: browser
   memory:
     buffer_size: 30
     verbatim_size: 10
@@ -772,8 +769,6 @@ voice_riva_asr:
     provider: openai
     model: tts-1
     voice: onyx
-  asr:
-    provider: riva
   memory:
     buffer_size: 30
     verbatim_size: 10
@@ -793,8 +788,6 @@ voice_production:
   tts:
     provider: riva
     voice: Magpie-Multilingual.EN-US.Aria
-  asr:
-    provider: riva
   memory:
     buffer_size: 30
     verbatim_size: 10
@@ -815,8 +808,6 @@ voice_hybrid:
   tts:
     provider: riva
     voice: Magpie-Multilingual.EN-US.Aria
-  asr:
-    provider: riva
   memory:
     buffer_size: 24
     verbatim_size: 8
@@ -837,8 +828,6 @@ voice_gemma:
   tts:
     provider: riva
     voice: Magpie-Multilingual.EN-US.Aria
-  asr:
-    provider: riva
   memory:
     buffer_size: 24
     verbatim_size: 8

@@ -170,7 +170,7 @@ class TestProfileLoader:
         original_load = cfg.load_profile
 
         def patched_load(name):
-            from dnd_bot.config import LLMProfile, ProviderConfig, MemoryConfig, TTSConfig, ASRConfig, ImmersionConfig
+            from dnd_bot.config import LLMProfile, ProviderConfig, MemoryConfig, TTSConfig, ImmersionConfig
             data = profiles[name]
             n = data["narrator"]
             np = data.get("narrator_premium")
