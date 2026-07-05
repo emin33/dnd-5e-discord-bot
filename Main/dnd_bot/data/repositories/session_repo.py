@@ -1,7 +1,6 @@
 """Session repository for game session persistence."""
 
-from typing import Any, Optional
-import json
+from typing import Optional
 
 from ..database import Database, get_database
 
@@ -30,7 +29,6 @@ class SessionRepository:
         session_number: int,
         state: str,
         active_combat_id: Optional[str] = None,
-        players_json: Optional[str] = None,
     ) -> None:
         """Save or update a game session."""
         db = await self._get_db()
@@ -61,38 +59,6 @@ class SessionRepository:
 
         await db.commit()
 
-    async def load_session(self, channel_id: int) -> Optional[dict[str, Any]]:
-        """
-        Load the most recent active session for a channel.
-
-        Returns dict with session data or None if no active session.
-        """
-        db = await self._get_db()
-
-        row = await db.fetch_one(
-            """
-            SELECT id, campaign_id, channel_id, session_number, state, active_combat_id, started_at
-            FROM game_session
-            WHERE channel_id = ? AND state NOT IN ('ended', 'paused')
-            ORDER BY started_at DESC
-            LIMIT 1
-            """,
-            (channel_id,),
-        )
-
-        if not row:
-            return None
-
-        return {
-            "id": row[0],
-            "campaign_id": row[1],
-            "channel_id": row[2],
-            "session_number": row[3],
-            "state": row[4],
-            "active_combat_id": row[5],
-            "started_at": row[6],
-        }
-
     async def end_session(self, session_id: str) -> None:
         """Mark a session as ended."""
         db = await self._get_db()
@@ -121,25 +87,11 @@ class SessionRepository:
             """
             UPDATE game_session
             SET state = 'ended', ended_at = CURRENT_TIMESTAMP
-            WHERE state NOT IN ('ended', 'paused')
+            WHERE state != 'ended'
             """,
         )
         await db.commit()
         return cursor.rowcount
-
-    async def pause_session(self, session_id: str) -> None:
-        """Mark a session as paused (can be resumed)."""
-        db = await self._get_db()
-
-        await db.execute(
-            """
-            UPDATE game_session
-            SET state = 'paused'
-            WHERE id = ?
-            """,
-            (session_id,),
-        )
-        await db.commit()
 
     async def get_session_number(self, campaign_id: str) -> int:
         """Get the next session number for a campaign."""
@@ -155,54 +107,6 @@ class SessionRepository:
         )
 
         return row[0] if row else 1
-
-    async def create_snapshot(
-        self,
-        session_id: str,
-        snapshot_type: str,
-        game_state: dict[str, Any],
-    ) -> str:
-        """Create a session snapshot for rollback support."""
-        import uuid
-
-        db = await self._get_db()
-        snapshot_id = str(uuid.uuid4())
-
-        await db.execute(
-            """
-            INSERT INTO session_snapshot (id, session_id, snapshot_type, game_state)
-            VALUES (?, ?, ?, ?)
-            """,
-            (snapshot_id, session_id, snapshot_type, json.dumps(game_state)),
-        )
-        await db.commit()
-
-        return snapshot_id
-
-    async def get_latest_snapshot(self, session_id: str) -> Optional[dict[str, Any]]:
-        """Get the most recent snapshot for a session."""
-        db = await self._get_db()
-
-        row = await db.fetch_one(
-            """
-            SELECT id, snapshot_type, game_state, created_at
-            FROM session_snapshot
-            WHERE session_id = ?
-            ORDER BY created_at DESC
-            LIMIT 1
-            """,
-            (session_id,),
-        )
-
-        if not row:
-            return None
-
-        return {
-            "id": row[0],
-            "snapshot_type": row[1],
-            "game_state": json.loads(row[2]) if row[2] else {},
-            "created_at": row[3],
-        }
 
 
 # Global repository instance
