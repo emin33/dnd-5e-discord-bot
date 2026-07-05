@@ -247,7 +247,7 @@ class DiscordTextFrontend:
 
             return settings
         except Exception as e:
-            logger.warning("immersion_settings_load_failed", error=str(e))
+            logger.warning("immersion_settings_load_failed", error=str(e), exc_info=True)
             return None
 
     async def _generate_and_send_audio(self, event: GameEvent) -> None:
@@ -312,7 +312,7 @@ class DiscordTextFrontend:
                 await self._channel.send(file=file)
 
         except Exception as e:
-            logger.warning("immersion_tts_failed", error=str(e))
+            logger.warning("immersion_tts_failed", error=str(e), exc_info=True)
 
     async def _generate_and_send_image(self, event: GameEvent) -> None:
         """Background task: image generation pipeline -> embed upload."""
@@ -354,7 +354,7 @@ class DiscordTextFrontend:
                 await self._channel.send(embed=embed, file=file)
 
         except Exception as e:
-            logger.warning("immersion_image_failed", error=str(e))
+            logger.warning("immersion_image_failed", error=str(e), exc_info=True)
 
     async def _handle_narrative_complete(self, event: GameEvent) -> None:
         narrative = event.data["narrative"]

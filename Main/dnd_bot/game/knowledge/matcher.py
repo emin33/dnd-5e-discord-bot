@@ -142,7 +142,7 @@ class EntityNameMatcher:
                 if self._graph.has_node(r["node_id"])
             ]
         except Exception as e:
-            logger.warning("vector_match_failed", error=str(e))
+            logger.warning("vector_match_failed", error=str(e), exc_info=True)
             return []
 
     def rebuild_index(self) -> None:

@@ -64,7 +64,7 @@ def _write_debug_log(label: str, content: str, thinking: str = None) -> None:
             f.write(content)
             f.write("\n")
     except Exception as e:
-        logger.warning("debug_log_write_failed", error=str(e))
+        logger.warning("debug_log_write_failed", error=str(e), exc_info=True)
 
 
 @dataclass

@@ -90,7 +90,7 @@ class PortraitGenerationView(discord.ui.View):
                 await interaction.followup.send("Portrait generation failed. You can skip this step.", ephemeral=True)
 
         except Exception as e:
-            logger.warning("portrait_generation_failed", error=str(e))
+            logger.warning("portrait_generation_failed", error=str(e), exc_info=True)
             await interaction.followup.send(
                 f"Portrait generation unavailable: {e}\nYou can skip this step.",
                 ephemeral=True,
@@ -143,7 +143,7 @@ class PortraitGenerationView(discord.ui.View):
                     await self._interaction.followup.send(embed=embed, file=file, view=approve_view)
 
             except Exception as e:
-                logger.warning("portrait_retry_failed", error=str(e))
+                logger.warning("portrait_retry_failed", error=str(e), exc_info=True)
 
 
 class _PortraitApproveView(discord.ui.View):

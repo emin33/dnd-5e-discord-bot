@@ -165,4 +165,4 @@ def auto_start_fish_if_needed():
         logger.info("fish_servers_ready", healthy=healthy, requested=num_instances)
 
     except Exception as e:
-        logger.warning("fish_auto_start_failed", error=str(e))
+        logger.warning("fish_auto_start_failed", error=str(e), exc_info=True)

@@ -83,7 +83,7 @@ class InventoryCog(commands.Cog):
                 char_repo = await get_character_repo()
                 await char_repo.update(character)
         except Exception as e:
-            logger.warning("ac_recalculate_failed", character=character.name, error=str(e))
+            logger.warning("ac_recalculate_failed", character=character.name, error=str(e), exc_info=True)
 
     @inventory.command(name="list", description="Show your inventory")
     async def inventory_list(

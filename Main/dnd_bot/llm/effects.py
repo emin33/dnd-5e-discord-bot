@@ -710,6 +710,7 @@ class EffectExecutor:
                 "effect_execution_failed",
                 effect_type=effect.effect_type.value,
                 error=str(e),
+                exc_info=True,
             )
             return EffectExecutionResult(
                 effect=effect,
@@ -783,7 +784,7 @@ class EffectExecutor:
                 entity.voice_id = voice_id
         except Exception as e:
             import structlog
-            structlog.get_logger().debug("voice_auto_assign_skipped", error=str(e))
+            structlog.get_logger().debug("voice_auto_assign_skipped", error=str(e), exc_info=True)
 
         return EffectExecutionResult(
             effect=effect,
@@ -1250,7 +1251,7 @@ class EffectExecutor:
                 applied["currency_delta"] = effect.player_currency_delta
                 persisted = True
             except Exception as e:
-                _logger.warning("update_player_currency_failed", error=str(e))
+                _logger.warning("update_player_currency_failed", error=str(e), exc_info=True)
 
         # --- Item grants / removals (separate table) ---
         if effect.player_item_grant and self.inventory_repo:
@@ -1271,7 +1272,7 @@ class EffectExecutor:
                     granted.append({"name": name, "quantity": qty})
                     persisted = True
                 except Exception as e:
-                    _logger.warning("update_player_grant_failed", item=name, error=str(e))
+                    _logger.warning("update_player_grant_failed", item=name, error=str(e), exc_info=True)
             if granted:
                 applied["items_granted"] = granted
         if effect.player_item_remove and self.inventory_repo:
@@ -1290,7 +1291,7 @@ class EffectExecutor:
                         removed.append({"name": name, "quantity": qty})
                         persisted = True
                 except Exception as e:
-                    _logger.warning("update_player_remove_failed", item=name, error=str(e))
+                    _logger.warning("update_player_remove_failed", item=name, error=str(e), exc_info=True)
             if removed:
                 applied["items_removed"] = removed
 

@@ -269,7 +269,7 @@ class TurnLogger:
             with open(path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(record.data, default=str) + "\n")
         except Exception as e:
-            logger.warning("turn_log_write_failed", error=str(e))
+            logger.warning("turn_log_write_failed", error=str(e), exc_info=True)
 
 
 # Singleton

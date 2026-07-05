@@ -105,7 +105,7 @@ async def generate_scene_image(
         return image_bytes
 
     except Exception as e:
-        logger.warning("scene_image_generation_failed", error=str(e))
+        logger.warning("scene_image_generation_failed", error=str(e), exc_info=True)
         return None
 
 

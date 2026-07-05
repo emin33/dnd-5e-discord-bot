@@ -53,9 +53,7 @@ class DnDBot(commands.Bot):
             if hasattr(self, 'pending_application_commands'):
                 print(f"Total commands registered: {len(self.pending_application_commands)}")
         except Exception as e:
-            print(f"Failed to sync commands: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.error("command_sync_failed", error=str(e), exc_info=True)
 
         print("------")
 
@@ -95,6 +93,9 @@ class DnDBot(commands.Bot):
                 command=ctx.command.name if ctx.command else "unknown",
                 error=str(original),
                 error_type=type(original).__name__,
+                # Not inside an except block — pass the exception instance so
+                # structlog's format_exc_info renders its traceback.
+                exc_info=original,
             )
 
         # Try to respond — the interaction may already be responded to or expired
@@ -109,6 +110,7 @@ class DnDBot(commands.Bot):
                 "error_response_failed",
                 command=ctx.command.name if ctx.command else "unknown",
                 original_error=str(original),
+                exc_info=True,
             )
 
     async def setup_hook(self):
@@ -158,10 +160,7 @@ class DnDBot(commands.Bot):
                 print(f"Loaded cog: {cog}")
                 logger.info("cog_loaded", cog=cog)
             except Exception as e:
-                print(f"FAILED to load cog {cog}: {e}")
-                logger.error("cog_load_failed", cog=cog, error=str(e))
-                import traceback
-                traceback.print_exc()
+                logger.error("cog_load_failed", cog=cog, error=str(e), exc_info=True)
 
     async def close(self):
         """Clean up resources when the bot shuts down."""

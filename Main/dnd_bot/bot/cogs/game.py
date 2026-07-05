@@ -414,14 +414,14 @@ class GameCog(commands.Cog):
                     )
                     await channel.send(embed=narr_embed)
             except Exception as e:
-                logger.warning("narration_failed", error=str(e))
+                logger.warning("narration_failed", error=str(e), exc_info=True)
 
             # Persist player state after the action (DF-2): the /game path
             # otherwise never wrote combat HP/conditions back to the DB.
             try:
                 await coordinator.persist_player_characters()
             except Exception as e:
-                logger.warning("combat_persist_failed", error=str(e))
+                logger.warning("combat_persist_failed", error=str(e), exc_info=True)
 
             # Check combat end
             if manager.combat.is_combat_over():
@@ -600,14 +600,14 @@ class GameCog(commands.Cog):
                         )
                         await channel.send(embed=narr_embed)
                 except Exception as e:
-                    logger.warning("narration_failed", error=str(e))
+                    logger.warning("narration_failed", error=str(e), exc_info=True)
 
             # Persist player state after the NPC turn (DF-2): NPC attacks damage
             # players, and that HP must reach the DB on the /game path.
             try:
                 await coordinator.persist_player_characters()
             except Exception as e:
-                logger.warning("combat_persist_failed", error=str(e))
+                logger.warning("combat_persist_failed", error=str(e), exc_info=True)
 
             # Check combat end
             if manager.combat.is_combat_over():
@@ -736,6 +736,7 @@ class GameCog(commands.Cog):
                     channel=message.channel.id,
                     user=message.author.id,
                     error=str(e),
+                    exc_info=True,
                 )
                 await message.channel.send(
                     f":warning: *The DM pauses, consulting ancient scrolls...* (Error: {str(e)[:100]})"

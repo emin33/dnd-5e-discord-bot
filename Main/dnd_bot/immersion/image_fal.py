@@ -75,7 +75,7 @@ class FalImageProvider:
                 break
             except (requests.exceptions.Timeout, requests.exceptions.HTTPError) as e:
                 if attempt == 0:
-                    logger.warning("fal_error_retrying", error=str(e))
+                    logger.warning("fal_error_retrying", error=str(e), exc_info=True)
                     import time
                     time.sleep(3)
                     continue

@@ -178,7 +178,7 @@ class StateExtractor:
             return delta
 
         except Exception as e:
-            logger.warning("state_extraction_failed", error=str(e))
+            logger.warning("state_extraction_failed", error=str(e), exc_info=True)
             return StateDelta()
 
     def _parse_response(self, content: str) -> tuple[StateDelta, list[str]]:
@@ -216,6 +216,7 @@ class StateExtractor:
             logger.warning(
                 "state_delta_validation_failed",
                 error=str(e),
+                exc_info=True,
                 data_preview=str(data)[:300],
             )
             warnings.append(f"validation_failed: {e}")

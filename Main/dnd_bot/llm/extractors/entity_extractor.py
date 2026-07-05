@@ -184,7 +184,7 @@ class EntityExtractor:
             return result
 
         except Exception as e:
-            logger.error("entity_extraction_failed", error=str(e))
+            logger.error("entity_extraction_failed", error=str(e), exc_info=True)
             return ExtractionResult()
 
     def _parse_response(self, content: str) -> ExtractionResult:

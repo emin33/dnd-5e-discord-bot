@@ -80,7 +80,7 @@ async def _get_voice_provider(voice_id: str, override: str) -> str:
         if entry:
             return entry.provider
     except Exception as e:
-        logger.warning("voice_catalog_lookup_failed", voice_id=voice_id, error=str(e))
+        logger.warning("voice_catalog_lookup_failed", voice_id=voice_id, error=str(e), exc_info=True)
 
     return "elevenlabs"  # Default fallback
 

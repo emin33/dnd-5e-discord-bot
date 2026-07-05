@@ -75,7 +75,7 @@ def get_image_provider() -> ImageProvider:
             immersion = profile.immersion
             provider = immersion.image_provider or settings.image_provider
         except Exception as e:
-            logger.warning("image_profile_load_failed", error=str(e))
+            logger.warning("image_profile_load_failed", error=str(e), exc_info=True)
             immersion = None
             provider = getattr(settings, 'image_provider', 'fal')
         kwargs = {}

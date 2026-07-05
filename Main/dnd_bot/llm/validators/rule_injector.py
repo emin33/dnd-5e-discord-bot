@@ -127,7 +127,7 @@ class RuleInjector:
                 self._rules_cache[name] = str(desc)
             logger.info("srd_rules_loaded", count=len(self._rules_cache))
         except Exception as e:
-            logger.warning("srd_rules_load_failed", error=str(e))
+            logger.warning("srd_rules_load_failed", error=str(e), exc_info=True)
             self._rules_cache = {}
 
         return self._rules_cache

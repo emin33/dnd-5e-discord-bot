@@ -192,7 +192,7 @@ Decide. Output one JSON object."""
                 json_mode=True,
             )
         except Exception as e:
-            logger.warning("dedup_judge_call_failed", error=str(e))
+            logger.warning("dedup_judge_call_failed", error=str(e), exc_info=True)
             return DedupDecision(action="accept", raw_response=f"error: {e}")
 
         raw = (response.content or "").strip()

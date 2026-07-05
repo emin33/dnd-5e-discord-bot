@@ -273,7 +273,7 @@ def parse_intents(intents_block: str) -> IntentParseResult:
                 result.effects.append(effect)
         except Exception as e:
             result.errors.append(f"Failed to parse: {line!r} - {e}")
-            logger.warning("intent_parse_error", line=line, error=str(e))
+            logger.warning("intent_parse_error", line=line, error=str(e), exc_info=True)
 
     return result
 

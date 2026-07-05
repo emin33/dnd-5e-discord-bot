@@ -163,5 +163,5 @@ async def attribute_dialogue(
         return result
 
     except Exception as e:
-        logger.warning("dialogue_attribution_failed", error=str(e))
+        logger.warning("dialogue_attribution_failed", error=str(e), exc_info=True)
         return {}

@@ -127,7 +127,7 @@ async def assign_voice(
             npc_repo = await get_npc_repo()
             await npc_repo.update_voice_id(npc_id, chosen.voice_id)
         except Exception as e:
-            logger.warning("voice_persist_failed", npc_id=npc_id, error=str(e))
+            logger.warning("voice_persist_failed", npc_id=npc_id, error=str(e), exc_info=True)
 
     logger.info(
         "voice_assigned",

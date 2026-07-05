@@ -256,7 +256,7 @@ class GameSessionManager:
                             aliases=entity.aliases,
                         )
                 except Exception as e:
-                    logger.warning("kg_entity_description_sync_failed", error=str(e))
+                    logger.warning("kg_entity_description_sync_failed", error=str(e), exc_info=True)
 
             logger.info(
                 "knowledge_graph_loaded",
@@ -265,7 +265,7 @@ class GameSessionManager:
                 edges=session.knowledge_graph.edge_count(),
             )
         except Exception as e:
-            logger.warning("knowledge_graph_load_failed", error=str(e))
+            logger.warning("knowledge_graph_load_failed", error=str(e), exc_info=True)
             session.knowledge_graph = None
 
         self._sessions[session.session_key] = session
@@ -306,7 +306,7 @@ class GameSessionManager:
             if campaign_npcs:
                 logger.info("npcs_loaded_from_db", count=len(campaign_npcs), campaign_id=campaign_id)
         except Exception as e:
-            logger.warning("npc_preload_failed", error=str(e))
+            logger.warning("npc_preload_failed", error=str(e), exc_info=True)
 
         logger.info(
             "session_started",
@@ -348,6 +348,7 @@ class GameSessionManager:
                     "scene_registry_cleanup_failed",
                     session_id=session.id,
                     error=str(e),
+                    exc_info=True,
                 )
 
             # Generate final summary, then persist memory tiers so pinned
@@ -412,6 +413,7 @@ class GameSessionManager:
                     "character_sync_failed",
                     character=player.character.name,
                     error=str(e),
+                    exc_info=True,
                 )
 
     def _state_to_db(self, state: SessionState) -> str:
@@ -884,6 +886,7 @@ class GameSessionManager:
                         "combat_end_persist_failed",
                         session_key=key,
                         error=str(e),
+                        exc_info=True,
                     )
                 if manager.combat.state != CombatState.COMBAT_END:
                     manager.end_combat()

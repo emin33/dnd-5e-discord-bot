@@ -96,7 +96,7 @@ class SceneEntityRegistry:
                             monster_name=match.get("name"),
                         )
                 except Exception as e:
-                    logger.debug("entity_srd_match_failed", name=entity.name, error=str(e))
+                    logger.debug("entity_srd_match_failed", name=entity.name, error=str(e), exc_info=True)
 
         # Register new entity
         self._entities[entity.id] = entity
@@ -443,7 +443,7 @@ class SceneEntityRegistry:
                         entity.npc_id = npc.id
                         synced += 1
             except Exception as e:
-                logger.error("npc_sync_failed", name=entity.name, error=str(e))
+                logger.error("npc_sync_failed", name=entity.name, error=str(e), exc_info=True)
 
         if synced > 0:
             logger.info("npcs_synced", count=synced)

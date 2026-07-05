@@ -519,7 +519,7 @@ class CharacterCog(commands.Cog):
             )
 
         except Exception as e:
-            logger.error("character_creation_failed", error=str(e))
+            logger.error("character_creation_failed", error=str(e), exc_info=True)
             await interaction.followup.send(
                 f"Failed to create character: {e}",
                 ephemeral=True,

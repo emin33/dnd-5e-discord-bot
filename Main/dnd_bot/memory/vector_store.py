@@ -56,7 +56,7 @@ class VectorStore:
                 message="ChromaDB not installed. Memory RAG disabled.",
             )
         except Exception as e:
-            logger.error("chromadb_init_failed", error=str(e))
+            logger.error("chromadb_init_failed", error=str(e), exc_info=True)
 
     def _get_collection(self, campaign_id: str) -> "Optional[Collection]":
         """Get or create collection for a campaign."""
@@ -100,6 +100,7 @@ class VectorStore:
                 campaign_id=campaign_id,
                 memory_id=memory_id,
                 error=str(e),
+                exc_info=True,
             )
             return False
 
@@ -128,6 +129,7 @@ class VectorStore:
                 campaign_id=campaign_id,
                 memory_id=memory_id,
                 error=str(e),
+                exc_info=True,
             )
             return False
 
@@ -146,6 +148,7 @@ class VectorStore:
                 campaign_id=campaign_id,
                 memory_id=memory_id,
                 error=str(e),
+                exc_info=True,
             )
             return False
 
@@ -195,6 +198,7 @@ class VectorStore:
                 campaign_id=campaign_id,
                 query=query[:50],
                 error=str(e),
+                exc_info=True,
             )
             return []
 
@@ -360,7 +364,7 @@ class VectorStore:
             )
             return True
         except Exception as e:
-            logger.error("entity_description_add_failed", node_id=node_id, error=str(e))
+            logger.error("entity_description_add_failed", node_id=node_id, error=str(e), exc_info=True)
             return False
 
     def search_entities(

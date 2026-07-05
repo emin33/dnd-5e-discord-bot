@@ -448,7 +448,7 @@ class CombatTurnCoordinator:
                     error=f"Unknown action type: {action.action_type}",
                 )
         except Exception as e:
-            logger.error("action_execution_failed", error=str(e), action=action.action_type)
+            logger.error("action_execution_failed", error=str(e), action=action.action_type, exc_info=True)
             return ActionResult(
                 action=action,
                 success=False,
@@ -622,7 +622,7 @@ class CombatTurnCoordinator:
                     ammo=ammo_index,
                 )
         except Exception as e:
-            logger.warning("ammo_consume_failed", error=str(e))
+            logger.warning("ammo_consume_failed", error=str(e), exc_info=True)
 
     async def _get_weapon_for_attack(
         self,
@@ -994,7 +994,7 @@ class CombatTurnCoordinator:
                 new_current = character.spell_slots.get_slots(slot_level)[0]
                 await repo.update_spell_slot(character.id, slot_level, new_current)
             except Exception as e:
-                logger.warning("combat_slot_persist_failed", error=str(e), character_id=character.id)
+                logger.warning("combat_slot_persist_failed", error=str(e), character_id=character.id, exc_info=True)
 
         result = ActionResult(
             action=action,
@@ -1160,7 +1160,7 @@ class CombatTurnCoordinator:
                 repo = await get_character_repo()
                 await repo.update_concentration(character.id, character.concentration_spell_id)
             except Exception as e:
-                logger.warning("combat_concentration_persist_failed", error=str(e), character_id=character.id)
+                logger.warning("combat_concentration_persist_failed", error=str(e), character_id=character.id, exc_info=True)
 
         # Use action resource
         if not action.uses_bonus_action:
@@ -1322,6 +1322,7 @@ class CombatTurnCoordinator:
                     "combat_persist_failed",
                     character_id=combatant.character_id,
                     error=str(e),
+                    exc_info=True,
                 )
 
     async def _get_equipped_weapons(self, character: Character) -> list[WeaponStats]:

@@ -100,7 +100,7 @@ def get_tts():
                 voice=tts_cfg.voice,
             )
         except Exception as e:
-            logger.error("tts_init_failed", provider=tts_cfg.provider, error=str(e))
+            logger.error("tts_init_failed", provider=tts_cfg.provider, error=str(e), exc_info=True)
             from .tts_browser import BrowserTTS
             _tts_instance = BrowserTTS()
 

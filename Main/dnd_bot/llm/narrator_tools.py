@@ -720,7 +720,7 @@ def tool_calls_to_effects(tool_calls: list[dict]) -> list[ProposedEffect]:
             if effect:
                 effects.append(effect)
         except Exception as e:
-            logger.warning("tool_call_conversion_failed", tool=name, error=str(e))
+            logger.warning("tool_call_conversion_failed", tool=name, error=str(e), exc_info=True)
 
     return effects
 

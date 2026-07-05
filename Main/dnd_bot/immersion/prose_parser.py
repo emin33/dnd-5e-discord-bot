@@ -54,7 +54,7 @@ async def parse_narrative_async(
             )
         except Exception as e:
             import structlog
-            structlog.get_logger().debug("llm_attribution_skipped", error=str(e))
+            structlog.get_logger().debug("llm_attribution_skipped", error=str(e), exc_info=True)
 
     return _parse_with_attribution(
         narrative, proposed_effects, scene_registry,

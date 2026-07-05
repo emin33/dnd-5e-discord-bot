@@ -208,7 +208,7 @@ class ImmersionCog(commands.Cog):
                 await ctx.followup.send("Could not generate scene image.", ephemeral=True)
 
         except Exception as e:
-            logger.error("imagine_command_failed", error=str(e))
+            logger.error("imagine_command_failed", error=str(e), exc_info=True)
             await ctx.followup.send(f"Image generation failed: {e}", ephemeral=True)
 
 

@@ -152,6 +152,7 @@ async def _synthesize_segment(
             voice_provider=segment.voice_provider,
             voice_id=segment.voice_id,
             error=str(e),
+            exc_info=True,
         )
         return None
 
@@ -197,7 +198,9 @@ async def assemble_audio(
 
     for i, result in enumerate(results):
         if isinstance(result, Exception):
-            logger.warning("tts_gather_exception", index=i, error=str(result))
+            # No active except block — pass the gathered exception instance so
+            # structlog's format_exc_info renders its traceback.
+            logger.warning("tts_gather_exception", index=i, error=str(result), exc_info=result)
             continue
         if result is None:
             continue
@@ -252,7 +255,7 @@ def _encode_mp3(audio: np.ndarray, sample_rate: int) -> Optional[io.BytesIO]:
         logger.debug("lameenc_not_available_falling_back_to_wav")
         return None
     except Exception as e:
-        logger.warning("mp3_encode_failed", error=str(e))
+        logger.warning("mp3_encode_failed", error=str(e), exc_info=True)
         return None
 
 

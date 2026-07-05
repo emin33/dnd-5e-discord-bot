@@ -969,7 +969,7 @@ class DMOrchestrator:
                     if needs_currency:
                         pgi_currency = await inv_repo.get_currency(_pgi_char_id)
                 except Exception as e:
-                    logger.warning("pgi_prefetch_failed", error=str(e))
+                    logger.warning("pgi_prefetch_failed", error=str(e), exc_info=True)
 
             pgi_result = await validate_action(
                 action_type=triage.action_type,
@@ -1021,7 +1021,7 @@ class DMOrchestrator:
             try:
                 await on_mechanics_ready(mechanical_result, dice_rolls)
             except Exception as e:
-                logger.warning("on_mechanics_ready_callback_failed", error=str(e))
+                logger.warning("on_mechanics_ready_callback_failed", error=str(e), exc_info=True)
 
         # Step 2.75: Knowledge graph context for narrator
         # Multi-tier entity resolution: scene seeds + substring match + vector fallback
@@ -1089,7 +1089,7 @@ class DMOrchestrator:
                                 _kg_narrative_recalled = len(past_chunks)
                                 _kg_recalled_chunks = list(past_chunks)
                     except Exception as e:
-                        logger.warning("kg_narrative_recall_failed", error=str(e))
+                        logger.warning("kg_narrative_recall_failed", error=str(e), exc_info=True)
 
                     logger.debug(
                         "kg_context_injected",
@@ -1100,7 +1100,7 @@ class DMOrchestrator:
                         narrative_recalled=_kg_narrative_recalled,
                     )
             except Exception as e:
-                logger.warning("kg_context_failed", error=str(e))
+                logger.warning("kg_context_failed", error=str(e), exc_info=True)
 
         # Step 3: Narrator dramatizes the outcome (with mechanical result as context)
         proposed_effects: list[ProposedEffect] = []
@@ -1192,7 +1192,7 @@ class DMOrchestrator:
                     if rejections:
                         logger.debug("kg_bridge_rejections", rejections=rejections)
             except Exception as e:
-                logger.warning("kg_bridge_failed", error=str(e))
+                logger.warning("kg_bridge_failed", error=str(e), exc_info=True)
 
         # Step 3.6c: Sync entity descriptions to ChromaDB for vector matching
         if kg and graph_ops:
@@ -1217,7 +1217,7 @@ class DMOrchestrator:
                             aliases=entity.aliases,
                         )
             except Exception as e:
-                logger.warning("kg_entity_sync_failed", error=str(e))
+                logger.warning("kg_entity_sync_failed", error=str(e), exc_info=True)
 
         # Step 3.6d: Store tagged narrative chunk for future recall
         _narrative_chunk_stored = False
@@ -1243,7 +1243,7 @@ class DMOrchestrator:
                     )
                     _narrative_chunk_stored = True
             except Exception as e:
-                logger.warning("kg_narrative_store_failed", error=str(e))
+                logger.warning("kg_narrative_store_failed", error=str(e), exc_info=True)
 
         # Record knowledge graph state in turn log
         if kg:
@@ -1364,7 +1364,7 @@ class DMOrchestrator:
                             aliases=entity.aliases,
                         )
             except Exception as e:
-                logger.warning("effect_kg_bridge_failed", error=str(e))
+                logger.warning("effect_kg_bridge_failed", error=str(e), exc_info=True)
 
         # Step 5: Consume resources/currency AFTER outcome is determined.
         # This ensures we don't deduct ammunition on a cancelled action or
@@ -1691,7 +1691,7 @@ class DMOrchestrator:
                 if other_count > 0:
                     capabilities.append(f"(+{other_count} other items in inventory)")
         except Exception as e:
-            logger.debug("inventory_fetch_failed", error=str(e))
+            logger.debug("inventory_fetch_failed", error=str(e), exc_info=True)
             # Continue without inventory if fetch fails
 
         return "\n".join(capabilities)
@@ -1737,6 +1737,7 @@ class DMOrchestrator:
                 "triage_schema_validation_failed",
                 raw_data=str(data)[:500],
                 error=str(e),
+                exc_info=True,
             )
             warnings.append(f"schema_validation_failed: {e}")
             # Data parsed as JSON but failed schema validation — use raw data
@@ -2302,7 +2303,7 @@ class DMOrchestrator:
                 )
                 return effects
         except Exception as e:
-            logger.warning("narrator_tool_followup_failed", error=str(e))
+            logger.warning("narrator_tool_followup_failed", error=str(e), exc_info=True)
 
         return []
 
@@ -2443,7 +2444,7 @@ Write your narration directly."""
             return prose, proposed_effects
 
         except Exception as e:
-            logger.error("narrate_mechanical_failed", error=str(e))
+            logger.error("narrate_mechanical_failed", error=str(e), exc_info=True)
             return narrative_hint, []  # Fall back to the hint
 
     async def _resolve_mechanics(
@@ -2919,7 +2920,7 @@ Write your narration directly."""
             return delta
 
         except Exception as e:
-            logger.warning("state_delta_extraction_failed", error=str(e))
+            logger.warning("state_delta_extraction_failed", error=str(e), exc_info=True)
             return None
 
     async def _dedup_extractor_new_npcs(
@@ -2950,7 +2951,7 @@ Write your narration directly."""
         try:
             from .extractors.dedup_judge import get_dedup_judge
         except Exception as e:
-            logger.warning("extractor_dedup_judge_import_failed", error=str(e))
+            logger.warning("extractor_dedup_judge_import_failed", error=str(e), exc_info=True)
             return delta
 
         judge = get_dedup_judge()
@@ -2967,7 +2968,7 @@ Write your narration directly."""
                     current_turn=world_state.turn,
                 )
             except Exception as e:
-                logger.warning("extractor_dedup_judge_call_exception", error=str(e))
+                logger.warning("extractor_dedup_judge_call_exception", error=str(e), exc_info=True)
                 surviving.append(proposed)
                 continue
 
@@ -3352,10 +3353,10 @@ Write your narration directly."""
                     try:
                         await self._scene_registry.sync_to_npc_repo()
                     except Exception as sync_err:
-                        logger.warning("entity_sync_failed", error=str(sync_err))
+                        logger.warning("entity_sync_failed", error=str(sync_err), exc_info=True)
 
             except Exception as e:
-                logger.warning("entity_extraction_failed", error=str(e))
+                logger.warning("entity_extraction_failed", error=str(e), exc_info=True)
 
         # Process proposed effects (replaces mechanics extraction)
         if proposed_effects:
@@ -3510,7 +3511,7 @@ Write your narration directly."""
         try:
             from .extractors.dedup_judge import get_dedup_judge
         except Exception as e:
-            logger.warning("dedup_judge_import_failed", error=str(e))
+            logger.warning("dedup_judge_import_failed", error=str(e), exc_info=True)
             return effect
 
         judge = get_dedup_judge()
@@ -3523,7 +3524,7 @@ Write your narration directly."""
                 current_turn=world_state.turn,
             )
         except Exception as e:
-            logger.warning("dedup_judge_call_exception", error=str(e))
+            logger.warning("dedup_judge_call_exception", error=str(e), exc_info=True)
             return effect
 
         if not decision.is_rewrite:
@@ -3909,6 +3910,7 @@ Write your narration directly."""
                             "monster_not_found_using_custom",
                             monster_index=monster_index,
                             error=str(e),
+                            exc_info=True,
                         )
 
                 # Fallback: create custom combatant with reasonable defaults
@@ -3946,7 +3948,7 @@ Write your narration directly."""
             return True
 
         except Exception as e:
-            logger.error("combat_trigger_failed", error=str(e))
+            logger.error("combat_trigger_failed", error=str(e), exc_info=True)
             return False
 
     def _resolve_character_by_name(self, name: str) -> Optional[tuple[str, "Character"]]:

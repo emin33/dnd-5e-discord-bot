@@ -1506,7 +1506,7 @@ class CombatCog(commands.Cog):
                         narr_embed = discord.Embed(description=narrative, color=discord.Color.dark_gold())
                         await ctx.send(embed=narr_embed)
                 except Exception as e:
-                    logger.warning("narration_failed", error=str(e))
+                    logger.warning("narration_failed", error=str(e), exc_info=True)
 
             # The NPC's turn may have ended combat (e.g. the last conscious
             # player just went down) — route through the single teardown
@@ -1548,7 +1548,7 @@ class CombatCog(commands.Cog):
                         )
                         await ctx.send(embed=narr_embed)
                 except Exception as e:
-                    logger.warning("narration_failed", error=str(e))
+                    logger.warning("narration_failed", error=str(e), exc_info=True)
 
                 # Check combat end
                 if manager.combat.is_combat_over():
@@ -1659,7 +1659,7 @@ class CombatCog(commands.Cog):
                         narr_embed = discord.Embed(description=narrative, color=discord.Color.dark_gold())
                         await ctx.send(embed=narr_embed)
                 except Exception as e:
-                    logger.warning("narration_failed", error=str(e))
+                    logger.warning("narration_failed", error=str(e), exc_info=True)
 
             # Check combat end
             if manager.combat.is_combat_over():

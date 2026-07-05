@@ -78,7 +78,7 @@ async def reframe_for_image(
         return prompt
 
     except Exception as e:
-        logger.warning("image_prompt_reframe_failed", error=str(e))
+        logger.warning("image_prompt_reframe_failed", error=str(e), exc_info=True)
         # Fallback: extract first two sentences of narrative
         sentences = narrative.split(". ")[:2]
         fallback = ". ".join(sentences).strip()

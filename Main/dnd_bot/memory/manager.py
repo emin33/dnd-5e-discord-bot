@@ -240,7 +240,7 @@ class MemoryManager:
             # here permanently dropped the un-condensed exchanges (P1-11).
             self._llm_failure_at = time.monotonic()
             backlog = len(self.buffer._condensation_buffer)
-            logger.warning("condensation_failed", error=str(e), pending_messages=backlog)
+            logger.warning("condensation_failed", error=str(e), pending_messages=backlog, exc_info=True)
             if backlog >= _RETRY_BACKLOG_WARN and not self._condense_backlog_warned:
                 self._condense_backlog_warned = True
                 logger.warning(
@@ -465,6 +465,7 @@ class MemoryManager:
                 "periodic_fact_extraction_failed",
                 campaign_id=self.campaign_id,
                 error=str(e),
+                exc_info=True,
             )
         finally:
             self._is_extracting_facts = False
@@ -928,7 +929,10 @@ async def _persist_manager(manager: MemoryManager) -> None:
         logger.debug("memory_state_saved", campaign_id=manager.campaign_id)
     except Exception as e:
         logger.warning(
-            "memory_state_save_failed", campaign_id=manager.campaign_id, error=str(e)
+            "memory_state_save_failed",
+            campaign_id=manager.campaign_id,
+            error=str(e),
+            exc_info=True,
         )
 
 
@@ -947,5 +951,5 @@ async def _load_memory_state(campaign_id: str) -> Optional[MemoryManager]:
             logger.info("memory_state_loaded", campaign_id=campaign_id)
             return manager
     except Exception as e:
-        logger.warning("memory_state_load_failed", campaign_id=campaign_id, error=str(e))
+        logger.warning("memory_state_load_failed", campaign_id=campaign_id, error=str(e), exc_info=True)
     return None

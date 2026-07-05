@@ -759,7 +759,7 @@ class CampaignCog(commands.Cog):
             )
 
         except Exception as e:
-            logger.error("character_creation_failed", error=str(e))
+            logger.error("character_creation_failed", error=str(e), exc_info=True)
             await interaction.followup.send(
                 f"Failed to create character: {e}",
                 ephemeral=True,
@@ -917,10 +917,10 @@ class CampaignCog(commands.Cog):
                         if imm.image_enabled:
                             _asyncio.create_task(frontend._generate_and_send_image(event))
                 except Exception as imm_err:
-                    logger.debug("opening_immersion_failed", error=str(imm_err))
+                    logger.debug("opening_immersion_failed", error=str(imm_err), exc_info=True)
 
         except Exception as e:
-            logger.warning("failed_to_generate_opening", error=str(e))
+            logger.warning("failed_to_generate_opening", error=str(e), exc_info=True)
 
         logger.info(
             "campaign_starting",

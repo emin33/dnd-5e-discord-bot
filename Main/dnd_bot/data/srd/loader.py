@@ -78,9 +78,9 @@ class SRDDataLoader:
                     count=len(self._cache[category]),
                 )
             except json.JSONDecodeError as e:
-                logger.error("srd_json_error", category=category, error=str(e))
+                logger.error("srd_json_error", category=category, error=str(e), exc_info=True)
             except KeyError as e:
-                logger.error("srd_missing_index", category=category, error=str(e))
+                logger.error("srd_missing_index", category=category, error=str(e), exc_info=True)
 
         self._loaded = True
         total_items = sum(len(cat) for cat in self._cache.values())

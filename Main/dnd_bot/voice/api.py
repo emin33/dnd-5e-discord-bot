@@ -449,7 +449,7 @@ async def start_game(req: StartGameRequest):
     try:
         opening_narrative = await _generate_opening(session, session_manager, campaign)
     except Exception as e:
-        logger.error("opening_narration_failed", error=str(e))
+        logger.error("opening_narration_failed", error=str(e), exc_info=True)
         opening_narrative = f"Welcome to {campaign_name}. The adventure begins..."
 
     return {
@@ -564,7 +564,7 @@ async def player_action(req: PlayerActionRequest):
             session_key=req.session_key,
         )
     except Exception as e:
-        logger.error("action_processing_failed", error=str(e))
+        logger.error("action_processing_failed", error=str(e), exc_info=True)
         raise HTTPException(500, f"Failed to process action: {str(e)[:200]}")
 
     if not response:
@@ -747,7 +747,7 @@ async def _generate_opening(session, session_manager, campaign) -> str:
         return response.narrative or f"Welcome to {campaign.name}. The adventure begins..."
 
     except Exception as e:
-        logger.error("opening_generation_failed", error=str(e))
+        logger.error("opening_generation_failed", error=str(e), exc_info=True)
         return (
             f"Welcome to {campaign.name}. {world_setting} "
             f"Your adventure is about to begin..."
@@ -869,7 +869,7 @@ async def synthesize_speech(req: TTSRequest):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("tts_synthesis_failed", error=str(e))
+        logger.error("tts_synthesis_failed", error=str(e), exc_info=True)
         raise HTTPException(500, f"TTS failed: {str(e)[:100]}")
 
 
