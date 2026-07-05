@@ -143,53 +143,6 @@ def validate_narrator_format(response: str) -> bool:
     return False
 
 
-def strip_planning_text_fallback(text: str) -> tuple[str, bool]:
-    """
-    Last-resort fallback to strip obvious planning text.
-
-    Only use this after reprompting has failed. Returns (cleaned_text, did_strip).
-    The did_strip flag should trigger logging for prompt improvement.
-
-    WARNING: This can accidentally strip legitimate narration like dialogue
-    starting with "We are..." or "Let me...". Use sparingly.
-    """
-    # Very conservative patterns - only obviously meta content
-    meta_patterns = [
-        "we are given", "we are to ", "we are not to", "we must narrate",
-        "we need to", "we should ", "we cannot ", "we don't ",
-        "the resolution ", "authorized reveal", "important:",
-        "(1/2)", "(2/2)", "let's write:", "revised prose:",
-    ]
-
-    lines = text.split("\n")
-    cleaned_lines = []
-    stripped_count = 0
-    in_meta = True
-
-    for line in lines:
-        line_lower = line.lower().strip()
-
-        # Check if this line is obviously meta (not narrative)
-        is_meta = False
-        if in_meta and line_lower:
-            if any(pattern in line_lower for pattern in meta_patterns):
-                is_meta = True
-                stripped_count += 1
-
-        if is_meta:
-            continue
-        elif line_lower:  # Non-empty, non-meta line
-            in_meta = False
-            cleaned_lines.append(line)
-        elif not in_meta:  # Empty line after real content starts
-            cleaned_lines.append(line)
-
-    result = "\n".join(cleaned_lines).strip()
-    did_strip = stripped_count > 0
-
-    return result, did_strip
-
-
 def extract_intents_block(response: str) -> tuple[str, str]:
     """
     Extract PROSE and INTENTS blocks from narrator response.

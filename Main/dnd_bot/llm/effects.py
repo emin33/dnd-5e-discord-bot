@@ -161,23 +161,6 @@ class ProposedEffect(BaseModel):
     reason: Optional[str] = None
 
 
-class NarratorOutput(BaseModel):
-    """Structured output from the narrator.
-
-    Contains both the narrative prose and any proposed mechanical effects.
-    """
-
-    narrative: str = Field(..., description="The narrative prose to display to players")
-    proposed_effects: list[ProposedEffect] = Field(
-        default_factory=list,
-        description="Mechanical effects the narrator is proposing"
-    )
-
-    # For pending mechanics - narrator knows a roll is needed but hasn't happened yet
-    awaiting_resolution: bool = False
-    resolution_type: Optional[str] = None   # "skill_check", "attack_roll", "saving_throw"
-
-
 class EffectValidationResult(BaseModel):
     """Result of validating a proposed effect."""
 
@@ -202,12 +185,6 @@ class EffectExecutionResult(BaseModel):
     # Idempotency
     idempotency_key: Optional[str] = None
     was_duplicate: bool = False
-
-
-# JSON schema for narrator structured output
-def get_narrator_output_schema() -> dict:
-    """Get JSON schema for narrator structured output."""
-    return NarratorOutput.model_json_schema()
 
 
 # Helper to build idempotency key
