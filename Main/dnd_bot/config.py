@@ -204,9 +204,6 @@ def switch_profile(profile_name: str) -> LLMProfile:
     from .llm.brains.narrator import _reset_narrator
     _reset_narrator()
 
-    from .llm.brains.rules import _reset_rules
-    _reset_rules()
-
     from .llm.brains.adjudicator import _reset_adjudicator
     _reset_adjudicator()
 
@@ -311,11 +308,10 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
 
     # Debug
-    debug_show_intents: bool = False
     debug_log_llm_output: bool = False
 
     # Image generation (optional, for immersion features)
-    image_provider: str = "fal"  # fal, openai, comfyui
+    image_provider: str = "fal"  # fal, openai, local
     fal_key: str = ""  # From https://fal.ai/dashboard/keys (env: FAL_KEY)
     fal_model: str = "fal-ai/flux/dev"  # fal-ai/flux/dev (~$0.025) or fal-ai/flux-2-pro (~$0.03)
     openai_image_api_key: str = ""  # Direct OpenAI key for DALL-E (not OpenRouter)
@@ -332,19 +328,13 @@ class Settings(BaseSettings):
     fish_speech_url: str = "http://localhost:8080"
     fish_speech_instances: int = 1  # Number of parallel Fish Speech servers on sequential ports from fish_speech_url
 
-    # Voice / Riva / LiveKit (optional, only needed for voice mode)
-    ngc_api_key: str = ""
+    # Voice / Riva (optional, only needed for voice mode). LiveKit and NGC
+    # credentials are read from the process environment by the voice stack
+    # (voice/api.py, voice/transports/livekit_transport.py, docker-compose),
+    # not through Settings.
     riva_asr_url: str = "localhost:50051"
     riva_tts_url: str = "localhost:50052"
     tts_voice: str = "Magpie-Multilingual.EN-US.Aria"
-    livekit_url: str = "ws://localhost:7880"
-    livekit_api_key: str = "devkey"
-    livekit_api_secret: str = "secret"
-
-    @property
-    def database_url(self) -> str:
-        """SQLite database URL."""
-        return f"sqlite+aiosqlite:///{self.database_path}"
 
     @property
     def srd_path(self) -> Path:

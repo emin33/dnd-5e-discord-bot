@@ -7,8 +7,6 @@
 #     This IS the narrator's message window — the bookend layout uses all of them.
 #     Larger = more verbatim history, but more tokens in the low-attention middle zone.
 #   compaction_threshold: Overflow messages before triggering summary generation.
-#   narrator_messages: Max recent messages injected into narrator context.
-#     Defaults to buffer_size if not set. Allows decoupling buffer from context.
 
 # Production: Sonnet narrates, Groq handles brain
 # Sonnet handles 200K context — can use a large message window
