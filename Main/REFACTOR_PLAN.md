@@ -102,14 +102,68 @@ transitions / tool-call sequences; semantic-similarity threshold for narration p
   it and `_check_player_attack_initiation` (also zero callers; superseded by triage + the
   `start_combat` tool) are now deleted, AST-span-by-name.
 
-- **Next (the real Step 1 — the tool *registry*, not yet started):** the LIVE
-  tool path is `narrator_tools._convert_tool_call` (8 tool→effect branches) →
-  `EffectExecutor.execute` (effects.py — *already* a `dict[EffectType, method]`
-  registry) → `_sync_effect_to_world_state` (orchestrator). Goal "add a tool =
-  one registration": co-locate each tool's **schema** (`get_narrator_tools_for_tier`)
-  with its **converter** (`_convert_tool_call`) so both read one registry. This is
-  audit #5 territory (the `ProposedEffect` 50-field god-DTO → discriminated union)
-  and wants more net coverage first (add_npc/spawn_object/purchase/inventory turns).
+- ~~**Next (the real Step 1 — the tool *registry*)**~~ — **DONE below** (2026-07-05).
+
+### Step 1 — Tool registry: **DONE** (2026-07-05, commits `51118fb` net + `79e391c` + `2a83637` + `a116319`, 609 tests green)
+- **Net first (per the rule):** `51118fb` widened the Step-0 net with 7 per-tool
+  `process_action` turns — add_npc / spawn_object / update_player grant+remove
+  (working, pinned green) and purchase / inventory-pickup / remove_entity
+  (pinned **broken** with "flips when fixed" arrows). Only then was dispatch touched.
+- **What landed:**
+  - `llm/tool_registry.py` — ONE declarative `NarratorToolSpec` per narrator tool:
+    name, JSON schema, tier membership, converter (args→`ProposedEffect`),
+    `effect_types` it can emit, `world_sync` flag. Registered at import, canonical
+    order. **Adding a tool = one registration block** (remove_entity proved it).
+  - `narrator_tools.py` 881→92 lines: `get_narrator_tools_for_tier` /
+    `tool_calls_to_effects` / the `NARRATOR_TOOLS*` constants are thin reads over
+    the registry; the hardcoded schema list + 8-branch `_convert_tool_call` deleted.
+  - `EffectExecutor`'s `dict[EffectType, method]` hoisted to `__init__` +
+    `handled_effect_types()` so tests can introspect it. Keys unchanged.
+  - **Exhaustiveness tests** (`tests/unit/test_tool_registry.py`): every emittable
+    EffectType has an executor row; every `world_sync=True` type has a
+    `_sync_effect_to_world_state` branch (source inspection — the elif chain stays
+    hand-written until Step 4 owns it as data); signal set pinned to exactly
+    {start_combat, request_roll}; per-tier composition pinned exactly.
+  - **remove_entity wired end-to-end** (audit Duplication P0): full-tier tool +
+    converter + `_execute_remove_entity` (scene-registry removal, honest failure
+    when absent); the pre-existing sync + KG-bridge branches became reachable.
+    The pinned-broken net test flipped to asserting the removal.
+  - **No-op stub dispositions** (audit May #11): `apply_damage` kept (INTENTS
+    producer live) but returns `success=False` honestly, unreachable sync branch
+    deleted; `APPLY_HEALING`/`ADD_CONDITION`/`REMOVE_CONDITION`/`LOG_MEMORY`/
+    `REVEAL_OBJECT` **deleted** (grep-dead from BOTH producers — tool converter
+    and INTENTS parsers); `set_flag` reclassified, not a stub — its real write is
+    the sync branch, gated on success, same as change_location.
+- **Lessons:**
+  - Copy → pin-identical → delete beats edit-in-place for a 600-line dispatch
+    strangle: commit 1 duplicated schemas/converters into the registry with
+    byte-equality tests (per-tier schema lists, converter `model_dump` over
+    branch-covering args); commit 2's deletion then couldn't drift. One commit of
+    deliberate duplication, guarded, is cheap.
+  - "Every EffectType has a handler" is necessary but not sufficient — the same
+    drift hides in the *sync* chain. Declaring `world_sync` on the spec and
+    source-inspecting the elif chain was ~15 lines and catches the other half;
+    datafying the chain itself belongs to Step 4, don't do it early.
+  - Verify-don't-trust again: the audit's "6 no-op stubs" were NOT uniform — one
+    (`set_flag`) was load-bearing via its sync branch; blanket-failing all six
+    would have broken working INTENTS flag-setting. Per-stub disposition mattered.
+  - The two ProposedEffect **producers** are the tool path and the INTENTS text
+    fallback. The StateDelta extractor pipeline does NOT produce ProposedEffects —
+    it is the *parallel write path* (apply_delta/DeltaBridge.convert) that Step 4's
+    single-writer store must merge; don't conflate them when counting dispatch sites.
+- **Deliberately left (with pins where possible):**
+  - Purchase/pickup id-vs-name defect (net agent's find, not audit-named): both
+    net tests still pin the broken triage-route behavior with fix-shape notes —
+    `_handle_purchase`/`_handle_inventory` pass a UUID that `_execute_purchase_item`
+    /`_execute_add_item` re-resolve as a NAME. Commerce route ≠ narrator-tool
+    surface; separate slice.
+  - `ProposedEffect` 58-field god-DTO → discriminated union (audit Type P1):
+    follow-up, ideally per-tool models co-located in the registry entries.
+  - `CONSUME_RESOURCE`: real executor, zero producers — dead-code-pass candidate.
+  - `_handle_inventory` drop/equip/use narrative-success no-ops (TODO, no DB touch).
+  - `requires_confirmation` settable only from INTENTS (audit P2): dies with
+    INTENTS or the tool path gains confirmation semantics — registry makes either
+    a one-entry change.
 
 ## Pre-net cleanup (safe to do NOW, before the net — reduces surface)
 
@@ -179,7 +233,10 @@ both **DONE** (`c0b3d67`; the three helpers now route via `_resolve_player_chara
   *specifics* — file:line citations drift, and a few "dead code" / "depends on X" claims
   were stale (e.g. turn_loop's "voice frontend depends on it" was false). Grep-confirm
   before deleting; read the real code before changing it.
-- Baseline: **506 tests pass.** Keep them passing after every step.
+- Baseline: **609 tests pass** (as of Step 1, 2026-07-05; was 506 at Step 0).
+  Keep them passing after every step — and keep THIS number current when a
+  step lands, or the plan becomes the stale doc it warns about (quality
+  re-audit 2026-06-09 caught exactly that).
 
 ## Anti-re-flag rules (enforce in review)
 
