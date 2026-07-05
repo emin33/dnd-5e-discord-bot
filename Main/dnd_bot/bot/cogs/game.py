@@ -455,7 +455,8 @@ class GameCog(commands.Cog):
                 logger.error("persist_failed", entity="character", error=str(e), exc_info=True)
                 await self._warn_persist_failed(channel)
 
-            # Check combat end
+            # Check combat end (teardown before the send — a failed send
+            # must not skip it; end_combat is idempotent)
             if manager.combat.is_combat_over():
                 from ..embeds.combat_embed import build_combat_end_embed
 
@@ -464,8 +465,8 @@ class GameCog(commands.Cog):
                     for c in manager.combat.combatants
                 )
                 end_embed = build_combat_end_embed(manager.combat, victory=players_alive)
-                await channel.send(embed=end_embed)
                 await get_session_manager().end_combat(channel.id)
+                await channel.send(embed=end_embed)
                 return
 
             # End turn and advance to next combatant
@@ -478,8 +479,7 @@ class GameCog(commands.Cog):
                 # The advance itself ended combat (e.g. end-of-turn effects
                 # downed the last combatant on one side) — adversarial
                 # review, blocker 1.
-                await channel.send(embed=build_combat_over_embed(manager.combat))
-                await get_session_manager().end_combat(channel.id)
+                await self._teardown_after_combat_over(channel, manager)
                 return
 
             next_msg = f":arrow_right: **{end_result.next_combatant_name}**'s turn!"
@@ -559,11 +559,13 @@ class GameCog(commands.Cog):
                 if consecutive_failures >= max_consecutive_failures:
                     # Every turn we advance to fails too — stop spamming
                     # and end combat instead of wedging (audit P1-15).
+                    # Teardown before the send — a failed send must not
+                    # skip it.
+                    await get_session_manager().end_combat(channel.id)
                     await channel.send(
                         ":warning: Combat ended — NPC turns keep failing and "
                         "the encounter cannot continue."
                     )
-                    await get_session_manager().end_combat(channel.id)
                     return
                 # Recovery ladder (audit P1-15): end_turn -> force-advance ->
                 # abort. A finished-broken combat beats one wedged forever on
@@ -574,8 +576,7 @@ class GameCog(commands.Cog):
                         # The failed turn still ended combat (e.g. TPK) —
                         # a proper defeat/victory embed, not the failure
                         # warning (adversarial review, blocker 1e).
-                        await channel.send(embed=build_combat_over_embed(manager.combat))
-                        await get_session_manager().end_combat(channel.id)
+                        await self._teardown_after_combat_over(channel, manager)
                         return
                 except Exception:
                     logger.error(
@@ -593,15 +594,18 @@ class GameCog(commands.Cog):
                     if advanced is None:
                         # Distinguish combat-over from cannot-advance
                         # (adversarial review, blocker 1e): a TPK gets the
-                        # defeat embed, not the wedge warning.
-                        if manager.combat.is_combat_over():
-                            await channel.send(embed=build_combat_over_embed(manager.combat))
-                        else:
-                            await channel.send(
-                                f":warning: Combat ended — **{current.name}**'s turn "
-                                "could not be completed or skipped."
-                            )
-                        await get_session_manager().end_combat(channel.id)
+                        # defeat embed, not the wedge warning. try/finally
+                        # so a failed send cannot skip teardown.
+                        try:
+                            if manager.combat.is_combat_over():
+                                await channel.send(embed=build_combat_over_embed(manager.combat))
+                            else:
+                                await channel.send(
+                                    f":warning: Combat ended — **{current.name}**'s turn "
+                                    "could not be completed or skipped."
+                                )
+                        finally:
+                            await get_session_manager().end_combat(channel.id)
                         return
                 continue
             consecutive_failures = 0
@@ -642,15 +646,15 @@ class GameCog(commands.Cog):
                 logger.error("persist_failed", entity="character", error=str(e), exc_info=True)
                 await self._warn_persist_failed(channel)
 
-            # Check combat end
+            # Check combat end (teardown before the send)
             if manager.combat.is_combat_over():
                 players_alive = any(
                     c.is_player and c.hp_current > 0
                     for c in manager.combat.combatants
                 )
                 end_embed = build_combat_end_embed(manager.combat, victory=players_alive)
-                await channel.send(embed=end_embed)
                 await get_session_manager().end_combat(channel.id)
+                await channel.send(embed=end_embed)
                 return
 
         # After NPC turns, show player turn UI if it's a player's turn

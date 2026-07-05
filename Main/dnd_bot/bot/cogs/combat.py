@@ -526,8 +526,8 @@ class CombatCog(commands.Cog):
             # the registries so a repeated /combat next can't re-tick
             # end-of-turn effects on the dead encounter.
             embed = build_combat_over_embed(manager.combat)
-            await ctx.respond(embed=embed)
             await get_session_manager().end_combat(ctx.channel_id)
+            await ctx.respond(embed=embed)
             return
 
         if current_before:
@@ -680,15 +680,16 @@ class CombatCog(commands.Cog):
 
         await ctx.respond(content=response_text if response_text else None, embed=embed)
 
-        # Check if combat should end
+        # Check if combat should end (teardown before the send — a failed
+        # send must not skip it; end_combat is idempotent)
         if manager.combat.is_combat_over():
             players_alive = any(
                 c.is_player and c.hp_current > 0
                 for c in manager.combat.combatants
             )
             end_embed = build_combat_end_embed(manager.combat, victory=players_alive)
-            await ctx.send(embed=end_embed)
             await get_session_manager().end_combat(ctx.channel_id)
+            await ctx.send(embed=end_embed)
 
     @combat.command(name="damage", description="Apply damage to a combatant")
     async def combat_damage(
@@ -765,15 +766,18 @@ class CombatCog(commands.Cog):
             else:
                 await ctx.send(f":skull: **{combatant.name}** falls unconscious!")
 
-            # Check combat end
-            if manager.combat.is_combat_over():
-                players_alive = any(
-                    c.is_player and c.hp_current > 0
-                    for c in manager.combat.combatants
-                )
-                embed = build_combat_end_embed(manager.combat, victory=players_alive)
-                await ctx.send(embed=embed)
-                await get_session_manager().end_combat(ctx.channel_id)
+        # Check combat end AFTER both branches (final review): this was
+        # nested under the unconscious branch only, so instant-killing the
+        # last conscious player announced the death but left combat live.
+        # Teardown before the send — a failed send must not skip it.
+        if manager.combat.is_combat_over():
+            players_alive = any(
+                c.is_player and c.hp_current > 0
+                for c in manager.combat.combatants
+            )
+            embed = build_combat_end_embed(manager.combat, victory=players_alive)
+            await get_session_manager().end_combat(ctx.channel_id)
+            await ctx.send(embed=embed)
 
     @combat.command(name="heal", description="Heal a combatant")
     async def combat_heal(
@@ -933,15 +937,15 @@ class CombatCog(commands.Cog):
 
         await ctx.respond(embed=embed)
 
-        # Check if combat should end after death
+        # Check if combat should end after death (teardown before the send)
         if result == "dead" and manager.combat.is_combat_over():
             players_alive = any(
                 c.is_player and c.hp_current > 0
                 for c in manager.combat.combatants
             )
             end_embed = build_combat_end_embed(manager.combat, victory=players_alive)
-            await ctx.send(embed=end_embed)
             await get_session_manager().end_combat(ctx.channel_id)
+            await ctx.send(embed=end_embed)
 
     @combat.command(name="stabilize", description="Stabilize a dying creature")
     async def combat_stabilize(
@@ -1513,8 +1517,9 @@ class CombatCog(commands.Cog):
             # owner instead of announcing a next turn (adversarial review,
             # blocker 1d).
             if manager.combat.is_combat_over():
-                await ctx.send(embed=build_combat_over_embed(manager.combat))
+                over_embed = build_combat_over_embed(manager.combat)
                 await get_session_manager().end_combat(ctx.channel_id)
+                await ctx.send(embed=over_embed)
                 return
 
             # Announce next turn
@@ -1550,15 +1555,15 @@ class CombatCog(commands.Cog):
                 except Exception as e:
                     logger.warning("narration_failed", error=str(e), exc_info=True)
 
-                # Check combat end
+                # Check combat end (teardown before the send)
                 if manager.combat.is_combat_over():
                     players_alive = any(
                         c.is_player and c.hp_current > 0
                         for c in manager.combat.combatants
                     )
                     end_embed = build_combat_end_embed(manager.combat, victory=players_alive)
-                    await ctx.send(embed=end_embed)
                     await get_session_manager().end_combat(ctx.channel_id)
+                    await ctx.send(embed=end_embed)
                     return
 
                 # End turn and advance to next combatant
@@ -1571,9 +1576,10 @@ class CombatCog(commands.Cog):
                 if end_result.combat_over:
                     # The advance itself ended combat (e.g. end-of-turn
                     # effects downed the last combatant on one side) —
-                    # adversarial review, blocker 1.
-                    await ctx.send(embed=build_combat_over_embed(manager.combat))
+                    # adversarial review, blocker 1. Teardown before the send.
+                    over_embed = build_combat_over_embed(manager.combat)
                     await get_session_manager().end_combat(ctx.channel_id)
+                    await ctx.send(embed=over_embed)
                     return
 
                 # Announce next combatant
@@ -1661,15 +1667,15 @@ class CombatCog(commands.Cog):
                 except Exception as e:
                     logger.warning("narration_failed", error=str(e), exc_info=True)
 
-            # Check combat end
+            # Check combat end (teardown before the send)
             if manager.combat.is_combat_over():
                 players_alive = any(
                     c.is_player and c.hp_current > 0
                     for c in manager.combat.combatants
                 )
                 end_embed = build_combat_end_embed(manager.combat, victory=players_alive)
-                await ctx.send(embed=end_embed)
                 await get_session_manager().end_combat(ctx.channel_id)
+                await ctx.send(embed=end_embed)
                 return
 
         # Announce current combatant

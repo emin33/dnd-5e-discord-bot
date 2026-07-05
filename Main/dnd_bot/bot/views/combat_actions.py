@@ -1221,10 +1221,11 @@ class NPCTurnView(SafeView):
 
     async def _finish_combat(self) -> None:
         """Victory/defeat embed + teardown through the single owner
-        (GameSessionManager.end_combat) — adversarial review, blocker 1d."""
+        (GameSessionManager.end_combat) — adversarial review, blocker 1d.
+        Teardown before the send — a failed send must not skip it."""
         embed = build_combat_over_embed(self.coordinator.manager.combat)
-        await self.channel.send(embed=embed)
         await get_session_manager().end_combat(self.channel.id)
+        await self.channel.send(embed=embed)
 
     @discord.ui.button(
         label="Run NPC Turn",
@@ -1247,7 +1248,6 @@ class NPCTurnView(SafeView):
         self._busy = True
         await _disable_items_and_ack(self, interaction)
 
-        combat_over = False
         turn_ran = False
         try:
             # Run the NPC turn
@@ -1265,13 +1265,15 @@ class NPCTurnView(SafeView):
                         await self.channel.send(f"*{narrative}*")
                 except Exception:
                     pass
-
-            combat_over = self.coordinator.manager.combat.is_combat_over()
         finally:
             # Always release the view (adversarial review, blocker 1d): a
             # raised turn must not leave _busy stuck True with every button
             # dead.
             self._busy = False
+            # Probe combat-over INSIDE the finally (final review NIT): as
+            # the last try statement, an exception between the turn and the
+            # probe misclassified a finished combat as retryable.
+            combat_over = self.coordinator.manager.combat.is_combat_over()
             if combat_over:
                 for item in self.children:
                     item.disabled = True
