@@ -11,9 +11,9 @@ from ..models import Character, CombatState
 from ..memory import (
     MemoryManager,
     get_memory_manager,
-    get_memory_manager_sync,
     save_memory_state,
 )
+from ..memory.manager import peek_memory_manager
 from ..llm.orchestrator import get_orchestrator, DMResponse
 from ..llm.brains.base import BrainContext
 from .frontend import GameFrontend, GameEvent
@@ -179,7 +179,6 @@ class GameSessionManager:
 
     def __init__(self):
         self._sessions: dict[str, GameSession] = {}  # session_key -> session
-        self._memory_managers: dict[str, MemoryManager] = {}  # campaign_id -> memory
         self._processing_lock = asyncio.Lock()
 
     @property
@@ -271,10 +270,11 @@ class GameSessionManager:
 
         self._sessions[session.session_key] = session
 
-        # Initialize memory manager for this campaign — async getter so
-        # persisted memory tiers (pinned facts, summaries) load from the DB
-        if campaign_id not in self._memory_managers:
-            self._memory_managers[campaign_id] = await get_memory_manager(campaign_id)
+        # Warm the memory cache for this campaign — async getter so persisted
+        # memory tiers (pinned facts, summaries) load from the DB. The module
+        # LRU in memory.manager is the single owner; a session-level copy
+        # used to go split-brain with cogs fetching via get_memory_manager.
+        await get_memory_manager(campaign_id)
 
         # Persist to database
         await session_repo.save_session(
@@ -340,11 +340,13 @@ class GameSessionManager:
                 )
 
             # Generate final summary, then persist memory tiers so pinned
-            # facts / summaries survive a restart
-            memory = self._memory_managers.get(session.campaign_id)
-            if memory:
-                await memory.end_session()
-                await save_memory_state(session.campaign_id)
+            # facts / summaries survive a restart. Resolve via the async
+            # getter (reloads the eviction snapshot if the LRU dropped this
+            # campaign) and persist THIS instance — a campaign_id-only save
+            # would silently no-op after eviction.
+            memory = await get_memory_manager(session.campaign_id)
+            await memory.end_session()
+            await save_memory_state(session.campaign_id, manager=memory)
 
             # Mark session as ended in database
             session_repo = await get_session_repo()
@@ -435,8 +437,9 @@ class GameSessionManager:
 
         player = session.add_player(user_id, user_name, character)
 
-        # Update party status in memory
-        memory = self._memory_managers.get(session.campaign_id)
+        # Update party status in memory (peek: only touch a manager that is
+        # already live in the module cache)
+        memory = peek_memory_manager(session.campaign_id)
         if memory:
             party_text = self._build_party_status(session)
             memory.update_party_status(party_text)
@@ -453,7 +456,7 @@ class GameSessionManager:
 
         # Update party status in memory
         if player:
-            memory = self._memory_managers.get(session.campaign_id)
+            memory = peek_memory_manager(session.campaign_id)
             if memory:
                 party_text = self._build_party_status(session)
                 memory.update_party_status(party_text)
@@ -498,11 +501,9 @@ class GameSessionManager:
 
         session.update_activity()
 
-        # Get memory manager
-        memory = self._memory_managers.get(session.campaign_id)
-        if not memory:
-            memory = get_memory_manager_sync(session.campaign_id)
-            self._memory_managers[session.campaign_id] = memory
+        # Get memory manager — the module LRU is the single owner; the async
+        # getter reloads persisted tiers if this campaign was evicted.
+        memory = await get_memory_manager(session.campaign_id)
 
         # Update combat state for gated memory consolidation
         memory.set_combat_state(session.state == SessionState.COMBAT)
@@ -797,8 +798,8 @@ class GameSessionManager:
         session.state = SessionState.COMBAT
         session.combat_manager = combat_manager
 
-        # Update memory
-        memory = self._memory_managers.get(session.campaign_id)
+        # Update memory (peek: sync path, never create a fresh manager here)
+        memory = peek_memory_manager(session.campaign_id)
         if memory:
             memory.update_scene(
                 f"COMBAT: {combat_manager.combat.encounter_name or 'Battle'} - "

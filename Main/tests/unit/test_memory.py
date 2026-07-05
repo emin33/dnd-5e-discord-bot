@@ -8,6 +8,7 @@ Tests three subsystems added from agentic orchestration patterns:
 
 import time
 import pytest
+from structlog.testing import capture_logs
 
 from dnd_bot.llm.client import LLMResponse
 from dnd_bot.memory import manager as manager_module
@@ -533,6 +534,9 @@ class TestCondensationFailurePreservesBuffer:
         assert len(mgr.buffer._condensation_buffer) == 4
         assert mgr.buffer.condensed_summaries == []
 
+        # The failure armed the retry cooldown; disarm it so the retry runs now
+        mgr._llm_failure_at = None
+
         # Next cycle succeeds → condenses and clears
         monkeypatch.setattr(
             manager_module, "get_ollama_client",
@@ -572,6 +576,9 @@ class TestCondensationFailurePreservesBuffer:
         assert len(mgr.buffer._overflow_buffer) == 3
         assert mgr.buffer.running_summary == ""
 
+        # The failure armed the retry cooldown; disarm it so the retry runs now
+        mgr._llm_failure_at = None
+
         # Retry succeeds → compacts and clears
         monkeypatch.setattr(
             manager_module, "get_ollama_client",
@@ -586,3 +593,158 @@ class TestCondensationFailurePreservesBuffer:
         assert len(mgr.buffer._overflow_buffer) == 0
         assert "explored the cave" in mgr.buffer.running_summary
         assert any("EVENT" in f for f in mgr.buffer.pinned_facts)
+
+    async def test_backlog_warning_fires_once_per_crossing(self, monkeypatch):
+        """The backlog_growing warning is one-shot past the threshold, not
+        re-emitted for every subsequent failed message."""
+        mgr = MemoryManager("test-campaign")
+        self._fill_condensation(mgr, n=manager_module._RETRY_BACKLOG_WARN)
+
+        monkeypatch.setattr(
+            manager_module, "get_ollama_client",
+            lambda: FunctionBrain(_raise_llm_error),
+        )
+        with capture_logs() as logs:
+            await mgr._condense_recent()
+            mgr._llm_failure_at = None  # bypass cooldown for the second attempt
+            await mgr._condense_recent()
+
+        growing = [e for e in logs if e["event"] == "condensation_backlog_growing"]
+        assert len(growing) == 1
+
+
+# ==================== Retry Cooldown ====================
+
+
+class TestFailureCooldown:
+    """A condense/compact failure arms a cooldown so a hung LLM doesn't cost
+    every subsequent player message another timeout-length doomed attempt."""
+
+    def _fill_condensation(self, mgr: MemoryManager, n: int = 4) -> None:
+        for i in range(n):
+            mgr.buffer._condensation_buffer.append(
+                Message(role="user", content=f"exchange {i}", author_name="Kael")
+            )
+
+    async def test_failure_skips_retry_within_cooldown(self, monkeypatch):
+        mgr = MemoryManager("test-campaign")
+        self._fill_condensation(mgr)
+
+        monkeypatch.setattr(
+            manager_module, "get_ollama_client",
+            lambda: FunctionBrain(_raise_llm_error),
+        )
+        await mgr._condense_recent()
+        assert mgr._llm_failure_at is not None
+
+        # Within the cooldown window a healthy brain is never even called
+        healthy = ScriptedBrain([LLMResponse(content="- Sum A")])
+        monkeypatch.setattr(manager_module, "get_ollama_client", lambda: healthy)
+        await mgr._condense_recent()
+
+        assert healthy.calls == []
+        assert len(mgr.buffer._condensation_buffer) == 4
+
+    async def test_condense_failure_also_cools_compaction(self, monkeypatch):
+        """Shared cooldown: one hung call suppresses BOTH tiers' attempts,
+        so a message never pays 2x the request timeout during an outage."""
+        mgr = MemoryManager("test-campaign")
+        self._fill_condensation(mgr)
+        mgr.buffer._overflow_buffer = [Message(role="system", content="old line")]
+
+        monkeypatch.setattr(
+            manager_module, "get_ollama_client",
+            lambda: FunctionBrain(_raise_llm_error),
+        )
+        await mgr._condense_recent()
+
+        healthy = ScriptedBrain(
+            [LLMResponse(content="SUMMARY:\nStuff happened.\nFACTS:\n")]
+        )
+        monkeypatch.setattr(manager_module, "get_ollama_client", lambda: healthy)
+        await mgr._compact_overflow()
+
+        assert healthy.calls == []
+        assert len(mgr.buffer._overflow_buffer) == 1
+
+    async def test_expired_cooldown_allows_retry_and_success_disarms(
+        self, monkeypatch
+    ):
+        mgr = MemoryManager("test-campaign")
+        self._fill_condensation(mgr)
+
+        monkeypatch.setattr(
+            manager_module, "get_ollama_client",
+            lambda: FunctionBrain(_raise_llm_error),
+        )
+        await mgr._condense_recent()
+
+        # Simulate the cooldown window elapsing
+        mgr._llm_failure_at = (
+            time.monotonic() - manager_module._LLM_FAILURE_COOLDOWN_SEC - 1
+        )
+
+        monkeypatch.setattr(
+            manager_module, "get_ollama_client",
+            lambda: ScriptedBrain([LLMResponse(content="- Sum A")]),
+        )
+        await mgr._condense_recent()
+
+        assert len(mgr.buffer._condensation_buffer) == 0
+        assert mgr.buffer.condensed_summaries == ["Sum A"]
+        assert mgr._llm_failure_at is None
+
+
+# ==================== End-Session Failure Resilience ====================
+
+
+class TestEndSessionPreservesBufferOnFailure:
+    """end_session must not wipe the tier-1 verbatim buffer when the final
+    summary fails — the wiped state is persisted immediately afterwards, so
+    with the LLM down the last exchanges would be destroyed for good."""
+
+    def _fill_buffer(self, mgr: MemoryManager, n: int = 6) -> None:
+        mgr.buffer._verbatim_size = n + 2  # keep everything in tier 1
+        for i in range(n):
+            mgr.buffer.add_user_message(f"exchange {i}", "Kael")
+
+    async def test_summary_failure_preserves_buffer(self, monkeypatch):
+        mgr = MemoryManager("test-campaign")
+        self._fill_buffer(mgr)
+
+        monkeypatch.setattr(
+            manager_module, "get_ollama_client",
+            lambda: FunctionBrain(_raise_llm_error),
+        )
+        result = await mgr.end_session()
+
+        assert result is None
+        expected = [f"exchange {i}" for i in range(6)]
+        assert [m.content for m in mgr.buffer._messages] == expected
+        # The state that gets persisted right after still carries them
+        data = mgr.to_dict()
+        assert [m["content"] for m in data["buffer"]["messages"]] == expected
+
+    async def test_summary_success_clears_buffer(self, monkeypatch):
+        mgr = MemoryManager("test-campaign")
+        self._fill_buffer(mgr)
+
+        class _StubVectorStore:
+            def add_session_summary(self, **kwargs):
+                return True
+
+        mgr.vector_store = _StubVectorStore()
+        monkeypatch.setattr(
+            manager_module, "get_ollama_client",
+            lambda: ScriptedBrain([
+                LLMResponse(
+                    content='{"summary": "They explored.", "key_events": [],'
+                            ' "npcs": [], "locations": []}'
+                )
+            ]),
+        )
+        result = await mgr.end_session()
+
+        assert result is not None
+        assert result.summary == "They explored."
+        assert len(mgr.buffer) == 0

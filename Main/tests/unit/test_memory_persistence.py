@@ -12,6 +12,7 @@ import json
 from pathlib import Path
 
 import pytest
+from structlog.testing import capture_logs
 
 from dnd_bot.data import database as database_module
 from dnd_bot.data.database import Database
@@ -148,6 +149,17 @@ class TestManagerSerialization:
         world = restored.core.get_block("world")
         assert world is not None and "Ravenloft" in world.content
 
+    def test_from_dict_copies_summary_lists(self):
+        """Restored summary lists must not alias the payload's lists."""
+        mgr = MemoryManager("test-campaign")
+        _populate(mgr)
+        payload = json.loads(json.dumps(mgr.to_dict()))
+
+        restored = MemoryManager.from_dict(payload)
+        restored._session_summaries[0].key_events.append("mutation")
+
+        assert payload["session_summaries"][0]["key_events"] == ["met Garrick"]
+
     def test_from_dict_legacy_payload_without_buffer(self):
         """Pre-P0-5 payloads (no 'buffer' key) load with a fresh buffer."""
         mgr = MemoryManager("test-campaign")
@@ -205,12 +217,37 @@ class TestDbRoundTrip:
         assert restored is not mgr
         _assert_tiers_match(restored, mgr)
 
-    async def test_save_for_uncached_campaign_is_noop(self, mem_db):
-        await manager_module.save_memory_state("never-seen")
+    async def test_save_for_uncached_campaign_warns_and_noops(self, mem_db):
+        """No cached instance and none handed in: nothing to persist, but the
+        silent no-op hid the eviction split-brain — it must warn now."""
+        with capture_logs() as logs:
+            await manager_module.save_memory_state("never-seen")
+
+        assert any(
+            e["event"] == "memory_save_skipped_uncached" for e in logs
+        ), f"expected memory_save_skipped_uncached warning, got: {logs}"
         row = await mem_db.fetch_one(
             "SELECT content FROM campaign_memory WHERE id = ?", ("never-seen-state",)
         )
         assert row is None
+
+    async def test_save_with_explicit_manager_persists_uncached_instance(self, mem_db):
+        """Session end holds the manager instance; after LRU eviction the
+        campaign_id lookup misses, so save must persist the handed instance
+        (and never clobber the snapshot with a fresh re-creation)."""
+        mgr = MemoryManager("camp-a")
+        _populate(mgr)
+        assert "camp-a" not in manager_module._managers  # simulates eviction
+
+        await manager_module.save_memory_state("camp-a", manager=mgr)
+
+        row = await mem_db.fetch_one(
+            "SELECT content FROM campaign_memory WHERE id = ?", ("camp-a-state",)
+        )
+        assert row is not None
+        data = json.loads(row[0])
+        assert data["buffer"]["pinned_facts"] == mgr.buffer.pinned_facts
+        assert data["buffer"]["running_summary"] == mgr.buffer.running_summary
 
     async def test_load_absent_state_starts_fresh(self, mem_db):
         restored = await manager_module.get_memory_manager("camp-b")

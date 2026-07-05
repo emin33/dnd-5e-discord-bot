@@ -22,6 +22,12 @@ logger = structlog.get_logger()
 # well past its normal trigger size (~4-6 messages).
 _RETRY_BACKLOG_WARN = 30
 
+# After a condense/compact failure, skip re-attempts for this long. Without
+# it, every player message during an LLM outage re-attempts condensation AND
+# compaction against the preserved buffers, paying up to 2x the request
+# timeout per message.
+_LLM_FAILURE_COOLDOWN_SEC = 120.0
+
 
 # Session summary generation prompt
 SUMMARIZE_PROMPT = """You are summarizing a D&D game session.
@@ -95,6 +101,13 @@ class MemoryManager:
         self._extraction_interval = 3      # Extract facts every N turns
         self._is_extracting_facts = False  # Lock to prevent concurrent extraction
 
+        # Retry throttling for the preserved-buffer paths (P1-11 follow-up):
+        # a condense/compact failure arms a cooldown, and the backlog warning
+        # fires once per threshold crossing instead of once per message.
+        self._llm_failure_at: Optional[float] = None
+        self._condense_backlog_warned = False
+        self._compact_backlog_warned = False
+
     async def add_player_message(
         self,
         content: str,
@@ -142,6 +155,12 @@ class MemoryManager:
         )
         self._message_count += 1
 
+    def _in_failure_cooldown(self) -> bool:
+        """True while a recent condense/compact failure blocks re-attempts."""
+        if self._llm_failure_at is None:
+            return False
+        return (time.monotonic() - self._llm_failure_at) < _LLM_FAILURE_COOLDOWN_SEC
+
     async def _condense_recent(self) -> None:
         """Tier 1→2: Condense aged-out verbatim messages into per-exchange summaries.
 
@@ -149,6 +168,10 @@ class MemoryManager:
         key actions, outcomes, and NPC dialogue. This is the middle tier —
         more detail than running_summary, less than verbatim.
         """
+        if self._in_failure_cooldown():
+            logger.debug("condensation_skipped_cooldown", campaign_id=self.campaign_id)
+            return
+
         text = self.buffer.get_condensation_text()
         if not text:
             self.buffer._condensation_buffer.clear()
@@ -178,11 +201,17 @@ class MemoryManager:
             raw = response.content.strip() if response.content else ""
             if not raw:
                 # Empty response = failed condensation; keep the buffer so
-                # the next cycle retries (audit P1-11).
+                # a later cycle retries (audit P1-11) after the cooldown.
                 logger.warning(
                     "condensation_empty_response", campaign_id=self.campaign_id
                 )
+                self._llm_failure_at = time.monotonic()
                 return
+
+            # Usable response — condense() below clears the backlog, so
+            # reset the cooldown and re-arm the backlog warning.
+            self._llm_failure_at = None
+            self._condense_backlog_warned = False
 
             # Parse bullet points
             summaries = []
@@ -207,11 +236,13 @@ class MemoryManager:
                 logger.warning("condense_parse_fallback", raw_preview=raw[:100])
 
         except Exception as e:
-            # Keep the buffer intact so the next cycle retries — clearing
+            # Keep the buffer intact so a later cycle retries — clearing
             # here permanently dropped the un-condensed exchanges (P1-11).
+            self._llm_failure_at = time.monotonic()
             backlog = len(self.buffer._condensation_buffer)
             logger.warning("condensation_failed", error=str(e), pending_messages=backlog)
-            if backlog >= _RETRY_BACKLOG_WARN:
+            if backlog >= _RETRY_BACKLOG_WARN and not self._condense_backlog_warned:
+                self._condense_backlog_warned = True
                 logger.warning(
                     "condensation_backlog_growing",
                     campaign_id=self.campaign_id,
@@ -227,6 +258,10 @@ class MemoryManager:
           that survive future compaction intact
         - Detect contradictions with previously established facts
         """
+        if self._in_failure_cooldown():
+            logger.debug("compaction_skipped_cooldown", campaign_id=self.campaign_id)
+            return
+
         overflow_text = self.buffer.get_overflow_text()
         if not overflow_text:
             return
@@ -281,11 +316,18 @@ class MemoryManager:
 
             if not raw:
                 # Empty response = failed compaction; keep the overflow
-                # buffer so the next cycle retries (audit P1-11).
+                # buffer so a later cycle retries (audit P1-11) after the
+                # cooldown.
                 logger.warning(
                     "compaction_empty_response", campaign_id=self.campaign_id
                 )
+                self._llm_failure_at = time.monotonic()
                 return
+
+            # Usable response — compact() below clears the backlog, so
+            # reset the cooldown and re-arm the backlog warning.
+            self._llm_failure_at = None
+            self._compact_backlog_warned = False
 
             # Parse SUMMARY and FACTS sections
             summary, facts = self._parse_compact_response(raw)
@@ -312,8 +354,9 @@ class MemoryManager:
 
         except Exception as e:
             import traceback
-            # Keep the overflow buffer intact so the next cycle retries
+            # Keep the overflow buffer intact so a later cycle retries
             # instead of dropping un-compacted memory (audit P1-11).
+            self._llm_failure_at = time.monotonic()
             backlog = len(self.buffer._overflow_buffer)
             logger.warning(
                 "overflow_compaction_failed",
@@ -321,7 +364,8 @@ class MemoryManager:
                 traceback=traceback.format_exc()[:500],
                 pending_messages=backlog,
             )
-            if backlog >= _RETRY_BACKLOG_WARN:
+            if backlog >= _RETRY_BACKLOG_WARN and not self._compact_backlog_warned:
+                self._compact_backlog_warned = True
                 logger.warning(
                     "compaction_backlog_growing",
                     campaign_id=self.campaign_id,
@@ -484,8 +528,13 @@ class MemoryManager:
 
         return True
 
-    async def _generate_incremental_summary(self) -> None:
-        """Generate a summary of recent messages (with lock gate)."""
+    async def _generate_incremental_summary(self) -> bool:
+        """Generate a summary of recent messages (with lock gate).
+
+        Returns True only when a SessionSummary was actually recorded —
+        end_session uses this to decide whether clearing the verbatim
+        buffer is safe.
+        """
         self._is_consolidating = True
         try:
             client = get_ollama_client()
@@ -493,7 +542,7 @@ class MemoryManager:
             # Get conversation text
             conversation = self.buffer.get_summary_text()
             if not conversation:
-                return
+                return False
 
             # Generate summary using LLM with structured output
             prompt = SUMMARIZE_PROMPT.format(conversation=conversation)
@@ -588,6 +637,7 @@ class MemoryManager:
                     campaign_id=self.campaign_id,
                     message_count=self._message_count,
                 )
+                return True
 
             except Exception as parse_err:
                 logger.warning(
@@ -611,6 +661,8 @@ class MemoryManager:
                     self._session_summaries.append(summary)
                     self._last_summary_at = self._message_count
                     self._last_summary_time = time.monotonic()
+                    return True
+                return False
 
         except Exception as e:
             import traceback
@@ -621,6 +673,7 @@ class MemoryManager:
                 error=str(e),
                 traceback=traceback.format_exc()[:500],
             )
+            return False
         finally:
             self._is_consolidating = False
 
@@ -739,12 +792,24 @@ class MemoryManager:
         )
 
     async def end_session(self) -> Optional[SessionSummary]:
-        """End the session and generate a final summary."""
+        """End the session and generate a final summary.
+
+        The verbatim buffer is cleared only if the summary succeeded — with
+        the LLM down, those messages are the only surviving record of the
+        last exchanges, and the wiped state would be persisted right after
+        (mirrors the P1-11 preserve-on-failure pattern).
+        """
         if len(self.buffer) < 5:
             # Not enough content to summarize
             return None
 
-        await self._generate_incremental_summary()
+        if not await self._generate_incremental_summary():
+            logger.warning(
+                "end_session_summary_failed_buffer_preserved",
+                campaign_id=self.campaign_id,
+                buffered_messages=len(self.buffer),
+            )
+            return None
 
         # Clear buffer for next session
         self.buffer.clear()
@@ -796,15 +861,17 @@ class MemoryManager:
         manager._message_count = data.get("message_count", 0)
         manager._last_summary_at = data.get("last_summary_at", 0)
 
-        # Restore session summaries
+        # Restore session summaries (copy the payload lists — aliasing them
+        # would let later mutation corrupt the caller's payload, or share
+        # state between two managers built from the same dict)
         for s in data.get("session_summaries", []):
             manager._session_summaries.append(SessionSummary(
                 session_id=s["session_id"],
                 campaign_id=s["campaign_id"],
                 summary=s["summary"],
-                key_events=s.get("key_events", []),
-                npcs_encountered=s.get("npcs_encountered", []),
-                locations_visited=s.get("locations_visited", []),
+                key_events=list(s.get("key_events", [])),
+                npcs_encountered=list(s.get("npcs_encountered", [])),
+                locations_visited=list(s.get("locations_visited", [])),
                 created_at=datetime.fromisoformat(s.get("created_at", datetime.utcnow().isoformat())),
                 message_count=s.get("message_count", 0),
             ))
@@ -855,6 +922,15 @@ def get_memory_manager_sync(campaign_id: str) -> MemoryManager:
     return _managers[campaign_id]
 
 
+def peek_memory_manager(campaign_id: str) -> Optional[MemoryManager]:
+    """Return the cached manager for a campaign, or None.
+
+    Unlike the getters this never creates or loads — for callers that only
+    want to update a manager that is already live (sync session paths).
+    """
+    return _managers.get(campaign_id)
+
+
 def _schedule_eviction_save(manager: MemoryManager) -> None:
     """Best-effort async save for the sync eviction path."""
     try:
@@ -869,10 +945,22 @@ def _schedule_eviction_save(manager: MemoryManager) -> None:
     task.add_done_callback(_pending_saves.discard)
 
 
-async def save_memory_state(campaign_id: str) -> None:
-    """Persist memory manager state to the database."""
-    manager = _managers.get(campaign_id)
+async def save_memory_state(
+    campaign_id: str, manager: Optional[MemoryManager] = None
+) -> None:
+    """Persist memory manager state to the database.
+
+    Pass ``manager`` to persist that exact instance — callers that hold a
+    manager (e.g. session end) must not resolve through the LRU cache,
+    where eviction makes the campaign_id lookup silently miss.
+    """
     if manager is None:
+        manager = _managers.get(campaign_id)
+    if manager is None:
+        # Nothing cached and no instance handed in: the state we were asked
+        # to save does not exist in this process. Losing this silently hid
+        # the eviction split-brain, so at minimum say so.
+        logger.warning("memory_save_skipped_uncached", campaign_id=campaign_id)
         return
     await _persist_manager(manager)
 
@@ -916,8 +1004,3 @@ async def _load_memory_state(campaign_id: str) -> Optional[MemoryManager]:
     except Exception as e:
         logger.warning("memory_state_load_failed", campaign_id=campaign_id, error=str(e))
     return None
-
-
-def clear_memory_manager(campaign_id: str) -> None:
-    """Clear a memory manager."""
-    _managers.pop(campaign_id, None)
