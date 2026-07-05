@@ -1,6 +1,6 @@
 """Base class for LLM brains."""
 
-from abc import ABC, abstractmethod
+from abc import ABC
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -80,7 +80,14 @@ class BrainResult:
 
 
 class Brain(ABC):
-    """Abstract base class for LLM brains."""
+    """Base class for LLM brains.
+
+    Holds the client/temperature/system-prompt configuration and the shared
+    message builders. Subclasses expose their own entry points (e.g.
+    NarratorBrain.narrate_outcome/generate_opening); there is no common
+    process() contract — the orchestrator drives narrator calls directly
+    via the client and these builders.
+    """
 
     def __init__(
         self,
@@ -91,11 +98,6 @@ class Brain(ABC):
         self.client = client
         self.temperature = temperature
         self.system_prompt = system_prompt
-
-    @abstractmethod
-    async def process(self, context: BrainContext) -> BrainResult:
-        """Process the context and return a result."""
-        pass
 
     def _build_messages(self, context: BrainContext) -> list[dict]:
         """Build the messages array for the LLM."""
