@@ -443,7 +443,16 @@ class SceneEntityRegistry:
                         entity.npc_id = npc.id
                         synced += 1
             except Exception as e:
-                logger.error("npc_sync_failed", name=entity.name, error=str(e), exc_info=True)
+                # Uniform persist-failure taxonomy: "persist_failed" with an
+                # entity key, like every other missed write.
+                logger.error(
+                    "persist_failed",
+                    entity="npc",
+                    campaign_id=self.campaign_id,
+                    name=entity.name,
+                    error=str(e),
+                    exc_info=True,
+                )
 
         if synced > 0:
             logger.info("npcs_synced", count=synced)

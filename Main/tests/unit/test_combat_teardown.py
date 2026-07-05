@@ -273,3 +273,67 @@ class TestEndCombatResilience:
         assert session.combat_manager is None
         assert get_combat_by_key(VOICE_KEY) is None
         assert len(persist_calls) == 1
+
+
+class TestPersistPlayerCharacters:
+    """persist_player_characters must surface repo failures to callers.
+
+    Per-character failures are caught internally (one bad row must not block
+    the rest), so the returned failure count is the ONLY signal the cogs'
+    player-facing warning can key on — an except around the call never sees
+    the primary failure mode (final review).
+    """
+
+    def _coordinator(self, channel_id, character):
+        combat = _make_combat(channel_id, character)
+        session = _make_session(channel_id)
+        session.add_player(character.discord_user_id, "Tester", character)
+        return CombatTurnCoordinator(combat, session)
+
+    def _patch_repo(self, monkeypatch, update):
+        import dnd_bot.data.repositories.character_repo as character_repo_module
+
+        class _Repo:
+            pass
+
+        _Repo.update = staticmethod(update)
+
+        async def _get_repo():
+            return _Repo()
+
+        monkeypatch.setattr(
+            character_repo_module, "get_character_repo", _get_repo
+        )
+
+    async def test_repo_failure_counted_and_logged(
+        self, mock_character, unique_channel_id, monkeypatch
+    ):
+        async def _boom(character):
+            raise RuntimeError("db down")
+
+        self._patch_repo(monkeypatch, _boom)
+        coordinator = self._coordinator(unique_channel_id, mock_character)
+
+        with capture_logs() as logs:
+            failures = await coordinator.persist_player_characters()
+
+        assert failures == 1
+        # ...and the miss is LOUD in the uniform taxonomy: error-level
+        # persist_failed naming the character.
+        assert any(
+            e["event"] == "persist_failed"
+            and e["log_level"] == "error"
+            and e.get("character_id") == mock_character.id
+            for e in logs
+        ), f"expected error-level persist_failed event, got: {logs}"
+
+    async def test_success_returns_zero_failures(
+        self, mock_character, unique_channel_id, monkeypatch
+    ):
+        async def _ok(character):
+            return character
+
+        self._patch_repo(monkeypatch, _ok)
+        coordinator = self._coordinator(unique_channel_id, mock_character)
+
+        assert await coordinator.persist_player_characters() == 0

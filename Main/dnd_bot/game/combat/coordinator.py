@@ -1295,7 +1295,7 @@ class CombatTurnCoordinator:
             self._character_cache[character_id] = character
         return character
 
-    async def persist_player_characters(self) -> None:
+    async def persist_player_characters(self) -> int:
         """Sync every player combatant back to its Character and persist (DF-2).
 
         The /game narrative-combat path never called the combat cog's
@@ -1305,9 +1305,15 @@ class CombatTurnCoordinator:
         /game flow can persist after each action and after NPC turns. With the
         single-authority refactor, `_get_character` returns the session-owned
         Character, so sync_to_character lands on the canonical object.
+
+        Returns the number of characters that FAILED to persist. Per-character
+        repo failures are caught here (one bad row must not block the rest),
+        so callers cannot rely on an exception for the primary failure mode —
+        they must check the count to warn players (final review).
         """
         from ...data.repositories.character_repo import get_character_repo as _get_repo
         repo = await _get_repo()
+        failures = 0
         for combatant in self.manager.get_player_combatants():
             if not combatant.character_id:
                 continue
@@ -1318,6 +1324,7 @@ class CombatTurnCoordinator:
             try:
                 await repo.update(character)
             except Exception as e:
+                failures += 1
                 logger.error(
                     "persist_failed",
                     entity="character",
@@ -1325,6 +1332,7 @@ class CombatTurnCoordinator:
                     error=str(e),
                     exc_info=True,
                 )
+        return failures
 
     async def _get_equipped_weapons(self, character: Character) -> list[WeaponStats]:
         """Get equipped weapons for a character."""

@@ -449,10 +449,19 @@ class GameCog(commands.Cog):
 
             # Persist player state after the action (DF-2): the /game path
             # otherwise never wrote combat HP/conditions back to the DB.
+            # Per-character repo failures are swallowed inside and returned
+            # as a count — the except alone never saw them (final review).
             try:
-                await coordinator.persist_player_characters()
+                if await coordinator.persist_player_characters():
+                    await self._warn_persist_failed(channel)
             except Exception as e:
-                logger.error("persist_failed", entity="character", error=str(e), exc_info=True)
+                logger.error(
+                    "persist_failed",
+                    entity="character",
+                    channel_id=channel.id,
+                    error=str(e),
+                    exc_info=True,
+                )
                 await self._warn_persist_failed(channel)
 
             # Check combat end (teardown before the send — a failed send
@@ -640,10 +649,19 @@ class GameCog(commands.Cog):
 
             # Persist player state after the NPC turn (DF-2): NPC attacks damage
             # players, and that HP must reach the DB on the /game path.
+            # Per-character repo failures are swallowed inside and returned
+            # as a count — the except alone never saw them (final review).
             try:
-                await coordinator.persist_player_characters()
+                if await coordinator.persist_player_characters():
+                    await self._warn_persist_failed(channel)
             except Exception as e:
-                logger.error("persist_failed", entity="character", error=str(e), exc_info=True)
+                logger.error(
+                    "persist_failed",
+                    entity="character",
+                    channel_id=channel.id,
+                    error=str(e),
+                    exc_info=True,
+                )
                 await self._warn_persist_failed(channel)
 
             # Check combat end (teardown before the send)
