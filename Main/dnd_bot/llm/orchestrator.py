@@ -1,7 +1,11 @@
-"""DM Orchestrator - Coordinates between Narrator and Rules brains.
+"""DM Orchestrator - drives the per-turn pipeline from player action to narration.
 
-Implements Rules-first triage: ALL player messages go through Rules Brain
-to determine if mechanics are needed before narration.
+Triage is a structured-output call on the brain client
+(client.chat(json_schema=TriageSchema)); mechanics resolve before narration;
+the narrator then emits prose plus tool calls, which are converted into
+ProposedEffects (tool_calls_to_effects), validated, executed, and synced to
+world state and the knowledge graph. The legacy PROSE+INTENTS text format
+survives only as a fallback when the narrator returns no tool calls.
 """
 
 from dataclasses import dataclass, field
@@ -507,27 +511,29 @@ class _BoundedKeySet:
 
 class DMOrchestrator:
     """
-    Coordinates between Narrator, Adjudicator, and Rules brains.
+    Coordinates the per-turn pipeline between the LLM clients and game state.
 
-    PROSE + INTENTS architecture:
-    1. Narrator (high temp): Outputs PROSE and INTENTS blocks
-    2. Adjudicator: Parses INTENTS into ProposedEffects (deterministic, no LLM)
+    Live flow for a player action (see process_action):
+    1. Triage: the brain client classifies the action via a JSON-schema
+       structured-output call (TriageSchema).
+    2. Mechanics BEFORE narration: skill checks roll dice, purchases/sales/
+       inventory run their handlers, attacks on creatures initiate combat.
+    3. PGI validation: deterministic rule checks (validate_action) can
+       hard-block the action or soften the narration directive.
+    4. Narration: a tier-routed narrator client (per narrative significance)
+       dramatizes the known outcome with narrator tools attached; tool calls
+       become ProposedEffects via tool_calls_to_effects. The INTENTS text
+       parser is only the fallback when no tool calls come back.
+    5. State extraction: the brain client emits a StateDelta from the prose,
+       applied to WorldState and bridged to the knowledge graph + ChromaDB.
+    6. Effects: EffectValidator/EffectExecutor apply the ProposedEffects
+       (idempotency-keyed), then world-state sync and the KG/vector bridges
+       run for executed effects.
+    7. Resources/currency are consumed only after the outcome is known.
 
-    The narrator explicitly signals intents at creation time.
-    Prose is NEVER used as source of truth for mechanics.
-
-    Full flow for player messages:
-    1. Rules Brain triage: Classify action, decide if roll needed
-    2. If roll needed: Execute roll, build resolution
-    3. Narrator: Output PROSE + INTENTS
-    4. Adjudicator: Parse INTENTS block (deterministic string parsing)
-    5. Validator: Check effects are valid
-    6. Executor: Apply effects to game state
-
-    This ensures:
-    - Narrator explicitly signals mechanical intents
-    - No inference from prose wording
-    - Effects are determined at creation, not extracted later
+    Prose is never the source of truth for mechanics — effects come from
+    explicit tool calls (or the INTENTS fallback). Every stage is recorded
+    in the TurnLogger for post-mortem observability.
     """
 
     def __init__(
@@ -729,15 +735,22 @@ class DMOrchestrator:
         on_narrative_token: Optional[Callable] = None,
     ) -> DMResponse:
         """
-        Process a player action through Rules-first triage.
+        Process a player action through the turn pipeline.
 
         Flow:
-        1. Triage: Classify action type
-        2. Route to appropriate handler based on action_type
-        3. Execute mechanics BEFORE narration
-        4. Narrator dramatizes the known outcome
+        1. Triage: classify the action (structured-output call on the brain client)
+        2. Route by action_type and execute mechanics BEFORE narration
+           (dice rolls, purchase/sell/inventory, combat initiation), gated
+           by deterministic PGI validation
+        3. Narrator dramatizes the known outcome; its tool calls are
+           converted to ProposedEffects
+        4. Extract + apply StateDelta, validate/execute effects, sync world
+           state and the knowledge graph, then consume resources
 
         Args:
+            on_mechanics_ready: Async callback(mechanical_result, dice_rolls)
+                fired before the narration LLM call so mechanics reach
+                Discord immediately.
             on_narrative_token: Async callback(str) for streaming narrator tokens
                 to Discord. Enables progressive message edits for better UX.
         """
@@ -1440,9 +1453,11 @@ class DMOrchestrator:
         context: BrainContext,
     ) -> TriageResult:
         """
-        Rules Brain triage: Decide if this action needs mechanical resolution.
+        Triage: decide if this action needs mechanical resolution.
 
-        Returns structured decision with roll requirements and success/failure reveals.
+        Runs a JSON-schema structured-output call (TriageSchema) on the
+        brain client. Returns a structured decision with roll requirements
+        and success/failure reveals.
         """
         # Build context for triage
         triage_context = await self._build_triage_context(action, player_name, context)
