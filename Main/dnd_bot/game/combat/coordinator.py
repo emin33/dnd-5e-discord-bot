@@ -994,7 +994,7 @@ class CombatTurnCoordinator:
                 new_current = character.spell_slots.get_slots(slot_level)[0]
                 await repo.update_spell_slot(character.id, slot_level, new_current)
             except Exception as e:
-                logger.warning("combat_slot_persist_failed", error=str(e), character_id=character.id, exc_info=True)
+                logger.error("persist_failed", entity="spell_slots", character_id=character.id, error=str(e), exc_info=True)
 
         result = ActionResult(
             action=action,
@@ -1160,7 +1160,7 @@ class CombatTurnCoordinator:
                 repo = await get_character_repo()
                 await repo.update_concentration(character.id, character.concentration_spell_id)
             except Exception as e:
-                logger.warning("combat_concentration_persist_failed", error=str(e), character_id=character.id, exc_info=True)
+                logger.error("persist_failed", entity="concentration", character_id=character.id, error=str(e), exc_info=True)
 
         # Use action resource
         if not action.uses_bonus_action:
@@ -1318,8 +1318,9 @@ class CombatTurnCoordinator:
             try:
                 await repo.update(character)
             except Exception as e:
-                logger.warning(
-                    "combat_persist_failed",
+                logger.error(
+                    "persist_failed",
+                    entity="character",
                     character_id=combatant.character_id,
                     error=str(e),
                     exc_info=True,

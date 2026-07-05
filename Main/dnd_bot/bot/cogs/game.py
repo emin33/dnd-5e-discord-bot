@@ -381,6 +381,20 @@ class GameCog(commands.Cog):
 
         await ctx.respond(embed=embed)
 
+    async def _warn_persist_failed(self, channel: discord.TextChannel) -> None:
+        """Tell players their progress was not saved (persist-failure policy).
+
+        Persistence failures never interrupt gameplay, but they must not be
+        silent either — the DB no longer matches the in-memory state.
+        """
+        try:
+            await channel.send(
+                ":warning: Couldn't save character progress just now — "
+                "recent changes may be lost if the bot restarts."
+            )
+        except Exception:
+            logger.debug("persist_notice_send_failed", exc_info=True)
+
     async def _show_player_turn_ui(
         self,
         channel: discord.TextChannel,
@@ -421,7 +435,8 @@ class GameCog(commands.Cog):
             try:
                 await coordinator.persist_player_characters()
             except Exception as e:
-                logger.warning("combat_persist_failed", error=str(e), exc_info=True)
+                logger.error("persist_failed", entity="character", error=str(e), exc_info=True)
+                await self._warn_persist_failed(channel)
 
             # Check combat end
             if manager.combat.is_combat_over():
@@ -607,7 +622,8 @@ class GameCog(commands.Cog):
             try:
                 await coordinator.persist_player_characters()
             except Exception as e:
-                logger.warning("combat_persist_failed", error=str(e), exc_info=True)
+                logger.error("persist_failed", entity="character", error=str(e), exc_info=True)
+                await self._warn_persist_failed(channel)
 
             # Check combat end
             if manager.combat.is_combat_over():

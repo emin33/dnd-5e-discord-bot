@@ -14,6 +14,7 @@ fight. These tests pin the unified owner's invariants.
 """
 
 import pytest
+from structlog.testing import capture_logs
 
 from dnd_bot.game.combat.coordinator import (
     CombatTurnCoordinator,
@@ -221,7 +222,8 @@ class TestEndCombatResilience:
         get_coordinator(combat)
 
         sessions = _make_session_manager(session)
-        result = await sessions.end_combat(unique_channel_id)
+        with capture_logs() as logs:
+            result = await sessions.end_combat(unique_channel_id)
 
         # a wedged COMBAT session is worse than one missed sync
         assert result is True
@@ -230,6 +232,13 @@ class TestEndCombatResilience:
         assert get_combat_by_key(key) is None
         assert get_coordinator_by_key(key) is None
         assert combat.combat.ended_at is not None
+
+        # ...but the miss must be LOUD (persist-failure policy): one uniform
+        # error-level persist_failed event, not a demoted warning.
+        assert any(
+            e["event"] == "persist_failed" and e["log_level"] == "error"
+            for e in logs
+        ), f"expected error-level persist_failed event, got: {logs}"
 
     async def test_heals_combat_session_with_no_manager(
         self, unique_channel_id, persist_calls

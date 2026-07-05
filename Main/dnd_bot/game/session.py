@@ -410,7 +410,9 @@ class GameSessionManager:
                 )
             except Exception as e:
                 logger.error(
-                    "character_sync_failed",
+                    "persist_failed",
+                    entity="character",
+                    character_id=player.character.id,
                     character=player.character.name,
                     error=str(e),
                     exc_info=True,
@@ -882,8 +884,9 @@ class GameSessionManager:
                 try:
                     await coordinator.persist_player_characters()
                 except Exception as e:
-                    logger.warning(
-                        "combat_end_persist_failed",
+                    logger.error(
+                        "persist_failed",
+                        entity="character",
                         session_key=key,
                         error=str(e),
                         exc_info=True,

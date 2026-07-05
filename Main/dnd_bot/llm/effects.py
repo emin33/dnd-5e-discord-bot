@@ -1251,7 +1251,7 @@ class EffectExecutor:
                 applied["currency_delta"] = effect.player_currency_delta
                 persisted = True
             except Exception as e:
-                _logger.warning("update_player_currency_failed", error=str(e), exc_info=True)
+                _logger.error("persist_failed", entity="currency", character_id=char_id, error=str(e), exc_info=True)
 
         # --- Item grants / removals (separate table) ---
         if effect.player_item_grant and self.inventory_repo:
@@ -1272,7 +1272,7 @@ class EffectExecutor:
                     granted.append({"name": name, "quantity": qty})
                     persisted = True
                 except Exception as e:
-                    _logger.warning("update_player_grant_failed", item=name, error=str(e), exc_info=True)
+                    _logger.error("persist_failed", entity="inventory_item", character_id=char_id, item=name, error=str(e), exc_info=True)
             if granted:
                 applied["items_granted"] = granted
         if effect.player_item_remove and self.inventory_repo:
@@ -1291,7 +1291,7 @@ class EffectExecutor:
                         removed.append({"name": name, "quantity": qty})
                         persisted = True
                 except Exception as e:
-                    _logger.warning("update_player_remove_failed", item=name, error=str(e), exc_info=True)
+                    _logger.error("persist_failed", entity="inventory_item", character_id=char_id, item=name, error=str(e), exc_info=True)
             if removed:
                 applied["items_removed"] = removed
 

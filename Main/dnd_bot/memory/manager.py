@@ -928,8 +928,9 @@ async def _persist_manager(manager: MemoryManager) -> None:
         await db.commit()
         logger.debug("memory_state_saved", campaign_id=manager.campaign_id)
     except Exception as e:
-        logger.warning(
-            "memory_state_save_failed",
+        logger.error(
+            "persist_failed",
+            entity="memory_state",
             campaign_id=manager.campaign_id,
             error=str(e),
             exc_info=True,
