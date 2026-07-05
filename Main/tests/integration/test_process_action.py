@@ -272,8 +272,9 @@ async def test_guard_blocks_unmocked_real_calls(net):
 # ── Step-1 net expansion: per-tool producer paths ────────────────────────────
 # REFACTOR_PLAN.md "real Step 1" wants these turns BEFORE the tool-registry
 # cut: add_npc / spawn_object / purchase / inventory, plus a pinned
-# remove_entity no-op. Tests marked PINNED-BROKEN assert today's defective
-# behavior on purpose — the registry step flips them (see inline arrows).
+# remove_entity no-op. The tests originally pinned BROKEN have all been
+# flipped to the working behavior: remove_entity by the registry cut,
+# purchase / inventory-pickup by the commerce id-vs-name fix.
 
 
 @pytest.mark.asyncio
@@ -368,18 +369,17 @@ async def test_spawn_object_tool_registers_object_and_scene_item(net):
 
 
 @pytest.mark.asyncio
-async def test_purchase_turn_currently_fails_character_resolution(net):
-    """PINNED-BROKEN: the live purchase route can never complete a purchase.
+async def test_purchase_turn_deducts_gold_and_adds_item(net):
+    """FLIPPED from pinned-broken by the commerce id-vs-name fix.
 
     Producer path: triage 'purchase' → _handle_purchase →
-    _execute_purchase_item → inventory repo. _handle_purchase resolves the
-    player and passes character.id (a UUID) as buyer_id, but
-    _execute_purchase_item re-resolves that UUID through
-    _resolve_character_by_name, which matches character NAMES only — so the
-    lookup always fails and every purchase is refused with 'not found'
-    before touching gold or inventory. This is the path REFACTOR_PLAN.md
-    (Step 1a, "KEPT ... LIVE but UNTESTED") preserved; first covered here.
-    The registry step fixes the id-vs-name contract and flips the arrows.
+    _execute_purchase_item → inventory repo. _handle_purchase resolved the
+    player and passed character.id (a UUID) as buyer_id, but the executor
+    re-resolved it through _resolve_character_by_name, which matches
+    character NAMES only — every purchase was refused with 'not found'
+    before touching gold or inventory. The executor now takes the
+    already-resolved Character from its single caller, so the purchase
+    lands: gold deducted, item row written, success narrated.
     """
     await net.inv_repo.add_gold(net.character.id, 100)
 
@@ -389,53 +389,65 @@ async def test_purchase_turn_currently_fails_character_resolution(net):
             "purchase", needs_roll=False,
             item_name="Healing Potion", item_cost=30, quantity=1,
         ),
-        narration=narration_response("The merchant frowns and shakes his head."),
+        narration=narration_response("The merchant counts your coin and nods."),
     )
 
     mech = result.mechanical_result
     assert mech["action_type"] == "purchase"
-    assert mech["success"] is False                      # ← True when fixed
-    assert "not found" in (mech["error"] or "")          # ← None when fixed
+    assert mech["success"] is True
+    assert mech["error"] is None
+    assert mech["gold_after"] == 70
 
-    # The commerce tool call is surfaced even on failure.
+    # The commerce tool call is surfaced with the executed result.
     assert [t["name"] for t in result.tool_calls_made] == ["purchase_item"]
-    assert result.tool_calls_made[0]["result"]["purchased"] is False
+    assert result.tool_calls_made[0]["result"]["purchased"] is True
 
-    # State diff: nothing changed — gold intact, no item row.
+    # State diff: gold moved and the item row exists.
     currency = await net.inv_repo.get_currency(net.character.id)
-    assert currency.gold == 100                          # ← 70 when fixed
-    assert await net.inv_repo.get_all_items(net.character.id) == []
+    assert currency.gold == 70
+    items = await net.inv_repo.get_all_items(net.character.id)
+    assert [(i.item_name, i.quantity) for i in items] == [("Healing Potion", 1)]
 
-    # The refusal is still narrated via the mechanical-result path.
+    # The purchase is narrated via the mechanical-result path.
     assert net.narrator.calls
     assert result.proposed_effects == []
 
 
 @pytest.mark.asyncio
-async def test_inventory_pickup_turn_currently_pgi_blocked(net):
-    """PINNED-BROKEN: the live pickup route never adds the item AND gets blocked.
+async def test_inventory_pickup_turn_adds_item_and_narrates(net):
+    """FLIPPED from pinned-broken by the commerce id-vs-name fix.
 
     Producer path: triage 'inventory' → _handle_inventory (keyword 'pick up')
-    → _execute_add_item. Same defect as purchase: _handle_inventory passes
-    character.id as character_id and _execute_add_item re-resolves it by
-    NAME, so the add fails silently. PGI then runs validate_item_exists
-    against the (still-empty) inventory — an acquisition validated as if it
-    were consumption — and HARD-fails the turn: pgi_blocked response, no
-    narration. Both layers must change for pickups to work; the registry
-    step flips this to: item row present + narrated turn.
+    → _execute_add_item. Same defect as purchase: _handle_inventory passed
+    character.id as character_id and _execute_add_item re-resolved it by
+    NAME, so the add failed silently — and PGI then ran validate_item_exists
+    against the still-empty inventory and HARD-failed the turn (pgi_blocked,
+    no narration). With the executor taking the resolved Character, the add
+    lands BEFORE PGI's prefetch, validate_item_exists sees the row, and the
+    turn narrates.
     """
     result = await net.run(
         action="I pick up the brass lantern",
         triage=triage_response(
             "inventory", needs_roll=False, item_name="brass lantern",
         ),
+        narration=narration_response("You lift the brass lantern from the table."),
     )
 
-    assert result.mechanical_result.get("pgi_blocked") is True  # ← absent when fixed
-    assert net.narrator.calls == []       # blocked before narration ← flips
+    mech = result.mechanical_result
+    assert mech.get("pgi_blocked") is None
+    assert mech["action_type"] == "inventory"
+    assert mech["operation"] == "pickup"
+    assert mech["success"] is True
+    assert [t["name"] for t in result.tool_calls_made] == ["add_item"]
+
+    # The row was written (and survived PGI).
+    items = await net.inv_repo.get_all_items(net.character.id)
+    assert [(i.item_name, i.quantity) for i in items] == [("Brass Lantern", 1)]
+
+    # Narrated turn, not a block.
+    assert net.narrator.calls
     assert result.proposed_effects == []
-    # No row was ever written.
-    assert await net.inv_repo.get_all_items(net.character.id) == []
 
 
 @pytest.mark.asyncio

@@ -156,7 +156,9 @@ transitions / tool-call sequences; semantic-similarity threshold for narration p
     net tests still pin the broken triage-route behavior with fix-shape notes —
     `_handle_purchase`/`_handle_inventory` pass a UUID that `_execute_purchase_item`
     /`_execute_add_item` re-resolve as a NAME. Commerce route ≠ narrator-tool
-    surface; separate slice.
+    surface; separate slice. **LANDED** (2026-07-05, final-review pass): the two
+    executors now take the already-resolved Character from their only callers;
+    both net tests flipped to pin the working behavior.
   - `ProposedEffect` 58-field god-DTO → discriminated union (audit Type P1):
     follow-up, ideally per-tool models co-located in the registry entries.
   - `CONSUME_RESOURCE`: real executor, zero producers — dead-code-pass candidate.

@@ -1777,11 +1777,12 @@ class DMOrchestrator:
                 "narrative_hint": f"{player_name} isn't known to the system.",
             }
 
-        char_id, character = resolved
+        _, character = resolved
 
-        # Execute the purchase through the existing tool function
-        result = await self._execute_purchase_item({
-            "buyer_id": char_id,
+        # Execute the purchase through the commerce executor, passing the
+        # Character resolved above — the executor used to re-resolve a
+        # UUID as a NAME and refuse every purchase (Step-1 deferred defect).
+        result = await self._execute_purchase_item(character, {
             "item_index": item_name.lower().replace(" ", "-"),
             "item_name": item_name,
             "cost_gold": item_cost,
@@ -1856,7 +1857,7 @@ class DMOrchestrator:
                 "narrative_hint": f"{player_name} isn't known to the system.",
             }
 
-        char_id, character = resolved
+        _, character = resolved
 
         # Determine inventory action type from the action text
         pickup_keywords = ["pick up", "pickup", "take", "grab", "collect", "pocket", "put in", "stash", "keep"]
@@ -1896,9 +1897,9 @@ class DMOrchestrator:
         quantity = triage.quantity or 1
 
         if is_pickup:
-            # Add item to inventory
-            result = await self._execute_add_item({
-                "character_id": char_id,
+            # Add item to inventory (pass the Character resolved above —
+            # see _execute_add_item)
+            result = await self._execute_add_item(character, {
                 "item_index": item_name.lower().replace(" ", "-"),
                 "item_name": item_name.title(),
                 "quantity": quantity,
@@ -3993,20 +3994,22 @@ Write your narration directly."""
 
 
     # Commerce tools (preserved)
-    async def _execute_purchase_item(self, args: dict) -> dict:
-        """Execute item purchase."""
-        buyer = args.get("buyer_id", "")
+    async def _execute_purchase_item(self, character: Character, args: dict) -> dict:
+        """Execute item purchase for an already-resolved character.
+
+        ``character`` comes from the caller's ``_resolve_character_by_name``
+        (``_handle_purchase`` is the only call site). Re-resolving here
+        treated the passed UUID as a NAME, so every purchase was refused
+        with 'not found' before touching gold or inventory (Step-1 deferred
+        defect, pinned by the net until this fix).
+        """
         item_index = args.get("item_index", "")
         item_name = args.get("item_name", "")
         cost_gold = args.get("cost_gold", 0)
         quantity = args.get("quantity", 1)
         tx_id = args.get("transaction_id")
 
-        resolved = self._resolve_character_by_name(buyer)
-        if not resolved:
-            return {"buyer": buyer, "item": item_name, "purchased": False, "error": f"Character '{buyer}' not found"}
-
-        char_id, character = resolved
+        char_id = character.id
 
         if tx_id:
             tx_key = generate_transaction_key("purchase", char_id, tx_id)
@@ -4038,19 +4041,20 @@ Write your narration directly."""
         return result
 
 
-    async def _execute_add_item(self, args: dict) -> dict:
-        """Add an item to inventory."""
-        character_name = args.get("character_id", "")
+    async def _execute_add_item(self, character: Character, args: dict) -> dict:
+        """Add an item to inventory for an already-resolved character.
+
+        Same defect shape as ``_execute_purchase_item``: the caller
+        (``_handle_inventory``, the only call site) passed a UUID that was
+        re-resolved as a NAME, so the add always failed — and PGI then
+        hard-blocked the pickup turn against the still-empty inventory.
+        """
         item_index = args.get("item_index", "")
         item_name = args.get("item_name", "")
         quantity = args.get("quantity", 1)
         source = args.get("source", "")
 
-        resolved = self._resolve_character_by_name(character_name)
-        if not resolved:
-            return {"character": character_name, "item": item_name, "added": False, "error": f"Character '{character_name}' not found"}
-
-        char_id, character = resolved
+        char_id = character.id
         inventory_repo = await get_inventory_repo()
 
         new_item = InventoryItem(character_id=char_id, item_index=item_index, item_name=item_name, quantity=quantity, notes=source)
