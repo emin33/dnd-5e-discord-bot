@@ -3044,26 +3044,11 @@ Write your narration directly."""
             dst = effect.target or "player"
             world_state.record_transfer(f"{src} gave {amount} to {dst}")
 
-        elif etype == EffectType.APPLY_DAMAGE:
-            target = effect.target or "someone"
-            amount = effect.amount or 0
-            dtype = effect.damage_type or "damage"
-            world_state.record_transfer(f"{target} took {amount} {dtype} damage")
-
-        elif etype == EffectType.APPLY_HEALING:
-            target = effect.target or "someone"
-            amount = effect.amount or 0
-            world_state.record_transfer(f"{target} healed {amount} HP")
-
-        elif etype == EffectType.ADD_CONDITION:
-            target = effect.target or "someone"
-            condition = effect.condition or "a condition"
-            world_state.record_transfer(f"{target} gained condition: {condition}")
-
-        elif etype == EffectType.REMOVE_CONDITION:
-            target = effect.target or "someone"
-            condition = effect.condition or "a condition"
-            world_state.record_transfer(f"{target} lost condition: {condition}")
+        # No APPLY_DAMAGE branch: its executor now fails honestly (it never
+        # mutated HP), so this sync — which runs only on executor success —
+        # can never see one. APPLY_HEALING / ADD_CONDITION / REMOVE_CONDITION
+        # were deleted outright (no producer on any path); player-side HP and
+        # conditions flow through UPDATE_PLAYER below.
 
         elif etype == EffectType.ADD_NPC:
             from ..game.world_state import NPCState

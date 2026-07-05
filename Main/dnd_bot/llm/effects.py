@@ -7,10 +7,14 @@ This ensures:
 3. Idempotency is enforced at the effect level
 
 Effect Categories:
-- Scene: spawn_object, reveal_object, add_npc, start_combat
+- Scene: spawn_object, add_npc, remove_entity, start_combat, change_location
 - Transfer: transfer_item, grant_currency, consume_resource
-- Combat: apply_damage, apply_healing, add_condition, remove_condition
-- Meta: set_flag, log_memory
+- Damage (legacy INTENTS fallback only): apply_damage
+- Entity/player tracking: ref_entity, update_entity, update_player
+- Meta: set_flag, request_roll
+
+The narrator tool surface (schemas, tiers, converters) lives in
+``dnd_bot.llm.tool_registry`` — one declarative entry per tool.
 """
 
 from enum import Enum
@@ -23,21 +27,20 @@ class EffectType(str, Enum):
 
     # Scene effects - modify world state
     SPAWN_OBJECT = "spawn_object"           # Add object to scene (loot, item in world)
-    REVEAL_OBJECT = "reveal_object"         # Make hidden object visible
     ADD_NPC = "add_npc"                     # Introduce an NPC to the scene
     REMOVE_ENTITY = "remove_entity"         # Remove entity from scene
     START_COMBAT = "start_combat"           # Initiate combat with entities
 
     # Transfer effects - move items/currency between entities
+    # (legacy INTENTS fallback producers only; the tool path uses update_player)
     TRANSFER_ITEM = "transfer_item"         # Move item: scene→player, npc→player, etc.
     GRANT_CURRENCY = "grant_currency"       # Give gold/currency
     CONSUME_RESOURCE = "consume_resource"   # Use up ammunition, rations, etc.
 
-    # Combat effects - HP and conditions
+    # Damage (legacy INTENTS fallback producer only; executor is honestly
+    # unimplemented — player damage flows through UPDATE_PLAYER, combat
+    # damage through the combat engine)
     APPLY_DAMAGE = "apply_damage"           # Deal damage to target
-    APPLY_HEALING = "apply_healing"         # Heal target
-    ADD_CONDITION = "add_condition"         # Apply condition (poisoned, prone, etc.)
-    REMOVE_CONDITION = "remove_condition"   # Remove condition
 
     # DM-initiated mechanics
     REQUEST_ROLL = "request_roll"           # DM requests a roll from the player
@@ -54,7 +57,6 @@ class EffectType(str, Enum):
 
     # Meta effects - game state tracking
     SET_FLAG = "set_flag"                   # Quest progress, discovered facts
-    LOG_MEMORY = "log_memory"               # Add fact to memory system
 
 
 class ProposedEffect(BaseModel):
@@ -69,7 +71,7 @@ class ProposedEffect(BaseModel):
     target: Optional[str] = None            # Target entity ID or name (e.g., "player:alice", "npc:merchant")
     source: Optional[str] = None            # Source entity (for transfers, damage sources)
 
-    # For spawn_object / reveal_object
+    # For spawn_object
     object_name: Optional[str] = None       # Name of the object
     object_description: Optional[str] = None
     object_properties: Optional[dict] = None  # item_index, value, magical, etc.
@@ -105,10 +107,10 @@ class ProposedEffect(BaseModel):
     condition: Optional[str] = None         # poisoned, prone, etc.
     duration_rounds: Optional[int] = None
 
-    # For set_flag / log_memory
+    # For set_flag
     flag_name: Optional[str] = None
     flag_value: Optional[Union[str, int, bool]] = None
-    memory_text: Optional[str] = None
+    memory_text: Optional[str] = None       # unused since LOG_MEMORY was deleted (ProposedEffect slim-down is a follow-up)
 
     # For request_roll - DM-initiated uncertainty
     roll_type: Optional[str] = None         # "ability_check", "saving_throw", "skill_check"
@@ -222,8 +224,6 @@ class EffectValidator:
             EffectType.TRANSFER_ITEM: self._validate_transfer_item,
             EffectType.GRANT_CURRENCY: self._validate_grant_currency,
             EffectType.APPLY_DAMAGE: self._validate_apply_damage,
-            EffectType.APPLY_HEALING: self._validate_apply_healing,
-            EffectType.ADD_CONDITION: self._validate_add_condition,
             EffectType.START_COMBAT: self._validate_start_combat,
             EffectType.REQUEST_ROLL: self._validate_request_roll,
             EffectType.UPDATE_ENTITY: self._validate_update_entity,
@@ -329,32 +329,6 @@ class EffectValidator:
                 effect=effect,
                 valid=False,
                 rejection_reason="apply_damage requires target",
-            )
-        return EffectValidationResult(effect=effect, valid=True)
-
-    def _validate_apply_healing(self, effect: ProposedEffect) -> EffectValidationResult:
-        """Validate apply_healing effect."""
-        if not effect.amount or effect.amount <= 0:
-            return EffectValidationResult(
-                effect=effect,
-                valid=False,
-                rejection_reason="apply_healing requires positive amount",
-            )
-        return EffectValidationResult(effect=effect, valid=True)
-
-    def _validate_add_condition(self, effect: ProposedEffect) -> EffectValidationResult:
-        """Validate add_condition effect."""
-        if not effect.condition:
-            return EffectValidationResult(
-                effect=effect,
-                valid=False,
-                rejection_reason="add_condition requires condition",
-            )
-        if not effect.target:
-            return EffectValidationResult(
-                effect=effect,
-                valid=False,
-                rejection_reason="add_condition requires target",
             )
         return EffectValidationResult(effect=effect, valid=True)
 
@@ -646,15 +620,12 @@ class EffectExecutor:
         self._executors = {
             EffectType.SPAWN_OBJECT: self._execute_spawn_object,
             EffectType.ADD_NPC: self._execute_add_npc,
+            EffectType.REMOVE_ENTITY: self._execute_remove_entity,
             EffectType.TRANSFER_ITEM: self._execute_transfer_item,
             EffectType.GRANT_CURRENCY: self._execute_grant_currency,
             EffectType.APPLY_DAMAGE: self._execute_apply_damage,
-            EffectType.APPLY_HEALING: self._execute_apply_healing,
-            EffectType.ADD_CONDITION: self._execute_add_condition,
-            EffectType.REMOVE_CONDITION: self._execute_remove_condition,
             EffectType.START_COMBAT: self._execute_start_combat,
             EffectType.SET_FLAG: self._execute_set_flag,
-            EffectType.LOG_MEMORY: self._execute_log_memory,
             EffectType.CONSUME_RESOURCE: self._execute_consume_resource,
             EffectType.REQUEST_ROLL: self._execute_request_roll,
             EffectType.REF_ENTITY: self._execute_ref_entity,
@@ -803,6 +774,49 @@ class EffectExecutor:
             },
         )
 
+    async def _execute_remove_entity(self, effect: ProposedEffect) -> EffectExecutionResult:
+        """Remove an entity (NPC, creature, or object) from the scene registry.
+
+        Wired by the Step-1 registry cut: REMOVE_ENTITY used to have producers
+        (INTENTS fallback) and a world-state sync branch but no executor row,
+        making it a silent end-to-end no-op (audit Duplication P0,
+        effects.py:686). The world-state side (scene-item removal) stays in
+        the orchestrator's REMOVE_ENTITY sync branch; the KG bridge clears
+        the entity's location edge once execution succeeds.
+        """
+        if not self.scene_registry:
+            return EffectExecutionResult(
+                effect=effect,
+                success=False,
+                error="No scene registry available",
+            )
+
+        target = (effect.target or "").strip()
+        if not target:
+            return EffectExecutionResult(
+                effect=effect,
+                success=False,
+                error="remove_entity requires a target entity id or name",
+            )
+
+        removed = self.scene_registry.remove_by_name(target)
+        if removed is None:
+            return EffectExecutionResult(
+                effect=effect,
+                success=False,
+                error=f"remove_entity target '{target}' not in scene registry",
+            )
+
+        return EffectExecutionResult(
+            effect=effect,
+            success=True,
+            details={
+                "entity_id": removed.id,
+                "entity_name": removed.name,
+                "reason": effect.reason,
+            },
+        )
+
     async def _execute_transfer_item(self, effect: ProposedEffect) -> EffectExecutionResult:
         """Transfer an item between entities."""
         if not self.inventory_repo:
@@ -873,36 +887,23 @@ class EffectExecutor:
         )
 
     async def _execute_apply_damage(self, effect: ProposedEffect) -> EffectExecutionResult:
-        """Apply damage to a target."""
-        # This would integrate with combat system
-        return EffectExecutionResult(
-            effect=effect,
-            success=True,
-            details={"amount": effect.amount, "type": effect.damage_type, "target": effect.target},
-        )
+        """apply_damage has NO live implementation — fail honestly.
 
-    async def _execute_apply_healing(self, effect: ProposedEffect) -> EffectExecutionResult:
-        """Apply healing to a target."""
+        Audit May #11 / 2026-06-09 (success-reporting no-op executors): this
+        used to return success=True while mutating nothing, so the world-state
+        sync recorded damage that never landed on anyone's HP. Only the legacy
+        INTENTS text fallback still produces this type; player damage flows
+        through UPDATE_PLAYER (hp_delta) and combat damage through the combat
+        engine.
+        """
         return EffectExecutionResult(
             effect=effect,
-            success=True,
-            details={"amount": effect.amount, "target": effect.target},
-        )
-
-    async def _execute_add_condition(self, effect: ProposedEffect) -> EffectExecutionResult:
-        """Add a condition to a target."""
-        return EffectExecutionResult(
-            effect=effect,
-            success=True,
-            details={"condition": effect.condition, "target": effect.target},
-        )
-
-    async def _execute_remove_condition(self, effect: ProposedEffect) -> EffectExecutionResult:
-        """Remove a condition from a target."""
-        return EffectExecutionResult(
-            effect=effect,
-            success=True,
-            details={"condition": effect.condition, "target": effect.target},
+            success=False,
+            error=(
+                "apply_damage is not executable: narrator-declared player "
+                "damage must use update_player (hp_delta); combat damage is "
+                "owned by the combat engine"
+            ),
         )
 
     async def _execute_start_combat(self, effect: ProposedEffect) -> EffectExecutionResult:
@@ -914,19 +915,17 @@ class EffectExecutor:
         )
 
     async def _execute_set_flag(self, effect: ProposedEffect) -> EffectExecutionResult:
-        """Set a game flag."""
+        """Acknowledge a flag change — a sync-applied signal effect.
+
+        Not a stub: the actual write (world_state.global_flags[flag] = value)
+        happens in the orchestrator's _sync_effect_to_world_state SET_FLAG
+        branch, which runs only when this returns success — the same division
+        of labor as change_location.
+        """
         return EffectExecutionResult(
             effect=effect,
             success=True,
             details={"flag": effect.flag_name, "value": effect.flag_value},
-        )
-
-    async def _execute_log_memory(self, effect: ProposedEffect) -> EffectExecutionResult:
-        """Log a memory fact."""
-        return EffectExecutionResult(
-            effect=effect,
-            success=True,
-            details={"memory": effect.memory_text},
         )
 
     async def _execute_consume_resource(self, effect: ProposedEffect) -> EffectExecutionResult:

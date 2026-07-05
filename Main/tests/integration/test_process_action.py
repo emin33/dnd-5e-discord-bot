@@ -499,17 +499,15 @@ async def test_update_player_item_remove_persists(net):
 
 
 @pytest.mark.asyncio
-async def test_remove_entity_is_a_silent_noop_end_to_end(net):
-    """PINNED-BROKEN: remove_entity does nothing on ANY live layer.
+async def test_remove_entity_tool_removes_entity_end_to_end(net):
+    """FLIPPED from pinned-broken by the Step-1 registry cut.
 
-    AUDIT_QUALITY_2026_06_09 (Duplication P0, effects.py:686): the effect-type
-    dispatch sites have drifted — remove_entity is not a narrator tool
-    (_convert_tool_call logs unknown_narrator_tool and drops it), and even a
-    constructed REMOVE_ENTITY effect has no row in EffectExecutor's dict, so
-    execute() fails and the world-state sync (which only runs on success)
-    never fires: a silent end-to-end no-op. The registry step gives every
-    EffectType exactly one registration — this test then flips from pinning
-    the no-op to asserting the removal.
+    AUDIT_QUALITY_2026_06_09 (Duplication P0, effects.py:686): remove_entity
+    used to be a silent end-to-end no-op — dropped at the converter (no tool)
+    AND at the executor (no dict row), so the world-state sync (which only
+    runs on success) never fired. The registry wires all layers: full-tier
+    tool → registry converter → EffectExecutor._execute_remove_entity
+    (scene-registry removal) → REMOVE_ENTITY sync branch.
     """
     net.registry.register_entity(SceneEntity(
         name="Cellar Rat", entity_type=EntityType.CREATURE,
@@ -528,13 +526,17 @@ async def test_remove_entity_is_a_silent_noop_end_to_end(net):
         ),
     )
 
-    # Layer 1 (converter): the tool call is dropped → zero effects proposed.
-    assert result.proposed_effects == []        # ← [REMOVE_ENTITY] when fixed
-    # The scene still contains the 'removed' entity.
-    assert net.registry.get_by_name("Cellar Rat") is not None  # ← None when fixed
+    # Layer 1 (converter): the tool call becomes a REMOVE_ENTITY effect.
+    assert [e.effect_type for e in result.proposed_effects] == [EffectType.REMOVE_ENTITY]
+    # Layer 2+ (executor): the entity is gone from the scene registry.
+    assert net.registry.get_by_name("Cellar Rat") is None
 
-    # Layer 2 (executor): even a hand-built REMOVE_ENTITY effect has no
-    # executor row ("No executor for effect type").
+    # The INTENTS-fallback producer shape (target=<id>) executes through the
+    # same registered handler — both producers, one registration.
+    net.registry.register_entity(SceneEntity(
+        name="Cellar Rat", entity_type=EntityType.CREATURE,
+        description="A fat cellar rat, back for more",
+    ))
     executor = EffectExecutor(
         scene_registry=net.registry, session=net.session,
         inventory_repo=net.inv_repo,
@@ -542,5 +544,11 @@ async def test_remove_entity_is_a_silent_noop_end_to_end(net):
     exec_result = await executor.execute(ProposedEffect(
         effect_type=EffectType.REMOVE_ENTITY, target="Cellar Rat",
     ))
-    assert exec_result.success is False         # ← True when fixed
-    assert "No executor" in (exec_result.error or "")
+    assert exec_result.success is True
+    assert net.registry.get_by_name("Cellar Rat") is None
+    # And an honest failure when the target does not exist — no silent success.
+    missing = await executor.execute(ProposedEffect(
+        effect_type=EffectType.REMOVE_ENTITY, target="Cellar Rat",
+    ))
+    assert missing.success is False
+    assert "not in scene registry" in (missing.error or "")

@@ -265,6 +265,17 @@ def _convert_change_location(args: dict) -> ProposedEffect:
     )
 
 
+def _convert_remove_entity(args: dict) -> ProposedEffect:
+    return ProposedEffect(
+        effect_type=EffectType.REMOVE_ENTITY,
+        # Same field the legacy INTENTS producer uses (intents.py
+        # _parse_remove_entity), so the executor/sync/KG consumers see one
+        # shape regardless of producer.
+        target=args.get("entity_id", "").strip() or None,
+        reason=(args.get("reason") or "").strip() or None,
+    )
+
+
 def _convert_update_entity(args: dict) -> ProposedEffect:
     # Only set fields that the narrator actually included. Missing
     # fields stay None (semantics: "no change").
@@ -940,6 +951,59 @@ register(NarratorToolSpec(
                             "Items the entity gave away, lost, used, or "
                             "had taken from them this turn. Same format as "
                             "add_items. Omit if no items were removed."
+                        ),
+                    },
+                },
+                "required": ["entity_id"],
+            },
+        },
+    },
+))
+
+register(NarratorToolSpec(
+    name="remove_entity",
+    tiers=_FULL_ONLY,
+    converter=_convert_remove_entity,
+    effect_types=(EffectType.REMOVE_ENTITY,),
+    schema={
+        "type": "function",
+        "function": {
+            "name": "remove_entity",
+            "description": (
+                "Remove a tracked entity from the scene when your prose "
+                "takes it off stage for good — a creature killed and left "
+                "behind, an object destroyed, consumed, or taken away by "
+                "someone leaving. Call this when the entity should no "
+                "longer appear in the scene roster at all.\n\n"
+                "Do NOT call for an NPC whose STATE changed but who is "
+                "still part of the story — dead, fled, or captured NPCs "
+                "the party may revisit belong to update_entity (status: "
+                "'dead' / 'fled' / 'captured'). Do NOT call for items the "
+                "player picked up (use update_player item_grant — the "
+                "scene object is cleared automatically), or for entities "
+                "that merely moved within the scene.\n\n"
+                "Example calls:\n"
+                "- After 'The rat is flattened under your boot': "
+                "{entity_id: 'cellar_rat', reason: 'killed'}\n"
+                "- After 'The rope bridge burns and drops into the gorge': "
+                "{entity_id: 'rope_bridge', reason: 'destroyed'}"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "entity_id": {
+                        "type": "string",
+                        "description": (
+                            "ID of the entity from the roster [id: ...] "
+                            "tag (or its exact name). Required."
+                        ),
+                    },
+                    "reason": {
+                        "type": "string",
+                        "description": (
+                            "One short clause for the log describing why "
+                            "the entity left the scene. E.g. 'killed', "
+                            "'destroyed', 'carried off by the guards'."
                         ),
                     },
                 },

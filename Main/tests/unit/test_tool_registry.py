@@ -72,6 +72,11 @@ CONVERTER_CASES = {
          "remove_items": ["Cutlass"]},
         {"entity_id": "  ", "description_addition": ""},  # blanks → None
     ],
+    "remove_entity": [
+        {"entity_id": "cellar_rat", "reason": "killed"},
+        {"entity_id": "  rope_bridge  "},  # stripped; no reason → None
+        {},  # missing id → None target (validator/executor reject downstream)
+    ],
 }
 
 
@@ -84,7 +89,7 @@ EXPECTED_TIERS = {
                   "start_combat", "change_location"],
     "full": ["ref_entity", "add_npc", "spawn_object", "update_player",
              "request_roll", "start_combat", "change_location",
-             "update_entity"],
+             "update_entity", "remove_entity"],
 }
 
 
@@ -140,6 +145,64 @@ class TestExecutorCrossCheck:
             f"converter-producible effect types with NO executor row: "
             f"{sorted(t.value for t in missing)}"
         )
+
+    def test_every_world_sync_type_has_a_sync_branch(self):
+        """Specs declaring world_sync=True must have a branch in the
+        orchestrator's _sync_effect_to_world_state elif chain, or their
+        effects execute but never reach the WorldState the narrator sees —
+        the other half of the silent-no-op class. (Source inspection: the
+        chain is the one dispatch site the registry deliberately does not
+        own yet; it becomes data when the single-writer store lands.)"""
+        import inspect
+        from dnd_bot.llm.orchestrator import DMOrchestrator
+
+        source = inspect.getsource(DMOrchestrator._sync_effect_to_world_state)
+        for spec in tool_registry.all_specs():
+            if not spec.world_sync:
+                continue
+            for etype in spec.effect_types:
+                assert f"EffectType.{etype.name}" in source, (
+                    f"{spec.name} declares world_sync but "
+                    f"_sync_effect_to_world_state has no EffectType.{etype.name} branch"
+                )
+
+    def test_signal_effects_declared(self):
+        """start_combat and request_roll are the only no-world-sync signal
+        effects; the orchestrator consumes them directly."""
+        no_sync = {s.name for s in tool_registry.all_specs() if not s.world_sync}
+        assert no_sync == {"start_combat", "request_roll"}
+
+
+class TestNoSilentNoOpExecutors:
+    """Audit May #11 / 2026-06-09 'success-reporting no-op executors':
+    an executor that reports success while mutating nothing is banned.
+    Dispositions (commit body has the full per-stub rationale):
+    - apply_damage: kept (live INTENTS producer) but fails honestly
+    - apply_healing / add_condition / remove_condition / log_memory /
+      reveal_object: EffectType deleted — no producer existed on any path
+    - set_flag / start_combat / request_roll / change_location: legitimate
+      signal effects — the real write happens in the orchestrator
+      (sync branch or direct consumption), gated on their success."""
+
+    @pytest.mark.asyncio
+    async def test_apply_damage_fails_honestly(self):
+        from dnd_bot.llm.effects import ProposedEffect
+        result = await EffectExecutor().execute(ProposedEffect(
+            effect_type=EffectType.APPLY_DAMAGE,
+            target="goblin", amount=6, damage_type="fire",
+        ))
+        assert result.success is False
+        assert "update_player" in (result.error or "")
+
+    def test_orphaned_effect_types_deleted(self):
+        """The four producer-less types (plus never-wired reveal_object)
+        are gone from the enum entirely."""
+        for name in ("APPLY_HEALING", "ADD_CONDITION", "REMOVE_CONDITION",
+                     "LOG_MEMORY", "REVEAL_OBJECT"):
+            assert not hasattr(EffectType, name), (
+                f"EffectType.{name} was deleted as producer-less; "
+                "re-adding it requires a producer + executor + sync branch"
+            )
 
 
 class TestSpecDeclarations:
