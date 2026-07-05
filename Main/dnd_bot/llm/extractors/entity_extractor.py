@@ -1,12 +1,12 @@
 """Entity Extractor - extracts entities from narrator output."""
 
 from typing import Optional
-import json
 import structlog
 
 from pydantic import BaseModel
 
 from ..client import get_llm_client, OllamaClient
+from ..json_extract import extract_json_object
 from ...models.npc import SceneEntity, EntityType, Disposition
 
 logger = structlog.get_logger()
@@ -192,57 +192,37 @@ class EntityExtractor:
         if not content:
             return ExtractionResult()
 
-        content = content.strip()
-
-        # Handle markdown code blocks
-        if "```json" in content:
-            start = content.find("```json") + 7
-            end = content.find("```", start)
-            if end > start:
-                content = content[start:end].strip()
-        elif "```" in content:
-            start = content.find("```") + 3
-            end = content.find("```", start)
-            if end > start:
-                content = content[start:end].strip()
-
-        # Find JSON object
-        if "{" in content:
-            start = content.find("{")
-            end = content.rfind("}") + 1
-            if end > start:
-                content = content[start:end]
-
-        try:
-            data = json.loads(content)
-
-            entities = []
-            for e in data.get("entities", []):
-                try:
-                    entities.append(ExtractedEntity(**e))
-                except Exception:
-                    continue
-
-            hostility_changes = []
-            for h in data.get("hostility_changes", []):
-                try:
-                    hostility_changes.append(HostilityChange(**h))
-                except Exception:
-                    continue
-
-            return ExtractionResult(
-                entities=entities,
-                scene_update=data.get("scene_update"),
-                hostility_changes=hostility_changes,
-                combat_initiated=bool(data.get("combat_initiated", False)),
-            )
-        except (json.JSONDecodeError, TypeError) as e:
+        data, warnings = extract_json_object(content)
+        if data is None:
             logger.warning(
                 "extraction_parse_failed",
-                content=content[:100] if content else "empty",
-                error=str(e),
+                content=content[:100],
+                warnings=warnings,
             )
             return ExtractionResult()
+        if warnings:
+            logger.debug("extraction_json_recovered", warnings=warnings)
+
+        entities = []
+        for e in data.get("entities", []):
+            try:
+                entities.append(ExtractedEntity(**e))
+            except Exception:
+                continue
+
+        hostility_changes = []
+        for h in data.get("hostility_changes", []):
+            try:
+                hostility_changes.append(HostilityChange(**h))
+            except Exception:
+                continue
+
+        return ExtractionResult(
+            entities=entities,
+            scene_update=data.get("scene_update"),
+            hostility_changes=hostility_changes,
+            combat_initiated=bool(data.get("combat_initiated", False)),
+        )
 
     def convert_to_scene_entity(self, extracted: ExtractedEntity) -> SceneEntity:
         """Convert ExtractedEntity to SceneEntity."""

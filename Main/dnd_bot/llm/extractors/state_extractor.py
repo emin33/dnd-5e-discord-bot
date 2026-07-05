@@ -9,12 +9,12 @@ time, location, events, and facts.
 """
 
 from typing import Optional
-import json
 import structlog
 
 from pydantic import ValidationError
 
 from ..client import get_llm_client, OllamaClient
+from ..json_extract import extract_json_object
 from ...game.world_state import StateDelta, get_state_delta_schema
 
 logger = structlog.get_logger()
@@ -186,44 +186,16 @@ class StateExtractor:
 
         Returns (delta, parse_warnings) for turn log observability.
         """
-        warnings: list[str] = []
         if not content:
-            return StateDelta(), warnings
+            return StateDelta(), []
 
-        content = content.strip()
-
-        # Strip markdown code fences
-        if "```json" in content:
-            start = content.find("```json") + 7
-            end = content.find("```", start)
-            if end > start:
-                content = content[start:end].strip()
-                warnings.append("stripped_markdown_fence")
-        elif "```" in content:
-            start = content.find("```") + 3
-            end = content.find("```", start)
-            if end > start:
-                content = content[start:end].strip()
-                warnings.append("stripped_code_fence")
-
-        # Extract JSON object
-        if "{" in content:
-            json_start = content.find("{")
-            json_end = content.rfind("}") + 1
-            if json_start > 0 or json_end < len(content):
-                warnings.append("extracted_json_from_text")
-            if json_end > json_start:
-                content = content[json_start:json_end]
-
-        try:
-            data = json.loads(content)
-        except json.JSONDecodeError as e:
+        data, warnings = extract_json_object(content)
+        if data is None:
             logger.warning(
                 "state_delta_json_parse_failed",
-                error=str(e),
+                warnings=warnings,
                 content_preview=content[:200],
             )
-            warnings.append(f"json_parse_failed: {e}")
             return StateDelta(), warnings
 
         # Coerce bare strings to single-element lists for list fields.

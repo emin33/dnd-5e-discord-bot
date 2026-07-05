@@ -37,6 +37,7 @@ from typing import Optional
 import structlog
 
 from ..client import get_llm_client
+from ..json_extract import extract_json_object
 
 logger = structlog.get_logger()
 
@@ -199,15 +200,9 @@ Decide. Output one JSON object."""
             return DedupDecision(action="accept", raw_response="(empty response)")
 
         # Extract the first JSON object even if model added stray text
-        start = raw.find("{")
-        end = raw.rfind("}")
-        if start < 0 or end <= start:
-            logger.warning("dedup_judge_no_json", raw_preview=raw[:200])
-            return DedupDecision(action="accept", raw_response=raw)
-        try:
-            data = json.loads(raw[start:end + 1])
-        except json.JSONDecodeError as e:
-            logger.warning("dedup_judge_parse_failed", error=str(e), raw_preview=raw[:200])
+        data, warnings = extract_json_object(raw)
+        if data is None:
+            logger.warning("dedup_judge_parse_failed", warnings=warnings, raw_preview=raw[:200])
             return DedupDecision(action="accept", raw_response=raw)
 
         action = (data.get("action") or "").lower().strip()

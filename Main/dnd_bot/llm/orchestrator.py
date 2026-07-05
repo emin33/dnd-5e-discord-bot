@@ -15,6 +15,7 @@ import structlog
 
 from .client import get_llm_client, get_narrator_client_for, OllamaClient, AnthropicClient, _write_debug_log
 from .narrative_signals import select_narrator_tier
+from .json_extract import extract_json_object
 from .brains.base import BrainContext
 from .brains.narrator import NarratorBrain, get_narrator
 from .brains.adjudicator import EffectsAdjudicator, get_adjudicator
@@ -1702,42 +1703,13 @@ class DMOrchestrator:
         Returns (data_dict, parse_warnings) so callers can record warnings
         in the turn log for post-mortem observability.
         """
-        warnings: list[str] = []
-        content = content.strip()
-
-        # Strip markdown code fences if present
-        if "```json" in content:
-            start = content.find("```json") + 7
-            end = content.find("```", start)
-            if end > start:
-                content = content[start:end].strip()
-                warnings.append("stripped_markdown_fence")
-        elif "```" in content:
-            start = content.find("```") + 3
-            end = content.find("```", start)
-            if end > start:
-                content = content[start:end].strip()
-                warnings.append("stripped_code_fence")
-
-        # Extract JSON object
-        if "{" in content:
-            json_start = content.find("{")
-            json_end = content.rfind("}") + 1
-            if json_start > 0 or json_end < len(content):
-                # Had to extract JSON from surrounding text
-                warnings.append("extracted_json_from_text")
-            if json_end > json_start:
-                content = content[json_start:json_end]
-
-        try:
-            data = json.loads(content)
-        except json.JSONDecodeError as e:
+        data, warnings = extract_json_object(content)
+        if data is None:
             logger.error(
                 "triage_json_parse_failed",
                 raw_content=content[:500],
-                error=str(e),
+                warnings=warnings,
             )
-            warnings.append(f"json_parse_failed: {e}")
             # Return a clearly marked failure so callers can detect it
             return {
                 "action_type": "roleplay",
