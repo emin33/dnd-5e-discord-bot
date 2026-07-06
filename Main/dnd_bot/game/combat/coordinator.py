@@ -34,12 +34,36 @@ from ...data.repositories import get_character_repo, get_inventory_repo
 
 if TYPE_CHECKING:
     from ..session import GameSession
-    from ...llm.brains.narrator import NarratorBrain
+    from ...llm.brains.narrator import MechanicalOutcome, NarratorBrain
 
 from ...llm.brains.base import BrainContext
+from ...llm.narration import NarrationSpec, NarrationStrategy
 from ...models.combat import CombatEffect
 
 logger = structlog.get_logger()
+
+# The combat-outcome narration instruction — spec.prompt data for the
+# combat NarrationSpec (per-path prompt text lives at its call site, same
+# as the orchestrator's three thin spec builders).
+_OUTCOME_NARRATION_INSTRUCTION = (
+    "Narrate the mechanical result above in a dramatic, engaging way. "
+    "Do NOT change or add to the mechanical outcome - just describe it vividly. "
+    "Output ONLY the narrative prose directly. Do NOT use PROSE:/INTENTS: "
+    "format headers or code blocks. Just write the narrative."
+)
+
+
+def _extract_combat_narration(response, action: str) -> tuple[str, list]:
+    """Prose/effects extractor for the combat narration path.
+
+    Combat effects are owned by the combat engine — narrator tool calls on
+    this path are dropped, so effects are always empty (which is also why
+    the spec disables the tool surface: no followup leg fires).
+    """
+    from ...llm.brains.narrator import clean_outcome_prose
+
+    content = (response.content or "").strip()
+    return clean_outcome_prose(content) if content else "", []
 
 # Spell → condition mapping for spells that apply conditions on failed saves.
 # Format: spell_index → (Condition, duration_rounds, save_ends_on_success)
@@ -111,6 +135,9 @@ class CombatTurnCoordinator:
 
         # Narrator brain (set externally)
         self._narrator: Optional["NarratorBrain"] = None
+
+        # Combat-bound NarrationStrategy, built lazily (Step-2 skeleton)
+        self._combat_narration: Optional[NarrationStrategy] = None
 
     def set_narrator(self, narrator: "NarratorBrain") -> None:
         """Set the narrator for result descriptions."""
@@ -1512,27 +1539,71 @@ class CombatTurnCoordinator:
 
     # ==================== Narrator Integration ====================
 
+    def _get_narrator_brain(self) -> "NarratorBrain":
+        """The narrator brain, lazily resolved (set_narrator wins)."""
+        from ...llm.brains.narrator import get_narrator
+
+        if self._narrator is None:
+            self._narrator = get_narrator()
+        return self._narrator
+
+    def _get_narration_strategy(self) -> NarrationStrategy:
+        """The combat-bound NarrationStrategy (REFACTOR_PLAN Step 2/3).
+
+        Collaborators are bound to this path's facts: no tier selection
+        (the narrator brain's own client IS the tier), no tool surface, no
+        streaming. What varies per turn is DATA on the NarrationSpec — the
+        pre-migration ``NarratorBrain.narrate_outcome`` was a fourth
+        hand-copied prompt-assembly stack instead.
+        """
+        if self._combat_narration is None:
+            self._combat_narration = NarrationStrategy(
+                get_narrator=self._get_narrator_brain,
+                select_client=lambda action, triage, context: None,
+                get_tools=lambda: [],
+                append_tool_reminder=lambda messages: None,
+                extract_prose_and_effects=_extract_combat_narration,
+                get_on_token=lambda: None,
+            )
+        return self._combat_narration
+
+    async def _narrate_combat_outcome(
+        self,
+        context: BrainContext,
+        outcome: "MechanicalOutcome",
+    ) -> str:
+        """One combat narration turn = one NarrationSpec construction."""
+        from ...llm.brains.narrator import format_outcome
+
+        spec = NarrationSpec(
+            action=context.player_action,
+            player_name=context.player_name,
+            player_action=(
+                f"{context.player_action}\n\n"
+                f"[MECHANICAL RESULT: {format_outcome(outcome)}]"
+            ),
+            prompt=_OUTCOME_NARRATION_INSTRUCTION,
+            prompt_role="system",
+            allow_streaming=False,
+            empty_prose_fallback="*The action unfolds dramatically...*",
+            continue_on_empty_prose=False,
+            enable_tools=False,
+            think=False,  # Qwen3 thinking mode truncates its narration
+        )
+        prose, _effects = await self._get_narration_strategy().run(
+            spec, context, triage=None
+        )
+        return prose
+
     async def narrate_result(self, result: ActionResult) -> str:
         """
         Pass an action result to the narrator for dramatic description.
 
         Returns the narrative text.
         """
-        from ...llm.brains.narrator import get_narrator
-
-        if self._narrator is None:
-            self._narrator = get_narrator()
-
-        # Convert ActionResult to MechanicalOutcome
         outcome = self._result_to_outcome(result)
-
-        # Build combat context
         context = self._build_narrator_context(result)
-
-        # Get narration
-        narrator_result = await self._narrator.narrate_outcome(context, outcome)
-
-        return narrator_result.content
+        return await self._narrate_combat_outcome(context, outcome)
 
     def _result_to_outcome(self, result: ActionResult) -> "MechanicalOutcome":
         """Convert ActionResult to MechanicalOutcome for narrator."""
@@ -1681,10 +1752,7 @@ class CombatTurnCoordinator:
             return await self.narrate_result(results[0])
 
         # Batch: combine all outcomes into a single narrator call
-        from ...llm.brains.narrator import MechanicalOutcome, get_narrator
-
-        if self._narrator is None:
-            self._narrator = get_narrator()
+        from ...llm.brains.narrator import MechanicalOutcome
 
         # Build combined outcome descriptions
         outcome_parts = []
@@ -1707,8 +1775,7 @@ class CombatTurnCoordinator:
             },
         )
 
-        narrator_result = await self._narrator.narrate_outcome(context, combined_outcome)
-        return narrator_result.content
+        return await self._narrate_combat_outcome(context, combined_outcome)
 
 
 # ==================== Factory ====================

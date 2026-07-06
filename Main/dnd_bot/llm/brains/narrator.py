@@ -5,11 +5,12 @@ propose mechanical effects - that's handled by the EffectsAdjudicator
 in a separate, deterministic pass.
 """
 
+import re
 from dataclasses import dataclass
 from typing import Optional
 
 from ..client import OllamaClient, get_narrator_client
-from .base import Brain, BrainContext, BrainResult
+from .base import Brain
 from ...config import get_settings
 
 import structlog
@@ -81,6 +82,83 @@ class MechanicalOutcome:
     details: dict  # Additional details (damage amount, condition applied, etc.)
 
 
+def format_outcome(outcome: MechanicalOutcome) -> str:
+    """Format a mechanical outcome for the narrator prompt.
+
+    Used by the combat coordinator to build the ``[MECHANICAL RESULT: …]``
+    decoration on its NarrationSpec (was ``NarratorBrain._format_outcome``
+    before the combat stack migrated onto the Step-2 NarrationStrategy).
+    """
+    parts = [outcome.description]
+
+    if outcome.action_type == "attack":
+        if outcome.success:
+            damage = outcome.details.get("damage", 0)
+            damage_type = outcome.details.get("damage_type", "")
+            parts.append(f"Hit for {damage} {damage_type} damage.")
+            if outcome.details.get("critical"):
+                parts.append("Critical hit!")
+        else:
+            parts.append("Miss.")
+
+    elif outcome.action_type == "spell":
+        if outcome.success:
+            effect = outcome.details.get("effect", "spell takes effect")
+            parts.append(effect)
+        else:
+            parts.append("Spell fails to take effect.")
+
+    elif outcome.action_type in ("check", "save", "ability_check", "saving_throw"):
+        dc = outcome.details.get("dc", "?")
+        roll = outcome.details.get("roll", "?")
+        skill = outcome.details.get("skill", "")
+        skill_text = f" ({skill})" if skill else ""
+        if outcome.success:
+            parts.append(f"Success{skill_text} (rolled {roll} vs DC {dc}).")
+        else:
+            parts.append(f"Failure{skill_text} (rolled {roll} vs DC {dc}).")
+
+    elif outcome.action_type == "healing":
+        amount = outcome.details.get("amount", 0)
+        parts.append(f"Healed for {amount} HP.")
+
+    return " ".join(parts)
+
+
+def clean_outcome_prose(content: str) -> str:
+    """Strip legacy PROSE:/INTENTS headers and code fences from narration.
+
+    Defensive recovery for local models that leak the old text-era output
+    format despite instructions (kept deliberately when the combat stack
+    migrated onto NarrationStrategy; audit 2026-05-28 flags it as text-era
+    code, but the leakage it guards against is a model behavior, not ours).
+    """
+    content = content.strip()
+
+    # Strip code fence wrappers first (```...```)
+    # The model sometimes wraps the entire output in triple backticks
+    code_fence = re.match(r'^```\w*\s*\n?(.*?)```\s*$', content, re.DOTALL)
+    if code_fence:
+        content = code_fence.group(1).strip()
+
+    # Remove PROSE: prefix in various formats:
+    # PROSE:, **PROSE:**, ## PROSE:, **PROSE:**
+    content = re.sub(
+        r'^(?:#{1,3}\s*)?(?:\*{1,2})?PROSE(?:\*{1,2})?\s*:?\s*(?:\*{1,2})?\s*',
+        '',
+        content,
+        count=1,
+        flags=re.IGNORECASE,
+    ).strip()
+
+    # Remove INTENTS block if present (everything from INTENTS: onward)
+    intents_match = re.search(r'\n\s*(?:\*{1,2})?INTENTS(?:\*{1,2})?\s*:', content, re.IGNORECASE)
+    if intents_match:
+        content = content[:intents_match.start()].strip()
+
+    return content
+
+
 class NarratorBrain(Brain):
     """
     The creative storytelling brain.
@@ -108,92 +186,6 @@ class NarratorBrain(Brain):
             temperature=temperature or settings.narrator_temperature,
             system_prompt=NARRATOR_SYSTEM_PROMPT,
         )
-
-    async def narrate_outcome(
-        self,
-        context: BrainContext,
-        outcome: MechanicalOutcome,
-    ) -> BrainResult:
-        """
-        Narrate a mechanical outcome dramatically.
-
-        The Narrator receives the mechanical result and describes it
-        in an engaging, story-appropriate way.
-        """
-        # Build a specific prompt for narrating the outcome
-        outcome_description = self._format_outcome(outcome)
-
-        # Add the outcome to the context
-        enhanced_context = BrainContext(
-            party_status=context.party_status,
-            current_scene=context.current_scene,
-            active_quests=context.active_quests,
-            in_combat=context.in_combat,
-            combat_round=context.combat_round,
-            current_combatant=context.current_combatant,
-            initiative_order=context.initiative_order,
-            recent_messages=context.recent_messages,
-            session_summary=context.session_summary,
-            player_action=f"{context.player_action}\n\n[MECHANICAL RESULT: {outcome_description}]",
-            player_name=context.player_name,
-        )
-
-        messages = self._build_messages(enhanced_context)
-
-        # Add instruction for narrating the outcome — explicitly tell the model
-        # NOT to use PROSE:/INTENTS: format (it follows the main system prompt otherwise)
-        messages.append({
-            "role": "system",
-            "content": (
-                "Narrate the mechanical result above in a dramatic, engaging way. "
-                "Do NOT change or add to the mechanical outcome - just describe it vividly. "
-                "Output ONLY the narrative prose directly. Do NOT use PROSE:/INTENTS: "
-                "format headers or code blocks. Just write the narrative."
-            ),
-        })
-
-        response = await self.client.chat(
-            messages=messages,
-            temperature=self.temperature,
-            max_tokens=1500,
-            think=False,  # Disable thinking - causes truncation issues with Qwen3
-        )
-
-        result = self._parse_response(response)
-
-        # Strip PROSE/INTENTS format if the model used it despite instructions
-        if result.content:
-            import re
-            content = result.content.strip()
-
-            # Strip code fence wrappers first (```...```)
-            # The model sometimes wraps the entire output in triple backticks
-            code_fence = re.match(r'^```\w*\s*\n?(.*?)```\s*$', content, re.DOTALL)
-            if code_fence:
-                content = code_fence.group(1).strip()
-
-            # Remove PROSE: prefix in various formats:
-            # PROSE:, **PROSE:**, ## PROSE:, **PROSE:**
-            content = re.sub(
-                r'^(?:#{1,3}\s*)?(?:\*{1,2})?PROSE(?:\*{1,2})?\s*:?\s*(?:\*{1,2})?\s*',
-                '',
-                content,
-                count=1,
-                flags=re.IGNORECASE,
-            ).strip()
-
-            # Remove INTENTS block if present (everything from INTENTS: onward)
-            intents_match = re.search(r'\n\s*(?:\*{1,2})?INTENTS(?:\*{1,2})?\s*:', content, re.IGNORECASE)
-            if intents_match:
-                content = content[:intents_match.start()].strip()
-
-            result.content = content
-
-        # Validate non-empty response
-        if not result.content or not result.content.strip():
-            result.content = f"*The action unfolds dramatically...*"
-
-        return result
 
     async def generate_opening(
         self,
@@ -300,7 +292,6 @@ No commentary, no planning, no format headers.""",
 
         # Strip any leaked structural blocks
         # (INTENTS, ENTITIES, --- separators, PROSE headers, markdown headings)
-        import re
         # Split on any structural separator the model might use
         content = re.split(
             r'\n---\n|\n#{1,3}\s*INTENTS|\nINTENTS:|\n#{1,3}\s*ENTITIES|\nENTITIES:',
@@ -343,8 +334,6 @@ No commentary, no planning, no format headers.""",
         LLMs often ignore the instruction to end with 'What do you do?',
         so we detect and append it if missing.
         """
-        import re
-
         # Patterns that indicate a proper handoff question
         handoff_patterns = [
             r"what do you do\??$",
@@ -370,44 +359,6 @@ No commentary, no planning, no format headers.""",
         # No handoff found - append one
         logger.info("opening_missing_handoff_appending", prose_end=prose[-50:] if len(prose) > 50 else prose)
         return prose.rstrip() + "\n\nWhat do you do?"
-
-    def _format_outcome(self, outcome: MechanicalOutcome) -> str:
-        """Format a mechanical outcome for the prompt."""
-        parts = [outcome.description]
-
-        if outcome.action_type == "attack":
-            if outcome.success:
-                damage = outcome.details.get("damage", 0)
-                damage_type = outcome.details.get("damage_type", "")
-                parts.append(f"Hit for {damage} {damage_type} damage.")
-                if outcome.details.get("critical"):
-                    parts.append("Critical hit!")
-            else:
-                parts.append("Miss.")
-
-        elif outcome.action_type == "spell":
-            if outcome.success:
-                effect = outcome.details.get("effect", "spell takes effect")
-                parts.append(effect)
-            else:
-                parts.append("Spell fails to take effect.")
-
-        elif outcome.action_type in ("check", "save", "ability_check", "saving_throw"):
-            dc = outcome.details.get("dc", "?")
-            roll = outcome.details.get("roll", "?")
-            skill = outcome.details.get("skill", "")
-            skill_text = f" ({skill})" if skill else ""
-            if outcome.success:
-                parts.append(f"Success{skill_text} (rolled {roll} vs DC {dc}).")
-            else:
-                parts.append(f"Failure{skill_text} (rolled {roll} vs DC {dc}).")
-
-        elif outcome.action_type == "healing":
-            amount = outcome.details.get("amount", 0)
-            parts.append(f"Healed for {amount} HP.")
-
-        return " ".join(parts)
-
 
 # Global narrator instance
 _narrator: Optional[NarratorBrain] = None

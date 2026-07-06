@@ -1,21 +1,23 @@
-"""Pin the combat narration stack THROUGH the coordinator (pin-first rule).
+"""Pin the combat narration path THROUGH the coordinator.
 
-``NarratorBrain.narrate_outcome`` (driven by ``coordinator.narrate_result``
-and ``narrate_turn_results``) is the FOURTH narration path — the one Step 2
-deliberately left out of scope. Before it migrates onto the Step-2
-NarrationSpec/NarrationStrategy these pins capture, at the narrator-client
-seam, exactly what the stack sends and returns today:
+Pinned BEFORE the migration (commit a70c76c) against the old
+``NarratorBrain.narrate_outcome`` stack — the FOURTH narration path Step 2
+left out of scope — then flipped where the migration onto the Step-2
+NarrationSpec/NarrationStrategy deliberately changed behavior. The
+contract, at the narrator-client seam:
 
 - message shape: basic (non-bookend) build — [system persona + ## Party +
   ## Combat State, user player_action, system instruction]
 - the player_action decoration: ``[]: <summary>\n\n[MECHANICAL RESULT: …]``
   (the ``[]:`` prefix is real — the coordinator never sets player_name)
-- chat kwargs, exact: temperature / max_tokens=1500 / think=False —
-  NO tools, NO anti-repetition penalties, NO streaming
+- chat kwargs, exact: temperature / max_tokens=1500 / think=False (spec
+  data: Qwen3 truncation) + the anti-repetition penalties (FLIPPED by the
+  migration — the combat stack predated the narrator penalties and never
+  drifted them in; verdict: unified) — still NO tools, NO streaming
 - response post-processing: code-fence + PROSE:/INTENTS strip, empty-prose
   fallback
 - tool_calls in the response are IGNORED: no effects, and critically NO
-  second (followup) LLM call
+  second (followup) LLM call (``NarrationSpec.enable_tools=False``)
 - narrate_turn_results batches N results into ONE call
 
 Prose itself is never pinned (plan rule) — assertions are on structure,
@@ -153,13 +155,15 @@ class TestNarrateResult:
 
         assert call["messages"][2]["content"] == _OUTCOME_INSTRUCTION
 
-        # kwargs, exact: no tools, no anti-repetition penalties (drift vs
-        # the orchestrator's three paths — migration verdict pending),
-        # thinking disabled (Qwen3 truncation).
+        # kwargs, exact: no tools; thinking disabled (Qwen3 truncation);
+        # penalties FLIPPED in by the migration (pre-Step-2 drift — the
+        # combat stack predated the narrator anti-repetition penalties).
         assert call["kwargs"] == {
             "temperature": narrator.temperature,
             "max_tokens": 1500,
             "think": False,
+            "frequency_penalty": 0.4,
+            "presence_penalty": 0.3,
         }
 
     async def test_tool_calls_ignored_no_followup_call(
@@ -286,4 +290,6 @@ class TestNarrateTurnResults:
             "temperature": narrator.temperature,
             "max_tokens": 1500,
             "think": False,
+            "frequency_penalty": 0.4,
+            "presence_penalty": 0.3,
         }
