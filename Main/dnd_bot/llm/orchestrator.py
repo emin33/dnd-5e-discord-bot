@@ -19,6 +19,7 @@ import structlog
 
 from .client import get_llm_client, get_narrator_client_for, OllamaClient, AnthropicClient, _write_debug_log
 from .narrative_signals import select_narrator_tier
+from .narration import NarrationSpec, NarrationStrategy
 from .json_extract import extract_json_object
 from .brains.base import BrainContext
 from .brains.narrator import NarratorBrain, get_narrator
@@ -51,10 +52,6 @@ if TYPE_CHECKING:
     from ..game.world_state import WorldState, StateDelta
 
 logger = structlog.get_logger()
-
-# Anti-repetition penalties for narrator calls (research: 0.3-0.8 / 0.2-0.6)
-NARRATOR_FREQUENCY_PENALTY = 0.4  # Penalize tokens proportional to frequency
-NARRATOR_PRESENCE_PENALTY = 0.3   # Penalize any already-used token
 
 # Style rotation — cycles through tone hints so consecutive scenes feel different
 NARRATOR_STYLES = [
@@ -577,6 +574,21 @@ class DMOrchestrator:
         self._scratchpad: list[dict] = []  # [{category, note, turn}]
         self._scratchpad_turn = 0
         self._scratchpad_max_entries = 20  # Rolling window
+
+        # Step 2 (REFACTOR_PLAN): the single narration path. The three
+        # _narrate_* methods only build NarrationSpecs now; this strategy
+        # owns prompt assembly, invocation, and the tool-followup leg.
+        # Collaborators are bound as callables so the Step-0 seams
+        # (_narrator_client_factory via _select_narrator_client_for_turn)
+        # keep working and the per-turn narrator.client swap is respected.
+        self._narration_strategy = NarrationStrategy(
+            get_narrator=lambda: self.narrator,
+            select_client=self._select_narrator_client_for_turn,
+            get_tools=self._get_narrator_tools,
+            append_tool_reminder=self._append_tool_reminder,
+            extract_prose_and_effects=self._extract_prose_and_effects,
+            get_on_token=lambda: getattr(self, "_on_narrative_token", None),
+        )
 
     def set_session(self, session: Optional["GameSession"]) -> None:
         """Set the current session context for tool execution."""
@@ -2246,68 +2258,6 @@ class DMOrchestrator:
             "content": "\n\n".join(parts),
         })
 
-    async def _narrator_tool_followup(
-        self,
-        prose: str,
-        messages: list[dict],
-    ) -> list[ProposedEffect]:
-        """Second pass: force tool calls after narration.
-
-        Audit #20: previously this built a fresh 2-message prompt with just
-        the prose, throwing away the roster, world-state YAML, and `[id: ...]`
-        tags from the original messages. The model then couldn't resolve any
-        roster IDs and would invent new NPCs instead of using `ref_entity`.
-
-        Now we reuse the full original message stack, append the assistant's
-        prose as an assistant turn, and add a user turn instructing the model
-        to declare tool calls. This preserves all the entity context.
-        """
-        # Reuse the original messages — they contain the system prompt with
-        # roster IDs, world state YAML, and entity context the model needs.
-        followup_messages = list(messages) + [
-            {"role": "assistant", "content": prose[:2000]},
-            {
-                "role": "user",
-                "content": (
-                    "Now call a tool for everything you narrated above, using only "
-                    "the tools available to you:\n"
-                    "- ref_entity for each roster entity you referenced (use the roster IDs)\n"
-                    "- add_npc / spawn_object for any new NPC or object you introduced\n"
-                    "- update_player for any player damage, healing, loot, currency, or condition change\n"
-                    "- change_location if the party moved; start_combat if a fight began\n"
-                    "Do NOT respond with prose — only tool calls."
-                ),
-            },
-        ]
-
-        try:
-            response = await self.narrator.client.chat(
-                messages=followup_messages,
-                temperature=0,
-                max_tokens=500,
-                think=False,
-                # Tier-aware (audit #2/N2): the no-tool fallback previously
-                # hardcoded CORE, so on core_plus/full profiles the streaming
-                # path could never recover update_player/change_location/
-                # start_combat. Use the profile's tier like the primary calls do;
-                # core-tier gaps are still backfilled by the state/entity extractors.
-                tools=self._get_narrator_tools(),
-                tool_choice="required",
-            )
-
-            if response.tool_calls:
-                effects = tool_calls_to_effects(response.tool_calls)
-                logger.info(
-                    "narrator_tool_followup",
-                    tool_count=len(response.tool_calls),
-                    effects_count=len(effects),
-                )
-                return effects
-        except Exception as e:
-            logger.warning("narrator_tool_followup_failed", error=str(e), exc_info=True)
-
-        return []
-
     def _extract_prose_and_effects(
         self,
         response,
@@ -2362,46 +2312,27 @@ class DMOrchestrator:
         triage: TriageResult,
         mechanical_result: dict,
     ) -> tuple[str, list[ProposedEffect]]:
-        """
-        Narrate a mechanical action result using PROSE + INTENTS architecture.
+        """Narrate a mechanical action result (purchase/sell/inventory).
 
-        Narrator outputs PROSE and INTENTS blocks.
-        Adjudicator parses INTENTS (deterministic, no inference from prose).
-
-        The narrator receives the known outcome and describes it dramatically.
+        Builds the NarrationSpec for a known mechanical outcome: the outcome
+        rides in a USER prompt after the built messages, and the
+        player_action reaches the narrator undecorated (the outcome is
+        already in the prompt). On empty prose the mech narrative_hint is
+        substituted and the turn continues (tool followup still runs); on
+        any narration failure the hint is the whole answer — the mechanics
+        already executed, so a narration hiccup must not hide the outcome.
 
         Returns:
             Tuple of (narrative text, proposed effects)
         """
-        # Tier-aware narrator client selection (Phase B)
-        self._select_narrator_client_for_turn(action, triage, context)
-
-        # Build narrator context with the mechanical result
         narrative_hint = mechanical_result.get("narrative_hint", "")
-        action_type = mechanical_result.get("action_type", "action")
         success = mechanical_result.get("success", False)
 
-        # Build enhanced context with the outcome
-        enhanced_context = BrainContext(
-            current_scene=context.current_scene,
-            party_members=context.party_members,
-            party_status=context.party_status,
-            in_combat=context.in_combat,
-            combat_state=context.combat_state,
-            combat_round=context.combat_round,
-            player_action=action,
-            player_name=player_name,
-        )
-
-        # Add resolution info to context
         if success:
             resolution_text = f"[RESULT: SUCCESS] {narrative_hint}"
         else:
             resolution_text = f"[RESULT: FAILURE] {narrative_hint}"
 
-        # =====================================================================
-        # Narrator: Output prose (tools handle intents)
-        # =====================================================================
         prompt = f"""The player {player_name} attempted: "{action}"
 
 {resolution_text}
@@ -2413,37 +2344,18 @@ Narrate this action dramatically. Remember:
 
 Write your narration directly."""
 
-        if context.world_state_yaml:
-            enhanced_context.world_state_yaml = context.world_state_yaml
-            messages = self.narrator._build_bookend_messages(enhanced_context)
-        else:
-            messages = self.narrator._build_messages(enhanced_context)
-        messages.append({"role": "user", "content": prompt})
-        self._append_tool_reminder(messages)
+        spec = NarrationSpec(
+            action=action,
+            player_name=player_name,
+            player_action=action,
+            prompt=prompt,
+            prompt_role="user",
+            empty_prose_fallback=narrative_hint,
+            continue_on_empty_prose=True,
+        )
 
         try:
-            response = await self.narrator.client.chat(
-                messages=messages,
-                temperature=self.narrator.temperature,
-                max_tokens=1500,
-                frequency_penalty=NARRATOR_FREQUENCY_PENALTY,
-                presence_penalty=NARRATOR_PRESENCE_PENALTY,
-                tools=self._get_narrator_tools(),
-                tool_choice="auto",
-            )
-
-            prose, proposed_effects = self._extract_prose_and_effects(response, action)
-
-            if not prose:
-                prose = narrative_hint
-
-            # Two-turn followup: if narrator didn't call tools, ask again
-            if not proposed_effects and prose:
-                followup_effects = await self._narrator_tool_followup(prose, messages)
-                proposed_effects = followup_effects
-
-            return prose, proposed_effects
-
+            return await self._narration_strategy.run(spec, context, triage)
         except Exception as e:
             logger.error("narrate_mechanical_failed", error=str(e), exc_info=True)
             return narrative_hint, []  # Fall back to the hint
@@ -2545,53 +2457,20 @@ Write your narration directly."""
         context: BrainContext,
         triage: TriageResult,
     ) -> tuple[str, list[ProposedEffect]]:
-        """
-        Narrate a player action using PROSE + INTENTS architecture.
+        """Narrate a no-mechanics player action (social/exploration/…).
 
-        Narrator outputs PROSE and INTENTS blocks.
-        Adjudicator parses INTENTS (deterministic, no inference from prose).
-
-        Uses narrative_direction from triage to guide the narration.
+        Builds the NarrationSpec: triage's narrative_direction decorates the
+        player_action; the ###INSTRUCTION### system prompt carries per-intent
+        guidance plus the rotating style and phase-tone hints. This is the
+        only spec with allow_streaming — streamed prose reaches the token
+        callback while tool recovery rides the followup leg.
 
         Returns:
             Tuple of (narrative text, proposed effects)
         """
-        # Tier-aware narrator client selection (Phase B)
-        self._select_narrator_client_for_turn(action, triage, context)
-
-        # Get narrative direction from triage (tells narrator what to describe)
+        # Narrative direction from triage (tells narrator what to describe)
         direction = triage.narrative_direction or "Describe what happens naturally."
 
-        # Build context for narrator with the action and direction
-        enhanced_context = BrainContext(
-            campaign_id=context.campaign_id,
-            session_id=context.session_id,
-            party_members=context.party_members,
-            party_status=context.party_status,
-            current_scene=context.current_scene,
-            active_quests=context.active_quests,
-            in_combat=context.in_combat,
-            combat_state=context.combat_state,
-            combat_round=context.combat_round,
-            current_combatant=context.current_combatant,
-            initiative_order=context.initiative_order,
-            memory_context=context.memory_context,
-            recent_messages=context.recent_messages,
-            message_history=context.message_history,
-            session_summary=context.session_summary,
-            player_action=f"{action}\n\n[NARRATIVE DIRECTION: {direction}]",
-            player_name=player_name,
-        )
-
-        # =====================================================================
-        # Narrator: Output PROSE + INTENTS
-        # Use bookend layout when world state is available (better grounding)
-        # =====================================================================
-        if context.world_state_yaml:
-            enhanced_context.world_state_yaml = context.world_state_yaml
-            messages = self.narrator._build_bookend_messages(enhanced_context)
-        else:
-            messages = self.narrator._build_messages(enhanced_context)
         # Style rotation + phase-specific tone
         style_hint = get_style_hint(self._scratchpad_turn)
         from ..game.world_state import PHASE_STYLE_HINTS
@@ -2625,9 +2504,11 @@ Write your narration directly."""
                 "Show the consequence of the action and how the world responds."
             )
 
-        messages.append({
-            "role": "system",
-            "content": (
+        spec = NarrationSpec(
+            action=action,
+            player_name=player_name,
+            player_action=f"{action}\n\n[NARRATIVE DIRECTION: {direction}]",
+            prompt=(
                 "###INSTRUCTION###\n"
                 "Narrate the player's action according to the NARRATIVE DIRECTION above.\n\n"
                 f"{intent_guidance}\n\n"
@@ -2635,50 +2516,13 @@ Write your narration directly."""
                 f"{phase_line}"
                 "Write your narration directly."
             ),
-        })
+            prompt_role="system",
+            allow_streaming=True,
+            empty_prose_fallback=f"*{player_name}'s action unfolds...*",
+            empty_prose_warn_event="narrator_returned_empty_for_action",
+        )
 
-        self._append_tool_reminder(messages)
-
-        # Use streaming if callback provided and client supports it
-        # (streaming doesn't support tools — tool followup happens separately)
-        if self._on_narrative_token and hasattr(self.narrator.client, "chat_stream"):
-            logger.debug("narrator_streaming_enabled")
-            response = await self.narrator.client.chat_stream(
-                messages=messages,
-                temperature=self.narrator.temperature,
-                max_tokens=1500,
-                on_token=self._on_narrative_token,
-                frequency_penalty=NARRATOR_FREQUENCY_PENALTY,
-                presence_penalty=NARRATOR_PRESENCE_PENALTY,
-            )
-        else:
-            response = await self.narrator.client.chat(
-                messages=messages,
-                temperature=self.narrator.temperature,
-                max_tokens=1500,
-                frequency_penalty=NARRATOR_FREQUENCY_PENALTY,
-                presence_penalty=NARRATOR_PRESENCE_PENALTY,
-                tools=self._get_narrator_tools(),
-                tool_choice="auto",
-            )
-
-        # Extract prose + effects (tools if available, text fallback otherwise)
-        prose, proposed_effects = self._extract_prose_and_effects(response, action)
-
-        if not prose:
-            logger.warning("narrator_returned_empty_for_action", action=action[:50])
-            return f"*{player_name}'s action unfolds...*", []
-
-        # Two-turn followup: if local model didn't call tools, ask again
-        if not proposed_effects and prose:
-            followup_effects = await self._narrator_tool_followup(prose, messages)
-            proposed_effects = followup_effects
-
-        # If prose seems truncated (ends mid-sentence), add ellipsis
-        if prose and prose[-1] not in '.!?"\'':
-            prose += "..."
-
-        return prose, proposed_effects
+        return await self._narration_strategy.run(spec, context, triage)
 
     async def _narrate_outcome(
         self,
@@ -2688,57 +2532,22 @@ Write your narration directly."""
         triage: TriageResult,
         resolution: Optional[MechanicalResolution],
     ) -> tuple[str, list[ProposedEffect]]:
-        """
-        Narrate a roll outcome using PROSE + INTENTS architecture.
+        """Narrate a dice-roll outcome under authorized-reveal constraints.
 
-        Narrator outputs PROSE and INTENTS blocks.
-        Adjudicator parses INTENTS (deterministic, no inference from prose).
-
-        The Narrator receives ONLY authorized reveals based on success/failure.
+        Builds the NarrationSpec: the [RESOLUTION: …] decoration carries the
+        roll/DC/margin plus authorized reveals, and the ###INSTRUCTION###
+        system prompt restates the resolution with an extremely explicit
+        success/failure directive (inspired by the old bot's "CRITICAL DM
+        RULE" pattern). The narrator receives ONLY authorized reveals.
 
         Returns:
             Tuple of (narrative text, proposed effects)
         """
-        # Tier-aware narrator client selection (Phase B)
-        self._select_narrator_client_for_turn(action, triage, context)
-
         # Build narrator context with strict constraints
         narrator_context = self._build_narrator_context(
             action, player_name, context, triage, resolution
         )
 
-        # Create enhanced context with resolution constraints
-        enhanced_context = BrainContext(
-            campaign_id=context.campaign_id,
-            session_id=context.session_id,
-            party_members=context.party_members,
-            party_status=context.party_status,
-            current_scene=context.current_scene,
-            active_quests=context.active_quests,
-            in_combat=context.in_combat,
-            combat_state=context.combat_state,
-            combat_round=context.combat_round,
-            current_combatant=context.current_combatant,
-            initiative_order=context.initiative_order,
-            memory_context=context.memory_context,
-            recent_messages=context.recent_messages,
-            message_history=context.message_history,
-            session_summary=context.session_summary,
-            player_action=f"{action}\n\n[RESOLUTION: {narrator_context}]",
-            player_name=player_name,
-        )
-
-        # =====================================================================
-        # Narrator: Output PROSE + INTENTS
-        # Use bookend layout when world state is available
-        # =====================================================================
-        if context.world_state_yaml:
-            enhanced_context.world_state_yaml = context.world_state_yaml
-            messages = self.narrator._build_bookend_messages(enhanced_context)
-        else:
-            messages = self.narrator._build_messages(enhanced_context)
-        # Build explicit success/failure instruction (inspired by old bot's
-        # "CRITICAL DM RULE" pattern — extremely explicit about outcomes)
         is_success = resolution.success if resolution else True
         skill_label = resolution.skill or resolution.ability or "check" if resolution else "action"
 
@@ -2762,45 +2571,23 @@ Write your narration directly."""
         else:
             outcome_instruction = "The action proceeds naturally."
 
-        messages.append({
-            "role": "system",
-            "content": (
+        spec = NarrationSpec(
+            action=action,
+            player_name=player_name,
+            player_action=f"{action}\n\n[RESOLUTION: {narrator_context}]",
+            prompt=(
                 "###INSTRUCTION###\n"
                 f"RESOLUTION: {narrator_context}\n\n"
                 f"{outcome_instruction}\n\n"
                 "AUTHORIZED REVEALS limit what you can describe. Do NOT invent discoveries beyond what is listed.\n\n"
                 "Write your narration directly."
             ),
-        })
-
-        self._append_tool_reminder(messages)
-
-        response = await self.narrator.client.chat(
-            messages=messages,
-            temperature=self.narrator.temperature,
-            max_tokens=1500,
-            frequency_penalty=NARRATOR_FREQUENCY_PENALTY,
-            presence_penalty=NARRATOR_PRESENCE_PENALTY,
-            tools=self._get_narrator_tools(),
-            tool_choice="auto",
+            prompt_role="system",
+            empty_prose_fallback=f"*{player_name} attempts to {action.lower()}...*",
+            empty_prose_warn_event="narrator_returned_empty",
         )
 
-        prose, proposed_effects = self._extract_prose_and_effects(response, action)
-
-        if not prose:
-            logger.warning("narrator_returned_empty", action=action[:50])
-            return f"*{player_name} attempts to {action.lower()}...*", []
-
-        # Two-turn followup for local models
-        if not proposed_effects and prose:
-            followup_effects = await self._narrator_tool_followup(prose, messages)
-            proposed_effects = followup_effects
-
-        # Fix truncated endings
-        if prose and prose[-1] not in '.!?"\'':
-            prose += "..."
-
-        return prose, proposed_effects
+        return await self._narration_strategy.run(spec, context, triage)
 
     def _build_narrator_context(
         self,

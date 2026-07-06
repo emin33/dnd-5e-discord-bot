@@ -2,7 +2,7 @@
 
 from abc import ABC
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, Union
 
 from ..client import LLMResponse, OllamaClient
 from ..validators.rule_injector import get_rule_injector
@@ -41,8 +41,10 @@ class BrainContext:
     player_action: str = ""
     player_name: str = ""
 
-    # Mechanical context (for Rules Brain)
-    character_stats: Optional[dict] = None
+    # Acting-character details. The session passes a preformatted string
+    # (_build_character_context); dicts are accepted too — both builders
+    # stringify. Was declared Optional[dict] while every producer sent str.
+    character_stats: Optional[Union[str, dict]] = None
     available_actions: list[str] = field(default_factory=list)
 
     # Authoritative world state (YAML-serialized for narrator bookend injection)

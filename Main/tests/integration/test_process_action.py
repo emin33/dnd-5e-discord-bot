@@ -579,91 +579,72 @@ async def test_remove_entity_tool_removes_entity_end_to_end(net):
 
 
 # ── Step-2 narration pins: prompt-assembly inputs per narration path ──────────
-# REFACTOR_PLAN.md Step 2 collapses the three near-duplicate narration paths
+# REFACTOR_PLAN.md Step 2 collapsed the three near-duplicate narration paths
 # (AUDIT_QUALITY_2026_06_09, Duplication P1) into one NarrationStrategy +
-# NarrationSpec. These tests golden-pin what each path sends TODAY through the
-# narrator-client seam:
+# NarrationSpec (llm/narration.py). These tests golden-pin what each path
+# sends through the narrator-client seam — originally the drifted per-path
+# rebuilds, now the CONVERGED strategy:
 #
 #   A  _narrate_mechanical_result  (purchase/sell/inventory mech dict)
 #   B  _narrate_action             (no-mechanics: social/exploration/…)
 #   C  _narrate_outcome            (dice-roll resolution)
-#   +  _narrator_tool_followup     (shared 2nd leg of all three, NOT a 4th path)
+#   +  the tool followup           (shared 2nd leg inside the strategy,
+#                                   NOT a 4th path)
 #
 # Pinned per path, exact-match:
 #   1. field→appears-in-prompt map: every BrainContext string field of the
 #      ORIGINAL context is seeded with a unique sentinel; presence in the
-#      call-1 messages == that field survived the path's hand-copied
-#      BrainContext rebuild AND is rendered by the bookend builder. This is
-#      the audit's drift table in executable form — the strangle commit must
-#      flip entries VISIBLY when a drifted field is deliberately resolved.
+#      call-1 messages == that field reaches the narrator's prompt. The
+#      strategy carries EVERY field via dataclasses.replace, so all three
+#      paths share ONE table now (_FIELDS_IN_PROMPT below records which
+#      entries the Step-2 migration flipped, and why).
 #   2. message-list role shape + the structured player_action decoration
 #      (raw / [NARRATIVE DIRECTION: …] / [RESOLUTION: …] with an injected
 #      fixed roller — no random rolls pinned).
 #   3. chat kwargs (exact key set + values; tools = the profile-tier set).
 #
-# Known cross-path facts the pins encode (verdicts in the Step-2 notes):
-#   - memory/message_history/session_summary/active_quests reach B and C but
-#     NOT A (the audit's "purchase narration loses all grounding" drift).
-#   - kg_context_yaml, narrative_memory, character_stats, last_turn_trace are
-#     computed upstream FOR the narrator but dropped by ALL THREE rebuilds —
-#     pinned False everywhere (the <entity_relationships>/<past_narration>/
-#     <acting_character>/"Last turn:" renderers in brains/base.py never fire
-#     on these paths today).
-#   - Only B streams, and the streaming call carries NO tools kwargs.
+# Cross-path facts the pins encode:
+#   - The pre-Step-2 drift (A's 8-field rebuild losing memory/history/
+#     summary/quests; kg_context_yaml/narrative_memory/character_stats/
+#     last_turn_trace dropped by ALL THREE) is resolved: all were verdicted
+#     BUG and unioned — see the Step-2 migration commit for the verdicts.
+#   - Only B streams (intent), and the streaming call carries NO tools
+#     kwargs — tool recovery on streamed turns rides the followup leg.
 # Prose is never asserted; SRD rule injection is neutralized for determinism.
 
 
 _BOOKEND_REMINDER = (
     "<reminder>\n"
+    "Last turn: S_LAST_TURN_TRACE\n"  # FLIPPED by Step 2: was never rendered
     "Use ONLY the world state provided above as ground truth.\n"
     "Every NPC you mention must appear in the world state at their listed location.\n"
     "</reminder>"
 )
 
-# Sentinel presence expected for path A (_narrate_mechanical_result): the
-# 8-field rebuild at orchestrator.py:2385 + conditional world_state_yaml.
-_MECH_FIELDS_IN_PROMPT = {
-    "campaign_id": False,       # not carried; builders never render it anyway
-    "session_id": False,        # not carried; builders never render it anyway
-    "party_members": True,
-    "party_status": False,      # carried but shadowed by party_members
-    "current_scene": True,
-    "active_quests": False,     # DROPPED by the 8-field rebuild (audit drift)
-    "combat_state": True,
-    "current_combatant": False,  # not carried; latent (renders only w/o combat_state)
-    "initiative_order": False,   # not carried; latent (renders only w/o combat_state)
-    "memory_context": False,    # DROPPED by the 8-field rebuild (audit drift)
-    "message_history": False,   # DROPPED by the 8-field rebuild (audit drift)
-    "recent_messages": False,   # not carried; shadowed by message_history anyway
-    "session_summary": False,   # DROPPED by the 8-field rebuild (audit drift)
-    "character_stats": False,   # dropped by ALL THREE rebuilds
-    "world_state_yaml": True,
-    "kg_context_yaml": False,   # dropped by ALL THREE rebuilds
-    "narrative_memory": False,  # dropped by ALL THREE rebuilds
-    "last_turn_trace": False,   # dropped by ALL THREE rebuilds
-}
-
-# Sentinel presence expected for paths B/C: the 17-field rebuilds at
-# orchestrator.py:2566 / :2711 + conditional world_state_yaml.
-_FULL_FIELDS_IN_PROMPT = {
+# Sentinel presence for ALL THREE paths: the strategy's dataclasses.replace
+# carries every upstream field, so the per-path tables converged into this
+# one. Entries marked FLIPPED were pinned False pre-Step-2 (the drift the
+# audit called out); each flip is a deliberately-resolved BUG verdict argued
+# in the Step-2 migration commit body.
+_FIELDS_IN_PROMPT = {
     "campaign_id": False,       # carried but builders never render it
     "session_id": False,        # carried but builders never render it
     "party_members": True,
     "party_status": False,      # carried but shadowed by party_members
     "current_scene": True,
-    "active_quests": True,
+    "active_quests": True,      # FLIPPED for A (8-field rebuild dropped it)
     "combat_state": True,
     "current_combatant": False,  # carried; latent (renders only w/o combat_state)
     "initiative_order": False,   # carried; latent (renders only w/o combat_state)
-    "memory_context": True,
-    "message_history": True,
+    "memory_context": True,     # FLIPPED for A
+    "message_history": True,    # FLIPPED for A
     "recent_messages": False,   # carried but shadowed by message_history
-    "session_summary": True,
-    "character_stats": False,   # dropped by ALL THREE rebuilds
+    "session_summary": True,    # FLIPPED for A
+    "character_stats": True,    # FLIPPED for all three (<acting_character>)
     "world_state_yaml": True,
-    "kg_context_yaml": False,   # dropped by ALL THREE rebuilds
-    "narrative_memory": False,  # dropped by ALL THREE rebuilds
-    "last_turn_trace": False,   # dropped by ALL THREE rebuilds
+    "kg_context_yaml": True,    # FLIPPED for all three (<entity_relationships>)
+    "narrative_memory": True,   # FLIPPED for all three (<past_narration>)
+    "last_turn_trace": True,    # FLIPPED for all three ("Last turn:" reminder)
 }
 
 # Bookend shape (world_state_yaml present) for a context whose middle blocks
@@ -681,12 +662,16 @@ _FULL_ROLES = [
     "system",     # _append_tool_reminder
 ]
 
-# Path A drops memory/summary/history, so no middle pair and no splice; its
-# per-path prompt is appended as a USER message (not ###INSTRUCTION### system).
+# Path A shares the full bookend shape now (Step 2 restored memory/summary/
+# history to mechanical-result narration); its per-path prompt is still a
+# USER message carrying the mech outcome (not ###INSTRUCTION### system).
 _MECH_ROLES = [
     "system",     # persona + ## Combat (combat_state)
-    "user",       # bookend top: world_state/party/scene (no quests)
+    "user",       # bookend top: world_state/party/scene/quests
     "assistant",  # ack anchor
+    "user",       # bookend middle: memory + session summary  (FLIPPED: was absent)
+    "assistant",  # ack anchor
+    "user",       # message_history splice (1 sentinel message) (FLIPPED: was absent)
     "user",       # final: <player_action> + <reminder>
     "user",       # mech prompt ("The player … attempted …")
     "system",     # _append_tool_reminder
@@ -796,10 +781,11 @@ def _assert_primary_narration_kwargs(net, call) -> None:
 async def test_pin_mechanical_result_narration_prompt_inputs(net):
     """PIN path A (_narrate_mechanical_result) via a purchase turn.
 
-    The 8-field rebuild: purchase/sale narration reaches the model with NO
-    memory, NO message history, NO session summary, NO quests — the audit's
-    live drift cost. Pinned as-is; the strangle resolves each field with a
-    bug-vs-intent verdict and flips this table visibly.
+    Step 2 flipped this table: purchase/sale narration used to reach the
+    model through an 8-field rebuild with NO memory, NO message history, NO
+    session summary, NO quests (the audit's live drift cost). The strategy's
+    union restored them — A now shares the converged field table and the
+    full bookend shape; its per-path delta is only the USER mech prompt.
     """
     _neutralize_rule_injection(net.monkeypatch)
     await net.inv_repo.add_gold(net.character.id, 100)
@@ -824,13 +810,14 @@ async def test_pin_mechanical_result_narration_prompt_inputs(net):
     )
 
     # One primary call; tool call present → no followup. Streaming callback
-    # provided but IGNORED — only path B streams (cross-path drift, pinned).
+    # provided but IGNORED — only path B streams (intent, kept per-path via
+    # NarrationSpec.allow_streaming).
     assert len(net.narrator.calls) == 1
     call = net.narrator.calls[0]
     assert call["method"] == "chat"
     assert tokens == []
 
-    assert _fields_in_prompt(call, sentinels) == _MECH_FIELDS_IN_PROMPT
+    assert _fields_in_prompt(call, sentinels) == _FIELDS_IN_PROMPT
     assert [m["role"] for m in call["messages"]] == _MECH_ROLES
 
     # player_action reaches the bookend RAW (no per-path decoration on A).
@@ -861,10 +848,10 @@ async def test_pin_mechanical_result_narration_prompt_inputs(net):
 async def test_pin_action_narration_prompt_inputs(net):
     """PIN path B (_narrate_action) via a social turn (non-streaming).
 
-    The 17-field rebuild: memory/history/summary/quests all arrive — but
-    kg_context_yaml, narrative_memory, character_stats and last_turn_trace
-    still do not (dropped by every path's rebuild despite being computed
-    for the narrator upstream).
+    B always carried memory/history/summary/quests; Step 2 additionally
+    flipped kg_context_yaml, narrative_memory, character_stats and
+    last_turn_trace into the prompt (computed for the narrator upstream,
+    dropped by every pre-Step-2 rebuild).
     """
     _neutralize_rule_injection(net.monkeypatch)
     context, sentinels = _sentinel_context()
@@ -886,7 +873,7 @@ async def test_pin_action_narration_prompt_inputs(net):
     call = net.narrator.calls[0]
     assert call["method"] == "chat"
 
-    assert _fields_in_prompt(call, sentinels) == _FULL_FIELDS_IN_PROMPT
+    assert _fields_in_prompt(call, sentinels) == _FIELDS_IN_PROMPT
     assert [m["role"] for m in call["messages"]] == _FULL_ROLES
 
     # message_history is spliced verbatim between the bookend middle and the
@@ -920,9 +907,10 @@ async def test_pin_action_narration_prompt_inputs(net):
 async def test_pin_outcome_narration_prompt_inputs(net):
     """PIN path C (_narrate_outcome) via a skill check with a FIXED roller.
 
-    Same 17-field rebuild as B; the per-path delta is the [RESOLUTION: …]
-    decoration + the success/failure instruction. Roll injected (14 vs DC 10
-    → NARROW SUCCESS) so the pin is exact without pinning randomness.
+    Same converged field table as A/B; the per-path delta is the
+    [RESOLUTION: …] decoration + the success/failure instruction. Roll
+    injected (14 vs DC 10 → NARROW SUCCESS) so the pin is exact without
+    pinning randomness.
     """
     _neutralize_rule_injection(net.monkeypatch)
     net.monkeypatch.setattr(net.orch, "roller", _FixedRoller(14))
@@ -949,13 +937,14 @@ async def test_pin_outcome_narration_prompt_inputs(net):
 
     assert result.dice_rolls[0].total == 14
 
-    # One primary call; C never streams even with a callback (pinned drift).
+    # One primary call; C never streams even with a callback (intent, kept
+    # per-path via NarrationSpec.allow_streaming).
     assert len(net.narrator.calls) == 1
     call = net.narrator.calls[0]
     assert call["method"] == "chat"
     assert tokens == []
 
-    assert _fields_in_prompt(call, sentinels) == _FULL_FIELDS_IN_PROMPT
+    assert _fields_in_prompt(call, sentinels) == _FIELDS_IN_PROMPT
     assert [m["role"] for m in call["messages"]] == _FULL_ROLES
 
     expected_resolution = (
@@ -989,8 +978,8 @@ async def test_pin_outcome_narration_prompt_inputs(net):
 async def test_pin_tool_followup_reuses_path_messages(net):
     """PIN the shared followup leg: not a 4th path, a 2nd call inside each.
 
-    When the primary response has prose but no tool calls, every path calls
-    _narrator_tool_followup with the SAME message stack (audit #20 contract)
+    When the primary response has prose but no tool calls, the strategy's
+    followup leg re-sends the SAME message stack (audit #20 contract)
     + assistant prose + a tool-only user turn, under followup-specific kwargs.
     Driven through path B; the leg itself is path-agnostic.
     """
