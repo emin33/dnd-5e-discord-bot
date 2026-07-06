@@ -1,6 +1,5 @@
 """Session repository for game session persistence."""
 
-import uuid
 from typing import Any, Optional
 
 from ..database import Database, get_database
@@ -110,24 +109,22 @@ class SessionRepository:
     async def save_world_snapshot(self, session_id: str, game_state: str) -> None:
         """Persist the session's world snapshot (replace semantics).
 
-        One 'world' row per session: the previous snapshot is deleted in
-        the same transaction, so per-turn saves can't grow the table
-        unboundedly. ``game_state`` is the already-serialized JSON
-        envelope — the session layer owns its shape, this layer just
-        stores bytes.
+        One 'world' row per session under the stable id
+        ``world:<session_id>``, replaced in a single statement — per-turn
+        saves can't grow the table, and there is no multi-statement window
+        in which an interleaved commit on the shared connection could
+        strand a deleted-but-not-reinserted snapshot. ``game_state`` is
+        the already-serialized JSON envelope — the session layer owns its
+        shape, this layer just stores bytes.
         """
         db = await self._get_db()
 
         await db.execute(
-            "DELETE FROM session_snapshot WHERE session_id = ? AND snapshot_type = 'world'",
-            (session_id,),
-        )
-        await db.execute(
             """
-            INSERT INTO session_snapshot (id, session_id, snapshot_type, game_state)
+            INSERT OR REPLACE INTO session_snapshot (id, session_id, snapshot_type, game_state)
             VALUES (?, ?, 'world', ?)
             """,
-            (str(uuid.uuid4()), session_id, game_state),
+            (f"world:{session_id}", session_id, game_state),
         )
         await db.commit()
 
