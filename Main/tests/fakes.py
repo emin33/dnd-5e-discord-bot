@@ -22,7 +22,10 @@ class ScriptedBrain:
     """Cycles a fixed list of ``LLMResponse``s in order (wrapping at the end).
 
     Like LangChain's ``FakeListChatModel``. Use when the call order is known.
-    Records every call on ``.calls`` for spying.
+    Records every call on ``.calls`` for spying — each entry is
+    ``{"messages": [...], "kwargs": {...}, "method": "chat"|"chat_stream"}``
+    (the ``method`` tag lets the narration pins assert which client entry
+    point a path drove, since streaming carries different kwargs).
     """
 
     def __init__(self, responses: list[LLMResponse]):
@@ -30,10 +33,10 @@ class ScriptedBrain:
             raise ValueError("ScriptedBrain needs at least one response")
         self._responses = list(responses)
         self._i = 0
-        self.calls: list[dict] = []  # each: {"messages": [...], "kwargs": {...}}
+        self.calls: list[dict] = []  # each: {"messages", "kwargs", "method"}
 
     async def chat(self, messages: list[dict], **kwargs: Any) -> LLMResponse:
-        self.calls.append({"messages": messages, "kwargs": kwargs})
+        self.calls.append({"messages": messages, "kwargs": kwargs, "method": "chat"})
         resp = self._responses[self._i % len(self._responses)]
         self._i += 1
         return resp
@@ -42,6 +45,7 @@ class ScriptedBrain:
         self, messages: list[dict], on_token: Any = None, **kwargs: Any
     ) -> LLMResponse:
         resp = await self.chat(messages, **kwargs)
+        self.calls[-1]["method"] = "chat_stream"
         if on_token and resp.content:
             await on_token(resp.content)
         return resp
@@ -60,13 +64,14 @@ class FunctionBrain:
         self.calls: list[dict] = []
 
     async def chat(self, messages: list[dict], **kwargs: Any) -> LLMResponse:
-        self.calls.append({"messages": messages, "kwargs": kwargs})
+        self.calls.append({"messages": messages, "kwargs": kwargs, "method": "chat"})
         return self._fn(messages, **kwargs)
 
     async def chat_stream(
         self, messages: list[dict], on_token: Any = None, **kwargs: Any
     ) -> LLMResponse:
         resp = await self.chat(messages, **kwargs)
+        self.calls[-1]["method"] = "chat_stream"
         if on_token and resp.content:
             await on_token(resp.content)
         return resp

@@ -12,6 +12,7 @@ test forgets to inject raises loudly instead of doing real provider I/O.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -70,7 +71,8 @@ class _Net:
         self.brain: FunctionBrain | None = None        # triage + extractors
         self.narrator: ScriptedBrain | None = None     # narration
 
-    async def run(self, action, triage, narration=None, player_name=None):
+    async def run(self, action, triage, narration=None, player_name=None,
+                  context=None, narrations=None, on_narrative_token=None):
         self.brain = FunctionBrain(brain_router(triage))
         # Every get_llm_client()-backed seam → the one branching fake. The
         # extractors and the dedup judge are process-wide singletons, so they
@@ -80,16 +82,21 @@ class _Net:
         self.monkeypatch.setattr(self.orch._state_extractor, "client", self.brain)
         self.monkeypatch.setattr(self.orch._entity_extractor, "client", self.brain)
         self.monkeypatch.setattr(get_dedup_judge(), "client", self.brain)
-        # Narrator tier seam → a scripted fake (one prose+tools response/turn).
-        self.narrator = ScriptedBrain([narration or narration_response("")])
+        # Narrator tier seam → a scripted fake. One prose+tools response per
+        # turn normally; the narration pins pass ``narrations`` to script the
+        # tool-followup / streaming second leg too.
+        self.narrator = ScriptedBrain(
+            list(narrations) if narrations else [narration or narration_response("")]
+        )
         self.orch._narrator_client_factory = lambda tier: self.narrator
 
-        context = BrainContext(
+        context = context or BrainContext(
             campaign_id=self.session.campaign_id,
             session_id=self.session.id,
         )
         return await self.orch.process_action(
-            action, player_name or self.character.name, context
+            action, player_name or self.character.name, context,
+            on_narrative_token=on_narrative_token,
         )
 
 
@@ -569,3 +576,520 @@ async def test_remove_entity_tool_removes_entity_end_to_end(net):
     ))
     assert missing.success is False
     assert "not in scene registry" in (missing.error or "")
+
+
+# ── Step-2 narration pins: prompt-assembly inputs per narration path ──────────
+# REFACTOR_PLAN.md Step 2 collapses the three near-duplicate narration paths
+# (AUDIT_QUALITY_2026_06_09, Duplication P1) into one NarrationStrategy +
+# NarrationSpec. These tests golden-pin what each path sends TODAY through the
+# narrator-client seam:
+#
+#   A  _narrate_mechanical_result  (purchase/sell/inventory mech dict)
+#   B  _narrate_action             (no-mechanics: social/exploration/…)
+#   C  _narrate_outcome            (dice-roll resolution)
+#   +  _narrator_tool_followup     (shared 2nd leg of all three, NOT a 4th path)
+#
+# Pinned per path, exact-match:
+#   1. field→appears-in-prompt map: every BrainContext string field of the
+#      ORIGINAL context is seeded with a unique sentinel; presence in the
+#      call-1 messages == that field survived the path's hand-copied
+#      BrainContext rebuild AND is rendered by the bookend builder. This is
+#      the audit's drift table in executable form — the strangle commit must
+#      flip entries VISIBLY when a drifted field is deliberately resolved.
+#   2. message-list role shape + the structured player_action decoration
+#      (raw / [NARRATIVE DIRECTION: …] / [RESOLUTION: …] with an injected
+#      fixed roller — no random rolls pinned).
+#   3. chat kwargs (exact key set + values; tools = the profile-tier set).
+#
+# Known cross-path facts the pins encode (verdicts in the Step-2 notes):
+#   - memory/message_history/session_summary/active_quests reach B and C but
+#     NOT A (the audit's "purchase narration loses all grounding" drift).
+#   - kg_context_yaml, narrative_memory, character_stats, last_turn_trace are
+#     computed upstream FOR the narrator but dropped by ALL THREE rebuilds —
+#     pinned False everywhere (the <entity_relationships>/<past_narration>/
+#     <acting_character>/"Last turn:" renderers in brains/base.py never fire
+#     on these paths today).
+#   - Only B streams, and the streaming call carries NO tools kwargs.
+# Prose is never asserted; SRD rule injection is neutralized for determinism.
+
+
+_BOOKEND_REMINDER = (
+    "<reminder>\n"
+    "Use ONLY the world state provided above as ground truth.\n"
+    "Every NPC you mention must appear in the world state at their listed location.\n"
+    "</reminder>"
+)
+
+# Sentinel presence expected for path A (_narrate_mechanical_result): the
+# 8-field rebuild at orchestrator.py:2385 + conditional world_state_yaml.
+_MECH_FIELDS_IN_PROMPT = {
+    "campaign_id": False,       # not carried; builders never render it anyway
+    "session_id": False,        # not carried; builders never render it anyway
+    "party_members": True,
+    "party_status": False,      # carried but shadowed by party_members
+    "current_scene": True,
+    "active_quests": False,     # DROPPED by the 8-field rebuild (audit drift)
+    "combat_state": True,
+    "current_combatant": False,  # not carried; latent (renders only w/o combat_state)
+    "initiative_order": False,   # not carried; latent (renders only w/o combat_state)
+    "memory_context": False,    # DROPPED by the 8-field rebuild (audit drift)
+    "message_history": False,   # DROPPED by the 8-field rebuild (audit drift)
+    "recent_messages": False,   # not carried; shadowed by message_history anyway
+    "session_summary": False,   # DROPPED by the 8-field rebuild (audit drift)
+    "character_stats": False,   # dropped by ALL THREE rebuilds
+    "world_state_yaml": True,
+    "kg_context_yaml": False,   # dropped by ALL THREE rebuilds
+    "narrative_memory": False,  # dropped by ALL THREE rebuilds
+    "last_turn_trace": False,   # dropped by ALL THREE rebuilds
+}
+
+# Sentinel presence expected for paths B/C: the 17-field rebuilds at
+# orchestrator.py:2566 / :2711 + conditional world_state_yaml.
+_FULL_FIELDS_IN_PROMPT = {
+    "campaign_id": False,       # carried but builders never render it
+    "session_id": False,        # carried but builders never render it
+    "party_members": True,
+    "party_status": False,      # carried but shadowed by party_members
+    "current_scene": True,
+    "active_quests": True,
+    "combat_state": True,
+    "current_combatant": False,  # carried; latent (renders only w/o combat_state)
+    "initiative_order": False,   # carried; latent (renders only w/o combat_state)
+    "memory_context": True,
+    "message_history": True,
+    "recent_messages": False,   # carried but shadowed by message_history
+    "session_summary": True,
+    "character_stats": False,   # dropped by ALL THREE rebuilds
+    "world_state_yaml": True,
+    "kg_context_yaml": False,   # dropped by ALL THREE rebuilds
+    "narrative_memory": False,  # dropped by ALL THREE rebuilds
+    "last_turn_trace": False,   # dropped by ALL THREE rebuilds
+}
+
+# Bookend shape (world_state_yaml present) for a context whose middle blocks
+# (memory/summary) are populated, plus one history message, plus the
+# path-appended instruction system message + tool-reminder system message.
+_FULL_ROLES = [
+    "system",     # persona + ## Combat (combat_state)
+    "user",       # bookend top: world_state/party/scene/quests
+    "assistant",  # ack anchor
+    "user",       # bookend middle: memory + session summary
+    "assistant",  # ack anchor
+    "user",       # message_history splice (1 sentinel message)
+    "user",       # final: <player_action> + <reminder>
+    "system",     # path-specific ###INSTRUCTION###
+    "system",     # _append_tool_reminder
+]
+
+# Path A drops memory/summary/history, so no middle pair and no splice; its
+# per-path prompt is appended as a USER message (not ###INSTRUCTION### system).
+_MECH_ROLES = [
+    "system",     # persona + ## Combat (combat_state)
+    "user",       # bookend top: world_state/party/scene (no quests)
+    "assistant",  # ack anchor
+    "user",       # final: <player_action> + <reminder>
+    "user",       # mech prompt ("The player … attempted …")
+    "system",     # _append_tool_reminder
+]
+
+
+def _sentinel_context() -> tuple[BrainContext, dict[str, str]]:
+    """An original context with one unique sentinel per narrator-relevant field.
+
+    Mirrors everything session._build_context + process_action populate for
+    the narrator (session.py:741, orchestrator.py:776/1070/1086).
+    """
+    sentinels = {
+        "campaign_id": "S_CAMPAIGN_ID",
+        "session_id": "S_SESSION_ID",
+        "party_members": "S_PARTY_MEMBERS",
+        "party_status": "S_PARTY_STATUS",
+        "current_scene": "S_CURRENT_SCENE",
+        "active_quests": "S_ACTIVE_QUESTS",
+        "combat_state": "S_COMBAT_STATE",
+        "current_combatant": "S_CURRENT_COMBATANT",
+        "initiative_order": "S_INITIATIVE_ORDER",
+        "memory_context": "S_MEMORY_CONTEXT",
+        "message_history": "S_MESSAGE_HISTORY",
+        "recent_messages": "S_RECENT_MESSAGES",
+        "session_summary": "S_SESSION_SUMMARY",
+        "character_stats": "S_CHARACTER_STATS",
+        "world_state_yaml": "S_WORLD_STATE_YAML",
+        "kg_context_yaml": "S_KG_CONTEXT_YAML",
+        "narrative_memory": "S_NARRATIVE_MEMORY",
+        "last_turn_trace": "S_LAST_TURN_TRACE",
+    }
+    context = BrainContext(
+        campaign_id=sentinels["campaign_id"],
+        session_id=sentinels["session_id"],
+        party_members=sentinels["party_members"],
+        party_status=sentinels["party_status"],
+        current_scene=sentinels["current_scene"],
+        active_quests=sentinels["active_quests"],
+        in_combat=False,
+        combat_state=sentinels["combat_state"],
+        combat_round=7,
+        current_combatant=sentinels["current_combatant"],
+        initiative_order=sentinels["initiative_order"],
+        memory_context=sentinels["memory_context"],
+        recent_messages=[{"role": "user", "content": sentinels["recent_messages"]}],
+        message_history=[{"role": "user", "content": sentinels["message_history"]}],
+        session_summary=sentinels["session_summary"],
+        character_stats=sentinels["character_stats"],
+        world_state_yaml=sentinels["world_state_yaml"],
+        kg_context_yaml=sentinels["kg_context_yaml"],
+        narrative_memory=sentinels["narrative_memory"],
+        last_turn_trace=sentinels["last_turn_trace"],
+    )
+    return context, sentinels
+
+
+def _fields_in_prompt(call: dict, sentinels: dict[str, str]) -> dict[str, bool]:
+    """field → does its sentinel appear anywhere in this call's messages."""
+    blob = json.dumps(call["messages"])
+    return {field: (marker in blob) for field, marker in sentinels.items()}
+
+
+def _neutralize_rule_injection(monkeypatch) -> None:
+    """SRD rule injection depends on data availability — pin without it."""
+    class _NoRules:
+        def get_relevant_rules(self, *args, **kwargs) -> str:
+            return ""
+    monkeypatch.setattr(
+        "dnd_bot.llm.brains.base.get_rule_injector", lambda: _NoRules()
+    )
+
+
+class _FixedRoller:
+    """Deterministic d20 so the [RESOLUTION: …] decoration is exact-pinnable."""
+
+    def __init__(self, total: int):
+        self._total = total
+
+    def roll(self, notation, advantage=False, disadvantage=False, reason=""):
+        from dnd_bot.game.mechanics.dice import DiceRoll
+        return DiceRoll(
+            notation=notation, dice_results=[self._total],
+            kept_dice=[self._total], total=self._total, reason=reason,
+        )
+
+
+def _assert_primary_narration_kwargs(net, call) -> None:
+    """The shared chat contract of all three paths' primary (non-stream) call."""
+    kw = call["kwargs"]
+    assert set(kw) == {
+        "temperature", "max_tokens", "frequency_penalty", "presence_penalty",
+        "tools", "tool_choice",
+    }
+    assert kw["temperature"] == net.orch.narrator.temperature
+    assert kw["max_tokens"] == 1500
+    assert kw["frequency_penalty"] == 0.4   # NARRATOR_FREQUENCY_PENALTY
+    assert kw["presence_penalty"] == 0.3    # NARRATOR_PRESENCE_PENALTY
+    assert kw["tool_choice"] == "auto"
+    # The profile-tier tool set, not a hardcoded list (audit #2/N2 regression).
+    assert [t["function"]["name"] for t in kw["tools"]] == [
+        t["function"]["name"] for t in net.orch._get_narrator_tools()
+    ]
+
+
+@pytest.mark.asyncio
+async def test_pin_mechanical_result_narration_prompt_inputs(net):
+    """PIN path A (_narrate_mechanical_result) via a purchase turn.
+
+    The 8-field rebuild: purchase/sale narration reaches the model with NO
+    memory, NO message history, NO session summary, NO quests — the audit's
+    live drift cost. Pinned as-is; the strangle resolves each field with a
+    bug-vs-intent verdict and flips this table visibly.
+    """
+    _neutralize_rule_injection(net.monkeypatch)
+    await net.inv_repo.add_gold(net.character.id, 100)
+    context, sentinels = _sentinel_context()
+    tokens: list[str] = []
+
+    async def on_token(t):
+        tokens.append(t)
+
+    await net.run(
+        action="I buy a healing potion from the merchant",
+        triage=triage_response(
+            "purchase", needs_roll=False,
+            item_name="Healing Potion", item_cost=30, quantity=1,
+        ),
+        narration=narration_response(
+            "The merchant slides the potion across the counter.",
+            tool_calls=[{"name": "ref_entity", "arguments": {"entity_id": "merchant"}}],
+        ),
+        context=context,
+        on_narrative_token=on_token,
+    )
+
+    # One primary call; tool call present → no followup. Streaming callback
+    # provided but IGNORED — only path B streams (cross-path drift, pinned).
+    assert len(net.narrator.calls) == 1
+    call = net.narrator.calls[0]
+    assert call["method"] == "chat"
+    assert tokens == []
+
+    assert _fields_in_prompt(call, sentinels) == _MECH_FIELDS_IN_PROMPT
+    assert [m["role"] for m in call["messages"]] == _MECH_ROLES
+
+    # player_action reaches the bookend RAW (no per-path decoration on A).
+    assert call["messages"][-3]["content"] == (
+        "<player_action>[Elara]: I buy a healing potion from the merchant"
+        "</player_action>\n\n" + _BOOKEND_REMINDER
+    )
+    # A's per-path prompt is a USER message carrying the mech outcome.
+    assert call["messages"][-2]["content"] == (
+        'The player Elara attempted: "I buy a healing potion from the merchant"\n'
+        "\n"
+        "[RESULT: SUCCESS] Elara successfully purchases 1x Healing Potion for "
+        "30gp. They have 70gp remaining.\n"
+        "\n"
+        "Narrate this action dramatically. Remember:\n"
+        "- Show the world's REACTION to the action (environment, NPCs, atmosphere)\n"
+        "- Connect to ongoing tension or stakes from the current scene\n"
+        "- End with something that maintains momentum\n"
+        "\n"
+        "Write your narration directly."
+    )
+    assert call["messages"][-1]["content"].startswith("AFTER writing your prose")
+
+    _assert_primary_narration_kwargs(net, call)
+
+
+@pytest.mark.asyncio
+async def test_pin_action_narration_prompt_inputs(net):
+    """PIN path B (_narrate_action) via a social turn (non-streaming).
+
+    The 17-field rebuild: memory/history/summary/quests all arrive — but
+    kg_context_yaml, narrative_memory, character_stats and last_turn_trace
+    still do not (dropped by every path's rebuild despite being computed
+    for the narrator upstream).
+    """
+    _neutralize_rule_injection(net.monkeypatch)
+    context, sentinels = _sentinel_context()
+
+    await net.run(
+        action="I greet the barkeep warmly",
+        triage=triage_response(
+            "social", needs_roll=False,
+            narrative_direction="Respond with a calm beat",
+        ),
+        narration=narration_response(
+            "The barkeep nods, wiping a mug.",
+            tool_calls=[{"name": "ref_entity", "arguments": {"entity_id": "barkeep"}}],
+        ),
+        context=context,
+    )
+
+    assert len(net.narrator.calls) == 1
+    call = net.narrator.calls[0]
+    assert call["method"] == "chat"
+
+    assert _fields_in_prompt(call, sentinels) == _FULL_FIELDS_IN_PROMPT
+    assert [m["role"] for m in call["messages"]] == _FULL_ROLES
+
+    # message_history is spliced verbatim between the bookend middle and the
+    # final user message.
+    assert call["messages"][5] == {"role": "user", "content": "S_MESSAGE_HISTORY"}
+
+    # player_action carries the triage direction as B's decoration.
+    assert call["messages"][-3]["content"] == (
+        "<player_action>[Elara]: I greet the barkeep warmly\n"
+        "\n"
+        "[NARRATIVE DIRECTION: Respond with a calm beat]</player_action>\n"
+        "\n" + _BOOKEND_REMINDER
+    )
+    # B's per-path prompt is an ###INSTRUCTION### SYSTEM message with the
+    # intent guidance for the triaged action type (+ style/phase hints,
+    # not pinned — rotation text, not structure).
+    instruction = call["messages"][-2]
+    assert instruction["role"] == "system"
+    assert instruction["content"].startswith(
+        "###INSTRUCTION###\n"
+        "Narrate the player's action according to the NARRATIVE DIRECTION above.\n"
+        "\n"
+        "This is a SOCIAL interaction."
+    )
+    assert call["messages"][-1]["content"].startswith("AFTER writing your prose")
+
+    _assert_primary_narration_kwargs(net, call)
+
+
+@pytest.mark.asyncio
+async def test_pin_outcome_narration_prompt_inputs(net):
+    """PIN path C (_narrate_outcome) via a skill check with a FIXED roller.
+
+    Same 17-field rebuild as B; the per-path delta is the [RESOLUTION: …]
+    decoration + the success/failure instruction. Roll injected (14 vs DC 10
+    → NARROW SUCCESS) so the pin is exact without pinning randomness.
+    """
+    _neutralize_rule_injection(net.monkeypatch)
+    net.monkeypatch.setattr(net.orch, "roller", _FixedRoller(14))
+    context, sentinels = _sentinel_context()
+    tokens: list[str] = []
+
+    async def on_token(t):
+        tokens.append(t)
+
+    result = await net.run(
+        action="I study the mosaic on the floor",
+        triage=triage_response(
+            "skill_check", needs_roll=True, skill="perception",
+            ability="wisdom", dc=10,
+            on_success=["a loose tile hiding a recess"],
+        ),
+        narration=narration_response(
+            "One tile sits a hair higher than its neighbors.",
+            tool_calls=[{"name": "ref_entity", "arguments": {"entity_id": "mosaic"}}],
+        ),
+        context=context,
+        on_narrative_token=on_token,
+    )
+
+    assert result.dice_rolls[0].total == 14
+
+    # One primary call; C never streams even with a callback (pinned drift).
+    assert len(net.narrator.calls) == 1
+    call = net.narrator.calls[0]
+    assert call["method"] == "chat"
+    assert tokens == []
+
+    assert _fields_in_prompt(call, sentinels) == _FULL_FIELDS_IN_PROMPT
+    assert [m["role"] for m in call["messages"]] == _FULL_ROLES
+
+    expected_resolution = (
+        "Perception Check: SUCCESS | "
+        "Rolled 14 vs DC 10 (margin: +4) | "
+        "NARROW SUCCESS — reveal the basics, but incompletely | "
+        "AUTHORIZED REVEALS (narrate ONLY these): a loose tile hiding a recess | "
+        "Do NOT invent additional discoveries or outcomes beyond what is listed above."
+    )
+    # player_action carries the resolution as C's decoration.
+    assert call["messages"][-3]["content"] == (
+        "<player_action>[Elara]: I study the mosaic on the floor\n"
+        "\n"
+        f"[RESOLUTION: {expected_resolution}]</player_action>\n"
+        "\n" + _BOOKEND_REMINDER
+    )
+    # C's per-path prompt: SYSTEM instruction restating the resolution and
+    # the explicit success directive.
+    instruction = call["messages"][-2]
+    assert instruction["role"] == "system"
+    assert instruction["content"].startswith(
+        f"###INSTRUCTION###\nRESOLUTION: {expected_resolution}\n\n"
+    )
+    assert "This perception roll SUCCEEDED (rolled 14 vs DC 10)" in instruction["content"]
+    assert call["messages"][-1]["content"].startswith("AFTER writing your prose")
+
+    _assert_primary_narration_kwargs(net, call)
+
+
+@pytest.mark.asyncio
+async def test_pin_tool_followup_reuses_path_messages(net):
+    """PIN the shared followup leg: not a 4th path, a 2nd call inside each.
+
+    When the primary response has prose but no tool calls, every path calls
+    _narrator_tool_followup with the SAME message stack (audit #20 contract)
+    + assistant prose + a tool-only user turn, under followup-specific kwargs.
+    Driven through path B; the leg itself is path-agnostic.
+    """
+    _neutralize_rule_injection(net.monkeypatch)
+    context, _ = _sentinel_context()
+
+    result = await net.run(
+        action="I greet the barkeep warmly",
+        triage=triage_response(
+            "social", needs_roll=False,
+            narrative_direction="Respond with a calm beat",
+        ),
+        narrations=[
+            narration_response("The tavern hums quietly."),  # no tool calls
+            narration_response("", tool_calls=[
+                {"name": "ref_entity", "arguments": {"entity_id": "barkeep"}},
+            ]),
+        ],
+        context=context,
+    )
+
+    assert len(net.narrator.calls) == 2
+    primary, followup = net.narrator.calls
+    assert followup["method"] == "chat"
+
+    # The followup REUSES the full primary stack (roster/world-state intact)…
+    n = len(primary["messages"])
+    assert followup["messages"][:n] == primary["messages"]
+    # …then appends the assistant prose + the tool-only instruction.
+    assert followup["messages"][n] == {
+        "role": "assistant", "content": "The tavern hums quietly.",
+    }
+    assert followup["messages"][n + 1]["role"] == "user"
+    assert followup["messages"][n + 1]["content"].startswith(
+        "Now call a tool for everything you narrated above"
+    )
+    assert len(followup["messages"]) == n + 2
+
+    # Followup-specific kwargs: deterministic, capped, tools REQUIRED, and the
+    # same profile-tier tool set as the primary call (audit #2/N2).
+    kw = followup["kwargs"]
+    assert set(kw) == {"temperature", "max_tokens", "think", "tools", "tool_choice"}
+    assert kw["temperature"] == 0
+    assert kw["max_tokens"] == 500
+    assert kw["think"] is False
+    assert kw["tool_choice"] == "required"
+    assert [t["function"]["name"] for t in kw["tools"]] == [
+        t["function"]["name"] for t in primary["kwargs"]["tools"]
+    ]
+
+    # The followup's tool calls are adopted as the turn's effects.
+    assert [e.effect_type for e in result.proposed_effects] == [EffectType.REF_ENTITY]
+
+
+@pytest.mark.asyncio
+async def test_pin_streaming_only_on_action_path_and_drops_tools(net):
+    """PIN the streaming drift: path B streams when a token callback exists,
+    and the streaming call carries NO tools kwargs at all — tool recovery on
+    a streamed turn rides ENTIRELY on the followup leg.
+    """
+    _neutralize_rule_injection(net.monkeypatch)
+    context, _ = _sentinel_context()
+    tokens: list[str] = []
+
+    async def on_token(t):
+        tokens.append(t)
+
+    result = await net.run(
+        action="I greet the barkeep warmly",
+        triage=triage_response(
+            "social", needs_roll=False,
+            narrative_direction="Respond with a calm beat",
+        ),
+        narrations=[
+            narration_response("The hearth crackles softly."),  # streamed leg
+            narration_response("", tool_calls=[
+                {"name": "ref_entity", "arguments": {"entity_id": "barkeep"}},
+            ]),
+        ],
+        context=context,
+        on_narrative_token=on_token,
+    )
+
+    assert len(net.narrator.calls) == 2
+    stream, followup = net.narrator.calls
+
+    assert stream["method"] == "chat_stream"
+    assert tokens == ["The hearth crackles softly."]
+    # Exact kwargs: penalties/limits identical to chat, but NO tools and NO
+    # tool_choice — the pinned hole the followup exists to cover.
+    kw = stream["kwargs"]
+    assert set(kw) == {
+        "temperature", "max_tokens", "frequency_penalty", "presence_penalty",
+    }
+    assert kw["temperature"] == net.orch.narrator.temperature
+    assert kw["max_tokens"] == 1500
+    assert kw["frequency_penalty"] == 0.4
+    assert kw["presence_penalty"] == 0.3
+
+    assert followup["method"] == "chat"
+    assert followup["kwargs"]["tool_choice"] == "required"
+    assert [e.effect_type for e in result.proposed_effects] == [EffectType.REF_ENTITY]
