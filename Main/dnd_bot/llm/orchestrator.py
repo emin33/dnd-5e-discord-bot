@@ -2226,8 +2226,9 @@ class DMOrchestrator:
         - "core_plus": adds change_location and start_combat. Suitable for
           capable local narrators (Qwen 3.6, Qwen 3.5:27b dense) and any
           cloud narrator.
-        - "full": all 12 tools. Cloud narrators (DeepSeek V4 Pro/Flash,
-          Claude Sonnet/Haiku) handle the larger surface reliably.
+        - "full": all registered tools for the tier. Cloud narrators
+          (DeepSeek V4 Pro/Flash, Claude Sonnet/Haiku) handle the larger
+          surface reliably.
 
         Whatever the narrator doesn't declare is filled in by the state
         and entity extractors as fallback.
@@ -2391,6 +2392,10 @@ Write your narration directly."""
             return await self._narration_strategy.run(spec, context, triage)
         except Exception as e:
             logger.error("narrate_mechanical_failed", error=str(e), exc_info=True)
+            # Clear the cached routing: run() may have died before (or during)
+            # tier selection, and the turn record must not report the PREVIOUS
+            # turn's routing for this degraded turn.
+            self._last_narrator_routing = None
             return narrative_hint, []  # Fall back to the hint
 
     async def _resolve_mechanics(

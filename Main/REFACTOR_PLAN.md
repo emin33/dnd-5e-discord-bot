@@ -121,7 +121,8 @@ transitions / tool-call sequences; semantic-similarity threshold for narration p
     tests drive it with fakes (`tests/unit/test_narration_strategy.py`).
   - The three `_narrate_*` methods are now thin spec builders ending in one
     `strategy.run` call; their hand-copied rebuilds + `_narrator_tool_followup` +
-    the orchestrator's penalty constants deleted (orchestrator 3653→3323 lines).
+    the orchestrator's penalty constants deleted (orchestrator 3504→3323
+    non-blank lines; 4081→3868 raw).
 - **Drift verdicts** (full evidence in `06f35e8`'s body; every pin flip is one of these):
   - **BUG → unioned:** A's missing memory/history/summary/quests (all-paths docstrings
     claimed one architecture; session computes them every turn; the audit's named live
@@ -154,7 +155,7 @@ transitions / tool-call sequences; semantic-similarity threshold for narration p
     never contained. When auditing "is feature X live", check the PROMPT, not the logs.
 - **What Step 3 (combat ModeMachine) should know:**
   - `NarratorBrain.narrate_outcome` (brains/narrator.py:112, driven by the combat
-    coordinator at coordinator.py:1359) is STILL a separate narration stack with its
+    coordinator at coordinator.py:1533 and 1710) is STILL a separate narration stack with its
     own 11-field rebuild — deliberately out of Step-2 scope. When Step 3 touches the
     combat loop, migrate that call onto a `NarrationSpec` too (pin first through the
     coordinator), then `Brain._build_messages/_build_bookend_messages` can go public
@@ -163,8 +164,16 @@ transitions / tool-call sequences; semantic-similarity threshold for narration p
     seams; a combat-mode narration turn should be a new spec construction, not a new
     method — "no business if/elif in the coordinator" applies to prompts too.
   - Narration now sends kg/narrative-memory/character-stats/last-turn-trace: local
-    context windows are ~1-2KB heavier per turn. If a small local model regresses,
-    the knob is upstream (what Step 2.75 computes), not a per-path field drop.
+    context windows are measurably heavier per turn — ~4.9KB on the B/C paths and
+    ~16.5KB on the commerce path (KG-active end-game measurement; the "~1-2KB"
+    first recorded here was an estimate, not a measurement). If a small local model
+    regresses, the knob is upstream (what Step 2.75 computes), not a per-path field
+    drop. (Follow-up: context-budget caps + local_dense 16k→24k, 2026-07-06.)
+- **Correction (2026-07-06, Step-2 review):** `06f35e8`'s try-widening on the
+  commerce path (A) wraps the whole `strategy.run` — the narrative-hint fallback
+  now also covers failures in the context union, message builder, and tool
+  reminder, not just tier selection as the commit message implied. Recorded here
+  since commit messages are immutable history.
 
 ### Step 1 — Tool registry: **DONE** (2026-07-05, commits `51118fb` net + `79e391c` + `2a83637` + `a116319`, 609 tests green)
 - **Net first (per the rule):** `51118fb` widened the Step-0 net with 7 per-tool
