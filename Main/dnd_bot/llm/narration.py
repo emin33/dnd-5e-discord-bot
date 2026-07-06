@@ -85,6 +85,17 @@ class NarrationSpec:
     empty_prose_warn_event: Optional[str] = None
     continue_on_empty_prose: bool = False
 
+    # Tool surface. The orchestrator paths expose the narrator tools and
+    # run the followup recovery leg; combat-outcome narration has NO tool
+    # surface (combat effects are owned by the combat engine, not narrator
+    # tool calls), so False also skips the tool reminder and the followup.
+    enable_tools: bool = True
+
+    # Pass-through to the client's ``think`` kwarg (None = provider
+    # default, i.e. the kwarg is not sent). The combat-outcome path pins
+    # think=False — Qwen3 thinking mode truncates its narration.
+    think: Optional[bool] = None
+
 
 class NarrationStrategy:
     """The single narration code path; consumes a :class:`NarrationSpec`.
@@ -135,12 +146,13 @@ class NarrationStrategy:
 
         # Bookend layout when world state is available (better grounding).
         if enhanced_context.world_state_yaml:
-            messages = narrator._build_bookend_messages(enhanced_context)
+            messages = narrator.build_bookend_messages(enhanced_context)
         else:
-            messages = narrator._build_messages(enhanced_context)
+            messages = narrator.build_messages(enhanced_context)
 
         messages.append({"role": spec.prompt_role, "content": spec.prompt})
-        self._append_tool_reminder(messages)
+        if spec.enable_tools:
+            self._append_tool_reminder(messages)
 
         # Soft context-budget check (chars/4 ≈ tokens). Local Ollama
         # silently truncates the prompt HEAD (system persona +
@@ -151,7 +163,10 @@ class NarrationStrategy:
         num_ctx = getattr(narrator.client, "num_ctx", None)
         if num_ctx:
             est_tokens = sum(len(m.get("content") or "") for m in messages) // 4
-            token_budget = num_ctx - NARRATOR_MAX_TOKENS - TOOL_SCHEMA_TOKEN_OVERHEAD
+            # Tool schemas only ride along when the spec sends tools — a
+            # no-tool-surface turn (combat outcome) has ~5k more headroom.
+            overhead = TOOL_SCHEMA_TOKEN_OVERHEAD if spec.enable_tools else 0
+            token_budget = num_ctx - NARRATOR_MAX_TOKENS - overhead
             if est_tokens > token_budget:
                 logger.warning(
                     "narration_context_near_cap",
@@ -159,6 +174,12 @@ class NarrationStrategy:
                     num_ctx=num_ctx,
                     token_budget=token_budget,
                 )
+
+        # think rides only when the spec sets it — None must mean "kwarg
+        # not sent" so the orchestrator paths' pinned kwargs stay exact.
+        think_kwargs: dict[str, Any] = (
+            {"think": spec.think} if spec.think is not None else {}
+        )
 
         # Stream when the spec allows it, a token callback is wired, and the
         # client supports it. The streaming call carries NO tools kwargs —
@@ -173,16 +194,22 @@ class NarrationStrategy:
                 on_token=on_token,
                 frequency_penalty=NARRATOR_FREQUENCY_PENALTY,
                 presence_penalty=NARRATOR_PRESENCE_PENALTY,
+                **think_kwargs,
             )
         else:
+            tool_kwargs: dict[str, Any] = (
+                {"tools": self._get_tools(), "tool_choice": "auto"}
+                if spec.enable_tools
+                else {}
+            )
             response = await narrator.client.chat(
                 messages=messages,
                 temperature=narrator.temperature,
                 max_tokens=NARRATOR_MAX_TOKENS,
                 frequency_penalty=NARRATOR_FREQUENCY_PENALTY,
                 presence_penalty=NARRATOR_PRESENCE_PENALTY,
-                tools=self._get_tools(),
-                tool_choice="auto",
+                **tool_kwargs,
+                **think_kwargs,
             )
 
         prose, proposed_effects = self._extract_prose_and_effects(response, spec.action)
@@ -195,7 +222,8 @@ class NarrationStrategy:
             prose = spec.empty_prose_fallback
 
         # Two-turn followup: if the narrator didn't call tools, ask again.
-        if not proposed_effects and prose:
+        # No tool surface (combat outcome) -> nothing to recover.
+        if spec.enable_tools and not proposed_effects and prose:
             proposed_effects = await self._tool_followup(prose, messages)
 
         # If prose seems truncated (ends mid-sentence), add ellipsis.

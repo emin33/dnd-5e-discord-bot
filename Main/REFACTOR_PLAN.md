@@ -175,6 +175,108 @@ transitions / tool-call sequences; semantic-similarity threshold for narration p
   reminder, not just tier selection as the commit message implied. Recorded here
   since commit messages are immutable history.
 
+### Step 3 — Combat ModeMachine: **DONE** (2026-07-06, branch `step-3-combat-modemachine`, commits `975365b`..review-fixes, 668 tests green)
+- **Pin first, three times (per the rule):**
+  - `975365b` — the combat-round net the audit demanded: coordinator.py (1586
+    lines) had ZERO direct round coverage. One golden-master trajectory
+    (start_turn → longsword attack with the modifier math pinned via recorded
+    roller REQUESTS → end_turn → scripted NPC scimitar turn → round wrap →
+    killing blow → first-class combat_over) + miss/blocked-condition/surprised-
+    NPC edges. Deterministic via scripted roller + stub SRD + fake inventory —
+    faces scripted, structure exact (the plan's scrub-rolls rule).
+  - `a70c76c` — combat-narration pins through the coordinator at the
+    narrator-client seam (message shape, `[]:`-prefixed decoration, exact
+    kwargs, no-followup, batch semantics).
+  - `e8218a8` — the three combat-entry signals pinned end-to-end (two of them
+    pinned BROKEN with flip arrows). Also fixed a Step-0 net leak: the attack
+    pin had been leaking a CombatManager at `discord:99` into every later test.
+- **What landed:**
+  - **Combat narration (the 4th path) → NarrationSpec/Strategy** (`0ed3181` +
+    `241a767`): `NarratorBrain.narrate_outcome` + `_format_outcome` deleted
+    (AST-span-by-name); the coordinator's `narrate_result`/`narrate_turn_results`
+    are thin spec builders over a strategy instance with no-op collaborators.
+    Two new spec knobs (data, not branches): `enable_tools=False` (no tools
+    kwargs, no tool reminder, no followup leg — combat effects are owned by the
+    combat engine) and `think` pass-through (None = kwarg not sent, so the
+    orchestrator paths' pinned kwargs stayed byte-identical). Verdicts:
+    anti-repetition penalties DRIFT→unified (the stack predated them; pin
+    flipped); think=False INTENT→spec data (Qwen3 truncation); the 11-field
+    rebuild → `replace()` carry-all has NO prompt impact (the coordinator-built
+    context populates only fields the rebuild carried, and `world_state_yaml`
+    stays empty so the basic builder still fires — review-verified); ellipsis
+    fix unified free. `Brain._build_messages/_build_bookend_messages` →
+    public `build_messages/build_bookend_messages` (they ARE the cross-module
+    prompt-assembly API; the audit's "two access protocols" note).
+  - **`game/modes.py` ModeMachine** (`7721521`): pushdown stack, EXPLORATION as
+    the un-poppable base; mode VALUES deliberately, not per-mode classes —
+    nothing consumes per-mode policy yet, and the machine's surface won't change
+    when a consumer appears. `GameSession.enter_combat_mode/exit_combat_mode`
+    are the ONLY writers of the flip and its derived surfaces (state
+    COMBAT/ACTIVE, combat_manager, world_state.phase). `end_combat` = the pop
+    (audit #77's "long-term this is the Step 3 pop"); the dead
+    `GameSessionManager.enter_combat` twin deleted; `process_message`'s inline
+    `combat_triggered` branch deleted. Phase now follows the mode IMMEDIATELY
+    on push/pop; the per-turn phase sync STAYS as reconciler for the OTHER
+    phase writer (StateDelta.phase_change) — phase single-ownership is Step 4's.
+  - **`game/combat/encounter.py` EncounterBuilder** (`3f43b93`):
+    `_trigger_combat` + guess/group/CR helpers moved out of the LLM layer
+    (audit #91) — byte-identical per hostile review except the declared seams.
+    `start_encounter` ends in the mode push (resolving the moved code's own
+    "State transition should be handled by session manager" note) = the ONE
+    combat-entry decision point (audit #89). All three signals funnel through
+    it; the narrator `start_combat` tool effect — which previously set the flag
+    with NO encounter, flipping sessions into COMBAT with no CombatManager —
+    now drafts the scene hostiles like the extractor path and REFUSES to
+    trigger on an empty scene (BUG→fixed; both pinned-broken tests flipped).
+    The already-exists early return now ADOPTS the registered combat
+    (`enter_combat_mode(existing)`) instead of only reporting True — one small
+    dent in the three-stores drift (audit #79).
+- **Adversarial review (found real things again; all fixed in-range):**
+  - `Main/test_combat.py` (root harness, never collected by pytest) still
+    called the deleted `DMOrchestrator._detect_group_count/_singularize_name`
+    statics — the "zero underscore references" sweep missed root scripts.
+    Import swapped to the encounter module; harness re-run green.
+  - The move had silently reordered `session.combat_manager` assignment to
+    AFTER initiative/start. Resolved by going further, deliberately:
+    registration AND the mode push now both happen only after a fully started
+    encounter, so an exception mid-build leaves no half-state anywhere (the
+    b7f8262 code stranded a SETUP-state combat in the registry that the adopt
+    branch would then resurrect).
+  - The strategy's context-budget warning was reserving the 5k tool-schema
+    overhead on the no-tools combat path — overhead now rides only when
+    `spec.enable_tools`.
+  - **Correction to `3f43b93`'s message** (immutable history): "voice paths
+    keep today's behavior" is wrong about the OLD behavior — the old
+    START_COMBAT effect set `combat_triggered=True` even with no session; new
+    code returns False there. Review traced every consumer: the only
+    sessionless `process_action` caller reads `.narrative` only, so the
+    True→False flip has zero observers. The fix stands; the sentence didn't.
+- **Net find (not audit-named):** the unarmed-strike fallback declares
+  `damage_dice="1"`, which DiceRoller rejects as notation — every unarmed HIT
+  errors AFTER consuming the action. Pinned broken with flip arrows
+  (`test_combat_round.py`); the fallback exists in TWO coordinator sites
+  (`_get_weapon_for_attack`, `_get_equipped_weapons`). Fix spun off as its own
+  slice — commerce-rule: separate defect, separate change.
+- **Deliberately out of scope:** the 4-way bot-layer turn-loop driver
+  consolidation (audit #87 asked Step 3 to absorb it). It is bot-layer work
+  (cogs/views import only under the venv; the suite cannot hold the net for
+  it) and deserves its own step with a GameFrontend-shaped seam. Also left:
+  channel_id-vs-session_key keying in the encounter registry (pre-existing
+  migration debt, moved as-is).
+- **Lessons:**
+  - "Zero references" greps must include the ROOT harness scripts, not just
+    the package + tests — pytest's `testpaths` blinds the suite to them, and
+    that is exactly where this wave's real breakage hid.
+  - The audit's "three deciders" framing made the fix shape obvious: don't
+    build three fixes, build ONE entry point and make the deviant signal
+    (START_COMBAT) conform to the participant logic the other two shared.
+  - Publish-last ordering (register/push only after a fully started encounter)
+    fell out of the review for free — when a move reorders side effects, either
+    restore the order or make the new order strictly better AND say so.
+  - A mode machine without per-mode policy consumers is write-only scaffolding;
+    that is fine and honest — its value TODAY is single-ownership of the flip,
+    not polymorphism. Resist growing state classes until a consumer exists.
+
 ### Step 1 — Tool registry: **DONE** (2026-07-05, commits `51118fb` net + `79e391c` + `2a83637` + `a116319`, 609 tests green)
 - **Net first (per the rule):** `51118fb` widened the Step-0 net with 7 per-tool
   `process_action` turns — add_npc / spawn_object / update_player grant+remove
@@ -306,7 +408,7 @@ both **DONE** (`c0b3d67`; the three helpers now route via `_resolve_player_chara
   *specifics* — file:line citations drift, and a few "dead code" / "depends on X" claims
   were stale (e.g. turn_loop's "voice frontend depends on it" was false). Grep-confirm
   before deleting; read the real code before changing it.
-- Baseline: **631 tests pass** (as of Step 2, 2026-07-06; was 609 at Step 1, 506 at Step 0).
+- Baseline: **668 tests pass** (as of Step 3, 2026-07-06; was 631 at Step 2, 609 at Step 1, 506 at Step 0).
   Keep them passing after every step — and keep THIS number current when a
   step lands, or the plan becomes the stale doc it warns about (quality
   re-audit 2026-06-09 caught exactly that).

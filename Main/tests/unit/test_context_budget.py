@@ -146,7 +146,7 @@ def test_build_messages_splices_capped_history():
         ],
     )
 
-    messages = brain._build_messages(context)
+    messages = brain.build_messages(context)
 
     spliced = [m for m in messages if m["role"] == "user"]
     assert spliced[0]["content"] == long[:HISTORY_MESSAGE_MAX_CHARS] + "…"

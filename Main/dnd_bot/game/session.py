@@ -21,6 +21,7 @@ from ..data.repositories import get_character_repo, get_session_repo
 from ..data.repositories.npc_repo import get_npc_repo
 from ..models.npc import EntityType, Disposition, SceneEntity
 from .combat.manager import CombatManager, get_combat_by_key, clear_combat_by_key
+from .modes import GameMode, ModeMachine
 from .scene.registry import get_scene_registry, clear_scene_registry
 from .world_state import WorldState
 
@@ -82,6 +83,11 @@ class GameSession:
 
     # Combat reference (if in combat)
     combat_manager: Optional[CombatManager] = None
+
+    # Mode pushdown machine (REFACTOR_PLAN Step 3): combat pushes onto
+    # exploration and pops back. enter_combat_mode/exit_combat_mode below
+    # are the only writers of the mode flip and its derived surfaces.
+    modes: ModeMachine = field(default_factory=ModeMachine)
 
     # Authoritative world state (narrator reads, Python writes)
     world_state: Optional[WorldState] = None
@@ -163,6 +169,46 @@ class GameSession:
     def update_activity(self) -> None:
         """Update last activity timestamp."""
         self.last_activity = datetime.utcnow()
+
+    def enter_combat_mode(self, combat_manager: Optional[CombatManager] = None) -> None:
+        """Push COMBAT mode — the single combat-entry flip (Step 3).
+
+        One owner for every derived surface of the mode: ``state`` flips to
+        COMBAT, the manager is stored, and ``world_state.phase`` follows
+        immediately (previously it lagged until the next turn's phase sync).
+
+        Args:
+            combat_manager: the encounter just built; None keeps whatever
+                the entry path already stored on the session.
+        """
+        self.modes.push(GameMode.COMBAT)
+        self.state = SessionState.COMBAT
+        if combat_manager is not None:
+            self.combat_manager = combat_manager
+        if self.world_state is not None and self.world_state.phase != "combat":
+            self.world_state.phase = "combat"
+        logger.warning(
+            "session_transitioned_to_combat",
+            session_id=self.id,
+        )
+
+    def exit_combat_mode(self) -> bool:
+        """Pop combat mode — the teardown owner's pop transition (Step 3).
+
+        Returns True when the session was actually in combat mode (the
+        ``did_work`` accounting ``end_combat`` keys on). The manager
+        reference is dropped unconditionally and ``world_state.phase``
+        returns to exploration only if it still reads combat — a narrative
+        phase the delta extractor set (dialogue, rest, …) is preserved.
+        """
+        self.modes.pop()
+        was_combat = self.state == SessionState.COMBAT
+        if was_combat:
+            self.state = SessionState.ACTIVE
+        self.combat_manager = None
+        if self.world_state is not None and self.world_state.phase == "combat":
+            self.world_state.phase = "exploration"
+        return was_combat
 
 
 class GameSessionManager:
@@ -624,14 +670,11 @@ class GameSessionManager:
                         if fact not in session.world_state.established_facts:
                             session.world_state.established_facts.append(fact)
 
-                # Handle auto-combat trigger
-                if response.combat_triggered:
-                    session.state = SessionState.COMBAT
-                    logger.warning(
-                        "session_transitioned_to_combat",
-                        session_id=session.id,
-                        reason="hostility_threshold_crossed",
-                    )
+                # Combat entry needs no handling here: every entry signal
+                # funnels through game.combat.encounter.start_encounter,
+                # which pushes combat mode itself (Step 3 single decision
+                # point). combat_triggered stays on the response for the
+                # bot layer's combat-UI handoff.
 
                 logger.info(
                     "message_processed",
@@ -804,25 +847,6 @@ class GameSessionManager:
             )
         return "\n".join(lines)
 
-    def enter_combat(self, channel_id: int, combat_manager: CombatManager) -> bool:
-        """Transition session to combat state."""
-        session = self.get_session(channel_id)
-        if not session:
-            return False
-
-        session.state = SessionState.COMBAT
-        session.combat_manager = combat_manager
-
-        # Update memory (peek: sync path, never create a fresh manager here)
-        memory = peek_memory_manager(session.campaign_id)
-        if memory:
-            memory.update_scene(
-                f"COMBAT: {combat_manager.combat.encounter_name or 'Battle'} - "
-                f"Round {combat_manager.combat.current_round}"
-            )
-
-        return True
-
     async def end_combat(self, channel_id: int, session_key: Optional[str] = None) -> bool:
         """Single owner of combat teardown (audit P0-3).
 
@@ -899,10 +923,10 @@ class GameSessionManager:
             clear_coordinator_by_key(key)
 
             if session is not None:
-                if session.state == SessionState.COMBAT:
-                    session.state = SessionState.ACTIVE
+                # The ModeMachine pop: state back to ACTIVE, manager
+                # dropped, world_state.phase returned to exploration.
+                if session.exit_combat_mode():
                     did_work = True
-                session.combat_manager = None
 
         if did_work:
             logger.info(

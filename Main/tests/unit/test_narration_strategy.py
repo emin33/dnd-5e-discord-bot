@@ -52,7 +52,7 @@ class _RecordingNarrator:
         self.bookend_contexts: list[BrainContext] = []
         self.basic_contexts: list[BrainContext] = []
 
-    def _build_bookend_messages(self, context):
+    def build_bookend_messages(self, context):
         self.bookend_contexts.append(context)
         return [
             {"role": "system", "content": "PERSONA"},
@@ -63,7 +63,7 @@ class _RecordingNarrator:
             },
         ]
 
-    def _build_messages(self, context):
+    def build_messages(self, context):
         self.basic_contexts.append(context)
         return [{"role": "system", "content": "PERSONA-BASIC"}]
 

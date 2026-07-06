@@ -39,6 +39,11 @@ from .effects import (
     EffectExecutor,
     build_effect_idempotency_key,
 )
+from ..game.combat.encounter import (
+    gather_scene_hostiles,
+    guess_monster_index,
+    start_encounter,
+)
 from ..game.mechanics.dice import get_roller, DiceRoll
 from ..game.mechanics.validation import validate_action, ValidationResult
 from ..game.scene.registry import SceneEntityRegistry
@@ -928,7 +933,7 @@ class DMOrchestrator:
 
                     # Create the target entity on the fly with best-guess SRD match
                     target_name = triage.target_name or "enemy"
-                    monster_index = self._guess_monster_index(target_name)
+                    monster_index = guess_monster_index(target_name)
 
                     from ..models.npc import SceneEntity, EntityType, Disposition
                     entity = SceneEntity(
@@ -955,7 +960,9 @@ class DMOrchestrator:
 
                     # Still failed — absolute fallback, create combat with just this entity
                     hostile_entities = [entity]
-                    combat_started = await self._trigger_combat(hostile_entities, player_initiated=True)
+                    combat_started = start_encounter(
+                        self._current_session, hostile_entities, player_initiated=True
+                    )
                     if combat_started:
                         return DMResponse(
                             narrative=f"*You attack the {target_name}! Combat begins!*",
@@ -3156,18 +3163,16 @@ Write your narration directly."""
 
                     # Combat trigger: LLM determined combat actually started
                     if entity_result.combat_initiated:
-                        hostile_entities = [
-                            e for e in self._scene_registry.get_all_entities()
-                            if e.disposition in (Disposition.HOSTILE, Disposition.UNFRIENDLY)
-                            and e.entity_type in (EntityType.NPC, EntityType.CREATURE)
-                        ]
+                        hostile_entities = gather_scene_hostiles(self._scene_registry)
                         if hostile_entities:
                             logger.warning(
                                 "combat_initiated_by_narrative",
                                 hostile_count=len(hostile_entities),
                                 hostiles=[e.name for e in hostile_entities],
                             )
-                            combat_triggered = await self._trigger_combat(hostile_entities)
+                            combat_triggered = start_encounter(
+                                self._current_session, hostile_entities
+                            )
 
                     # Persist entities to DB immediately (not just at session end)
                     try:
@@ -3299,9 +3304,28 @@ Write your narration directly."""
                 self._sync_effect_to_world_state(effect)
                 self._last_executed_effects.append(effect)
 
-                # Check if this effect triggers combat
+                # Combat-entry signal: route through the single decision
+                # point (Step 3). Previously this only set the flag — no
+                # encounter, no participants — so the session flipped to
+                # COMBAT with no CombatManager (audit: "three live
+                # combat-entry deciders"). Now the narrator's signal drafts
+                # the scene hostiles like the extractor path does, and an
+                # empty scene refuses to trigger at all.
                 if effect.effect_type == EffectType.START_COMBAT:
-                    combat_triggered = True
+                    hostiles = (
+                        gather_scene_hostiles(self._scene_registry)
+                        if self._scene_registry else []
+                    )
+                    if hostiles:
+                        combat_triggered = (
+                            start_encounter(self._current_session, hostiles)
+                            or combat_triggered
+                        )
+                    else:
+                        logger.warning(
+                            "start_combat_signal_without_hostiles",
+                            reason=effect.reason,
+                        )
             else:
                 logger.warning(
                     "effect_execution_failed",
@@ -3418,122 +3442,6 @@ Write your narration directly."""
 
         return 0
 
-    def _get_max_cr_for_party(self) -> float:
-        """Get the maximum CR monster appropriate for the current party."""
-        if not self._current_session:
-            return 1
-
-        levels = []
-        for player in self._current_session.players.values():
-            if player.character:
-                levels.append(player.character.level)
-
-        if not levels:
-            return 1
-
-        avg_level = sum(levels) / len(levels)
-        party_size = len(levels)
-
-        # Rough CR budget: avg_level for a full party of 4, scaled down for fewer
-        # Solo player: max CR ~= level * 0.5
-        # 2 players: max CR ~= level * 0.75
-        # 3-4 players: max CR ~= level
-        scale = min(1.0, party_size / 4)
-        return max(0.5, avg_level * scale)
-
-    def _guess_monster_index(self, entity_name: str) -> Optional[str]:
-        """Try to find an SRD monster index from a narrative entity name.
-
-        Uses keyword matching against SRD monster names.
-        e.g., 'Hooded Figure' might match 'bandit', 'Ash-clad Intruder' → 'cult-fanatic'
-        """
-        from ..data.srd.loader import get_srd
-        srd = get_srd()
-
-        name_lower = entity_name.lower()
-
-        # Try direct SRD lookup first (e.g., "goblin" → "goblin")
-        simple_index = name_lower.replace(" ", "-").replace("'", "")
-        monster = srd.get_monster(simple_index)
-        if monster:
-            return simple_index
-
-        # Try each word from the name as an SRD index
-        for word in name_lower.split():
-            if len(word) > 3:
-                monster = srd.get_monster(word)
-                if monster:
-                    return word
-
-        # Common narrative-to-SRD fallbacks
-        fallbacks = {
-            "guard": "guard", "soldier": "guard", "watchman": "guard",
-            "thug": "thug", "brute": "thug", "enforcer": "thug",
-            "bandit": "bandit", "robber": "bandit", "brigand": "bandit",
-            "assassin": "assassin", "killer": "assassin",
-            "mage": "mage", "wizard": "mage", "sorcerer": "mage", "spellcaster": "mage",
-            "cultist": "cultist", "fanatic": "cult-fanatic", "zealot": "cult-fanatic",
-            "knight": "knight", "champion": "knight", "paladin": "knight",
-            "priest": "priest", "cleric": "priest", "healer": "priest",
-            "spy": "spy", "rogue": "spy", "scout": "scout",
-            "wolf": "wolf", "bear": "brown-bear", "rat": "giant-rat",
-            "skeleton": "skeleton", "zombie": "zombie", "ghoul": "ghoul",
-            "figure": "bandit", "stranger": "bandit", "intruder": "bandit",
-        }
-        for word in name_lower.split():
-            if word in fallbacks:
-                return fallbacks[word]
-
-        return None
-
-    @staticmethod
-    def _detect_group_count(name: str) -> int:
-        """Detect if an entity name represents a group and return the count.
-
-        Returns 1 for singular entities, >1 for groups.
-        Examples: "Goblins" → 3, "Three Bandits" → 3, "Goblin" → 1
-        """
-        import re
-        name_lower = name.lower().strip()
-
-        # Check for explicit number words
-        number_words = {
-            "two": 2, "three": 3, "four": 4, "five": 5, "six": 6,
-            "pair": 2, "couple": 2, "trio": 3,
-        }
-        for word, count in number_words.items():
-            if word in name_lower:
-                return count
-
-        # Check for digit prefix: "3 goblins"
-        digit_match = re.match(r'^(\d+)\s+', name_lower)
-        if digit_match:
-            return min(int(digit_match.group(1)), 6)  # Cap at 6
-
-        # Check for simple plural (ends in 's' but not 'ss')
-        # Common D&D creature names that are plural: goblins, bandits, wolves, skeletons
-        if name_lower.endswith('s') and not name_lower.endswith('ss'):
-            return 3  # Default group size for unnamed plurals
-
-        return 1
-
-    @staticmethod
-    def _singularize_name(name: str) -> str:
-        """Convert a plural group name to singular for individual combatants."""
-        import re
-        # Strip number prefixes: "Three Goblins" → "Goblins", "3 Bandits" → "Bandits"
-        name = re.sub(r'^(?:two|three|four|five|six|pair|couple|trio|\d+)\s+', '', name, flags=re.IGNORECASE).strip()
-
-        # Basic singularize: "Goblins" → "Goblin", "Wolves" → "Wolf"
-        if name.lower().endswith('ves'):
-            return name[:-3] + 'f'  # wolves → wolf
-        if name.lower().endswith('ies'):
-            return name[:-3] + 'y'  # harpies → harpy
-        if name.lower().endswith('s') and not name.lower().endswith('ss'):
-            return name[:-1]
-
-        return name
-
     async def _initiate_combat_from_attack(
         self,
         target_name: Optional[str],
@@ -3603,173 +3511,11 @@ Write your narration directly."""
             hostile_count=len(hostile_entities),
         )
 
-        # Trigger combat with surprise (player initiated)
-        return await self._trigger_combat(hostile_entities, player_initiated=True)
-
-    async def _trigger_combat(
-        self,
-        hostile_entities: list[SceneEntity],
-        player_initiated: bool = False,
-    ) -> bool:
-        """
-        Trigger combat when hostility threshold is crossed or player attacks.
-
-        Creates a combat encounter with hostile entities as combatants.
-
-        Args:
-            hostile_entities: Entities to add as enemy combatants
-            player_initiated: If True, enemies are surprised (player ambush)
-        """
-        if not self._current_session:
-            logger.warning("cannot_trigger_combat_no_session")
-            return False
-
-        from ..game.combat.manager import (
-            CombatManager,
-            set_combat_for_channel,
-            get_combat_for_channel,
+        # Trigger combat with surprise (player initiated); the encounter
+        # builder pushes combat mode itself (Step 3 single entry point).
+        return start_encounter(
+            self._current_session, hostile_entities, player_initiated=True
         )
-
-        # Check if combat already exists (idempotent - don't create duplicates)
-        existing_combat = get_combat_for_channel(self._current_session.channel_id)
-        if existing_combat:
-            logger.info(
-                "combat_already_exists",
-                channel_id=self._current_session.channel_id,
-                combat_id=existing_combat.combat.id,
-            )
-            return True  # Combat exists, so "triggered" is true
-
-        # Get entity names for logging
-        hostile_names = [e.name for e in hostile_entities]
-
-        logger.warning(
-            "auto_triggering_combat",
-            hostile_count=len(hostile_entities),
-            hostiles=hostile_names,
-            player_initiated=player_initiated,
-        )
-
-        try:
-            # Create combat encounter
-            description = f"Combat erupts with {', '.join(hostile_names)}!"
-            if player_initiated:
-                description = f"Your surprise attack catches them off guard! {description}"
-
-            combat = CombatManager.create_encounter(
-                session_id=self._current_session.id,
-                channel_id=self._current_session.channel_id,
-                name="Combat",
-                description=description,
-            )
-
-            # Add player combatants
-            for player in self._current_session.players.values():
-                if player.character:
-                    combat.add_player(player.character)
-
-            # Add hostile entities as combatants
-            for entity in hostile_entities:
-                combatant = None
-                monster_index = entity.monster_index
-
-                # If no monster_index, try fuzzy SRD lookup by name
-                if not monster_index:
-                    monster_index = self._guess_monster_index(entity.name)
-
-                # Detect group entities (plural names like "Goblins", "Three Bandits")
-                # and spawn multiple individual combatants
-                count = self._detect_group_count(entity.name)
-                if count > 1:
-                    # Singular name for individual combatants
-                    singular = self._singularize_name(entity.name)
-                    for i in range(count):
-                        individual_name = f"{singular} {i + 1}" if count > 1 else singular
-                        ind_combatant = None
-                        if monster_index:
-                            try:
-                                ind_combatant = combat.add_monster(monster_index, name=individual_name)
-                            except Exception:
-                                pass
-                        if not ind_combatant:
-                            ind_combatant = combat.add_custom_combatant(
-                                name=individual_name,
-                                hp=entity.hp_estimate or 20,
-                                ac=entity.ac_estimate or 12,
-                                is_player=False,
-                            )
-                        if ind_combatant and player_initiated:
-                            ind_combatant.is_surprised = True
-                    continue  # Skip the single-combatant path below
-
-                if monster_index:
-                    # CR cap: don't spawn monsters too strong for the party
-                    max_cr = self._get_max_cr_for_party()
-                    try:
-                        from ..data.srd.loader import get_srd
-                        srd = get_srd()
-                        monster_data = srd.get_monster(monster_index)
-                        if monster_data:
-                            cr = monster_data.get("challenge_rating", 0)
-                            if cr > max_cr:
-                                # Downgrade to a weaker variant
-                                logger.info(
-                                    "monster_cr_capped",
-                                    monster=monster_index,
-                                    cr=cr,
-                                    max_cr=max_cr,
-                                    entity=entity.name,
-                                )
-                                # Use the base type (e.g., bandit-captain → bandit)
-                                base_index = monster_index.split("-")[0] if "-" in monster_index else None
-                                if base_index and srd.get_monster(base_index):
-                                    monster_index = base_index
-                        combatant = combat.add_monster(monster_index, name=entity.name)
-                    except Exception as e:
-                        logger.warning(
-                            "monster_not_found_using_custom",
-                            monster_index=monster_index,
-                            error=str(e),
-                            exc_info=True,
-                        )
-
-                # Fallback: create custom combatant with reasonable defaults
-                if not combatant:
-                    combatant = combat.add_custom_combatant(
-                        name=entity.name,
-                        hp=entity.hp_estimate or 20,
-                        ac=entity.ac_estimate or 12,
-                        is_player=False,
-                    )
-
-                # SURPRISE: If player initiated, enemies are surprised
-                if combatant and player_initiated:
-                    combatant.is_surprised = True
-                    logger.info("combatant_surprised", combatant=combatant.name)
-
-            # Store combat in session AND register globally for cog access
-            self._current_session.combat_manager = combat
-            set_combat_for_channel(self._current_session.channel_id, combat)
-
-            # Roll initiative immediately so combat is ready
-            combat.roll_all_initiative()
-            combat.start_combat()
-
-            # Note: State transition should be handled by session manager
-            # We return True to signal combat was triggered
-
-            logger.info(
-                "combat_auto_created",
-                combatant_count=len(combat.combat.combatants),
-                hostile_count=len(hostile_entities),
-                enemies_surprised=player_initiated,
-            )
-
-            return True
-
-        except Exception as e:
-            logger.error("combat_trigger_failed", error=str(e), exc_info=True)
-            return False
 
     def _resolve_character_by_name(self, name: str) -> Optional[tuple[str, "Character"]]:
         """Resolve a character by name within the current session.
