@@ -74,26 +74,6 @@ class SessionRepository:
         )
         await db.commit()
 
-    async def end_stale_sessions(self) -> int:
-        """
-        Mark lingering non-terminal sessions as ended (startup hygiene).
-
-        Session resume is not supported, so rows left active by a crashed
-        or killed previous run would otherwise stay active forever. Called
-        once at bot startup. Returns the number of rows updated.
-        """
-        db = await self._get_db()
-
-        cursor = await db.execute(
-            """
-            UPDATE game_session
-            SET state = 'ended', ended_at = CURRENT_TIMESTAMP
-            WHERE state != 'ended'
-            """,
-        )
-        await db.commit()
-        return cursor.rowcount
-
     async def load_active_sessions(self) -> list[dict[str, Any]]:
         """Load every non-ended session row (bot-restart recovery, ROOT-3).
 

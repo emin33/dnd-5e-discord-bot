@@ -6,12 +6,12 @@ DF-16/N10: "factor start_session's post-load init into shared helpers
 invoked by both paths") BEFORE any extraction, so the helper factoring is
 provably behavior-neutral for the start path.
 
-The current restart story these pins coexist with: NO recovery exists —
-``recover_sessions`` was deleted as dead code (commit ffc1b1b, audit P0-10)
-and ``SessionRepository.end_stale_sessions`` sweeps non-terminal rows at
-startup (pinned in tests/integration/test_session_repo_stale.py). ROOT-3
-replaces that sweep with real recovery; the pins here must stay green
-through it.
+These pins were written against the pre-ROOT-3 restart story (no
+recovery; a blanket end_stale_sessions startup sweep) and passed
+unchanged through the extraction of the shared init helpers and the
+rebuild of recover_sessions — that is the behavior-neutrality evidence
+for the start path. Recovery-side behavior lives in
+test_session_recovery.py against the same fakes.
 
 Collaborator seams: see tests/unit/conftest.py (shared with the recovery
 tests — both paths must drive the SAME fakes, that's the parity point).

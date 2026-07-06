@@ -6,7 +6,6 @@ import structlog
 
 from ..config import get_settings
 from ..data import get_database, close_database, get_srd
-from ..data.repositories import get_session_repo
 
 logger = structlog.get_logger()
 
@@ -122,13 +121,25 @@ class DnDBot(commands.Bot):
         await get_database()
         logger.info("database_initialized")
 
-        # Session resume is not supported — mark any active rows left
-        # behind by a crashed/killed previous run as ended so the DB
-        # doesn't accumulate phantom active sessions.
-        session_repo = await get_session_repo()
-        stale = await session_repo.end_stale_sessions()
-        if stale:
-            logger.info("stale_sessions_ended", count=stale)
+        # Recover live sessions from their world snapshots (ROOT-3).
+        # Rows that cannot be rebuilt (no snapshot, corrupt payload,
+        # missing campaign, ...) are marked ended PER-ROW inside
+        # recover_sessions — which is why the old blanket
+        # end_stale_sessions sweep is gone: run after recovery it would
+        # have ended the very rows just recovered (they stay non-terminal
+        # in the DB while live).
+        from ..game.session import get_session_manager
+        from .views.campaign_lobby import set_active_campaign
+
+        recovered = await get_session_manager().recover_sessions()
+        for session in recovered:
+            # Rebuild the active-campaign map so slash commands can route
+            # to the recovered session (audit DF-7: without this the
+            # session was an unreachable zombie until /campaign re-ran).
+            if session.guild_id:
+                set_active_campaign(session.guild_id, session.campaign_id)
+        if recovered:
+            logger.info("sessions_recovered", count=len(recovered))
 
         # Load SRD data
         get_srd()
