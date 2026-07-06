@@ -1,6 +1,7 @@
 """Session repository for game session persistence."""
 
-from typing import Optional
+import uuid
+from typing import Any, Optional
 
 from ..database import Database, get_database
 
@@ -92,6 +93,80 @@ class SessionRepository:
         )
         await db.commit()
         return cursor.rowcount
+
+    async def load_active_sessions(self) -> list[dict[str, Any]]:
+        """Load every non-ended session row (bot-restart recovery, ROOT-3).
+
+        Candidates for recovery; rows the recovery pass cannot rebuild
+        (no world snapshot, missing campaign) are ended individually by
+        the caller. Legacy 'paused' rows are included — nothing can write
+        that state anymore (pause_session was deleted), so they resolve
+        the same way: no snapshot, swept.
+        """
+        db = await self._get_db()
+
+        rows = await db.fetch_all(
+            """
+            SELECT id, campaign_id, channel_id, session_number, state, active_combat_id, started_at
+            FROM game_session
+            WHERE state != 'ended'
+            ORDER BY started_at DESC
+            """,
+        )
+
+        return [
+            {
+                "id": row[0],
+                "campaign_id": row[1],
+                "channel_id": row[2],
+                "session_number": row[3],
+                "state": row[4],
+                "active_combat_id": row[5],
+                "started_at": row[6],
+            }
+            for row in rows
+        ]
+
+    async def save_world_snapshot(self, session_id: str, game_state: str) -> None:
+        """Persist the session's world snapshot (replace semantics).
+
+        One 'world' row per session: the previous snapshot is deleted in
+        the same transaction, so per-turn saves can't grow the table
+        unboundedly. ``game_state`` is the already-serialized JSON
+        envelope — the session layer owns its shape, this layer just
+        stores bytes.
+        """
+        db = await self._get_db()
+
+        await db.execute(
+            "DELETE FROM session_snapshot WHERE session_id = ? AND snapshot_type = 'world'",
+            (session_id,),
+        )
+        await db.execute(
+            """
+            INSERT INTO session_snapshot (id, session_id, snapshot_type, game_state)
+            VALUES (?, ?, 'world', ?)
+            """,
+            (str(uuid.uuid4()), session_id, game_state),
+        )
+        await db.commit()
+
+    async def get_latest_snapshot(self, session_id: str) -> Optional[str]:
+        """The session's most recent 'world' snapshot JSON, or None."""
+        db = await self._get_db()
+
+        row = await db.fetch_one(
+            """
+            SELECT game_state
+            FROM session_snapshot
+            WHERE session_id = ? AND snapshot_type = 'world'
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (session_id,),
+        )
+
+        return row[0] if row else None
 
     async def get_session_number(self, campaign_id: str) -> int:
         """Get the next session number for a campaign."""
