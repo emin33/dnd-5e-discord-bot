@@ -670,11 +670,11 @@ class GameSessionManager:
                         if fact not in session.world_state.established_facts:
                             session.world_state.established_facts.append(fact)
 
-                # Handle auto-combat trigger: push combat mode. The entry
-                # signal's encounter path already registered the manager and
-                # stored it on the session (when it built one).
-                if response.combat_triggered:
-                    session.enter_combat_mode()
+                # Combat entry needs no handling here: every entry signal
+                # funnels through game.combat.encounter.start_encounter,
+                # which pushes combat mode itself (Step 3 single decision
+                # point). combat_triggered stays on the response for the
+                # bot layer's combat-UI handoff.
 
                 logger.info(
                     "message_processed",

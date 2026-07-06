@@ -1155,12 +1155,12 @@ async def test_attack_entry_builds_surprised_encounter(net):
     assert player.is_surprised is False
     # Initiative rolled and combat started, ready for the first turn.
     assert manager.combat.state == CombatState.AWAITING_ACTION
-    # The MODE flip is NOT process_action's today — it happens later, in
-    # process_message's inline combat_triggered branch (the branching Step 3
-    # replaces). Flips when the encounter builder owns the mode push:
-    # state -> COMBAT, phase -> "combat".
-    assert net.session.state == SessionState.STARTING
-    assert net.session.world_state.phase == "exploration"
+    # FLIPPED by the Step-3 rewire: the encounter builder owns the mode
+    # push now, so the flip happens IN the entry point instead of lagging
+    # to process_message's (deleted) inline branch.
+    assert net.session.state == SessionState.COMBAT
+    assert net.session.world_state.phase == "combat"
+    assert net.session.modes.in_combat is True
 
 
 @pytest.mark.asyncio
@@ -1211,21 +1211,20 @@ async def test_narrative_entry_drafts_scene_hostiles_unsurprised(net):
     # NPC-initiated: nobody is surprised.
     assert all(not c.is_surprised for c in manager.combat.combatants)
     assert manager.combat.state == CombatState.AWAITING_ACTION
-    # Same mode-flip split as signal 1 — flips with the ModeMachine.
-    assert net.session.state == SessionState.STARTING
+    # FLIPPED by the Step-3 rewire: the entry point pushed combat mode.
+    assert net.session.state == SessionState.COMBAT
+    assert net.session.modes.in_combat is True
 
 
 @pytest.mark.asyncio
-async def test_start_combat_effect_triggers_with_no_encounter(net):
-    """Signal 3, PINNED BROKEN: the narrator's start_combat tool only sets
-    combat_triggered — no encounter is built, no participants selected, so
-    the session flips to COMBAT downstream with no CombatManager (the
-    audit's 'combat with no manager' wedge, healed only by end_combat).
-    Flips when the single entry point routes this signal through the
-    encounter builder: a manager built from the scene hostiles
-    (["Elara", "Goblin"], nobody surprised) and session.combat_manager set.
-    """
+async def test_start_combat_effect_builds_encounter_from_scene(net):
+    """Signal 3, FLIPPED by the Step-3 rewire (was PINNED BROKEN: the
+    narrator's start_combat tool only set combat_triggered — no encounter,
+    no participants — flipping the session to COMBAT with no CombatManager,
+    the audit's no-manager wedge). The signal now routes through the single
+    entry point and drafts the scene hostiles like the extractor path."""
     from dnd_bot.game.combat.manager import get_combat_for_channel
+    from dnd_bot.game.session import SessionState
 
     net.registry.register_entity(_hostile_goblin())
 
@@ -1242,18 +1241,23 @@ async def test_start_combat_effect_triggers_with_no_encounter(net):
     )
 
     assert result.combat_triggered is True
-    assert get_combat_for_channel(99) is None      # -> manager built when fixed
-    assert net.session.combat_manager is None      # -> is manager when fixed
+    manager = get_combat_for_channel(99)
+    assert manager is not None
+    assert net.session.combat_manager is manager
+    assert sorted(c.name for c in manager.combat.combatants) == ["Elara", "Goblin"]
+    # Narrator-initiated: nobody is surprised.
+    assert all(not c.is_surprised for c in manager.combat.combatants)
+    assert net.session.state == SessionState.COMBAT
 
 
 @pytest.mark.asyncio
-async def test_start_combat_effect_with_no_hostiles_still_triggers(net):
-    """Signal 3 with an EMPTY scene, PINNED BROKEN: combat_triggered=True
-    with nothing to fight — the purest form of the no-manager wedge.
-    Flips when the entry point refuses to trigger an encounter with no
-    participants: combat_triggered False, session state untouched.
-    """
+async def test_start_combat_effect_with_no_hostiles_refuses(net):
+    """Signal 3 with an EMPTY scene, FLIPPED by the Step-3 rewire (was
+    PINNED BROKEN: combat_triggered=True with nothing to fight). The entry
+    point now refuses to trigger an encounter with no participants — no
+    manager, no mode flip, combat_triggered False."""
     from dnd_bot.game.combat.manager import get_combat_for_channel
+    from dnd_bot.game.session import SessionState
 
     result = await net.run(
         action="I ready my staff",
@@ -1267,5 +1271,6 @@ async def test_start_combat_effect_with_no_hostiles_still_triggers(net):
         ),
     )
 
-    assert result.combat_triggered is True          # -> False when fixed
+    assert result.combat_triggered is False
     assert get_combat_for_channel(99) is None
+    assert net.session.state == SessionState.STARTING
