@@ -297,12 +297,16 @@ def start_encounter(
                 combatant.is_surprised = True
                 logger.info("combatant_surprised", combatant=combatant.name)
 
-        # Register globally for cog access
-        set_combat_for_channel(session.channel_id, combat)
-
         # Roll initiative immediately so combat is ready
         combat.roll_all_initiative()
         combat.start_combat()
+
+        # Only a fully started encounter is published: registration and the
+        # mode push happen AFTER initiative/start, so an exception above
+        # leaves NO half-state anywhere (the pre-move code registered and
+        # stored the manager first — a failure stranded a SETUP-state combat
+        # in the registry that the adopt branch would then resurrect).
+        set_combat_for_channel(session.channel_id, combat)
 
         # Push combat mode: state, session.combat_manager, and
         # world_state.phase flip in one owned place (the ModeMachine push

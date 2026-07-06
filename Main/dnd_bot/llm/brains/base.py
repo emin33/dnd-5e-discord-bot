@@ -111,9 +111,9 @@ class Brain(ABC):
 
     Holds the client/temperature/system-prompt configuration and the shared
     message builders. Subclasses expose their own entry points (e.g.
-    NarratorBrain.narrate_outcome/generate_opening); there is no common
-    process() contract — the orchestrator drives narrator calls directly
-    via the client and these builders.
+    NarratorBrain.generate_opening); there is no common process() contract —
+    the NarrationStrategy drives narration directly via the client and
+    these builders.
     """
 
     def __init__(

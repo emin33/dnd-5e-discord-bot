@@ -377,7 +377,9 @@ class TestActionEdges:
         unarmed HIT dies in _execute_action_locked's except and comes back
         as a failed action WITH the action already consumed. Flips when the
         fallback gets a rollable notation (or flat damage handling):
-        success True + 1 bludgeoning damage -> hp 11.
+        success True + 1 bludgeoning damage -> hp 11. NOTE: the fallback
+        exists in TWO places — _get_weapon_for_attack (pinned here) and
+        _get_equipped_weapons — fix both.
         """
         # No equipped items -> WeaponStats fallback "Unarmed Strike".
         repo = _FakeInventoryRepo([])

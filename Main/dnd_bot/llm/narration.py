@@ -163,7 +163,10 @@ class NarrationStrategy:
         num_ctx = getattr(narrator.client, "num_ctx", None)
         if num_ctx:
             est_tokens = sum(len(m.get("content") or "") for m in messages) // 4
-            token_budget = num_ctx - NARRATOR_MAX_TOKENS - TOOL_SCHEMA_TOKEN_OVERHEAD
+            # Tool schemas only ride along when the spec sends tools — a
+            # no-tool-surface turn (combat outcome) has ~5k more headroom.
+            overhead = TOOL_SCHEMA_TOKEN_OVERHEAD if spec.enable_tools else 0
+            token_budget = num_ctx - NARRATOR_MAX_TOKENS - overhead
             if est_tokens > token_budget:
                 logger.warning(
                     "narration_context_near_cap",

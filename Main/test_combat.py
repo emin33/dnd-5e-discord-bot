@@ -671,30 +671,32 @@ def test_coordinator_player_attack(r: TestResult):
 def test_group_detection(r: TestResult):
     """Test _detect_group_count and _singularize_name."""
     print("\n--- Group Detection ---")
-    from dnd_bot.llm.orchestrator import DMOrchestrator
+    # Step 3 moved these helpers out of DMOrchestrator into the game-layer
+    # encounter builder (game/combat/encounter.py).
+    from dnd_bot.game.combat.encounter import _detect_group_count, _singularize_name
 
     # Plural names
-    assert_eq(r, "Goblins -> 3", DMOrchestrator._detect_group_count("Goblins"), 3)
-    assert_eq(r, "Bandits -> 3", DMOrchestrator._detect_group_count("Bandits"), 3)
-    assert_eq(r, "Wolves -> 3", DMOrchestrator._detect_group_count("Wolves"), 3)
+    assert_eq(r, "Goblins -> 3", _detect_group_count("Goblins"), 3)
+    assert_eq(r, "Bandits -> 3", _detect_group_count("Bandits"), 3)
+    assert_eq(r, "Wolves -> 3", _detect_group_count("Wolves"), 3)
 
     # Number words
-    assert_eq(r, "Three Goblins -> 3", DMOrchestrator._detect_group_count("Three Goblins"), 3)
-    assert_eq(r, "Two Bandits -> 2", DMOrchestrator._detect_group_count("Two Bandits"), 2)
-    assert_eq(r, "Five Wolves -> 5", DMOrchestrator._detect_group_count("Five Wolves"), 5)
+    assert_eq(r, "Three Goblins -> 3", _detect_group_count("Three Goblins"), 3)
+    assert_eq(r, "Two Bandits -> 2", _detect_group_count("Two Bandits"), 2)
+    assert_eq(r, "Five Wolves -> 5", _detect_group_count("Five Wolves"), 5)
 
     # Digit prefix
-    assert_eq(r, "3 Goblins -> 3", DMOrchestrator._detect_group_count("3 Goblins"), 3)
+    assert_eq(r, "3 Goblins -> 3", _detect_group_count("3 Goblins"), 3)
 
     # Singular names
-    assert_eq(r, "Goblin -> 1", DMOrchestrator._detect_group_count("Goblin"), 1)
-    assert_eq(r, "Bandit Leader -> 1", DMOrchestrator._detect_group_count("Bandit Leader"), 1)
-    assert_eq(r, "Wolf -> 1", DMOrchestrator._detect_group_count("Wolf"), 1)
+    assert_eq(r, "Goblin -> 1", _detect_group_count("Goblin"), 1)
+    assert_eq(r, "Bandit Leader -> 1", _detect_group_count("Bandit Leader"), 1)
+    assert_eq(r, "Wolf -> 1", _detect_group_count("Wolf"), 1)
 
     # Singularize
-    assert_eq(r, "Goblins -> Goblin", DMOrchestrator._singularize_name("Goblins"), "Goblin")
-    assert_eq(r, "Wolves -> Wolf", DMOrchestrator._singularize_name("Wolves"), "Wolf")
-    assert_eq(r, "Three Bandits -> Bandit", DMOrchestrator._singularize_name("Three Bandits"), "Bandit")
+    assert_eq(r, "Goblins -> Goblin", _singularize_name("Goblins"), "Goblin")
+    assert_eq(r, "Wolves -> Wolf", _singularize_name("Wolves"), "Wolf")
+    assert_eq(r, "Three Bandits -> Bandit", _singularize_name("Three Bandits"), "Bandit")
 
 
 def test_multiplayer_session(r: TestResult):
