@@ -104,6 +104,68 @@ transitions / tool-call sequences; semantic-similarity threshold for narration p
 
 - ~~**Next (the real Step 1 — the tool *registry*)**~~ — **DONE below** (2026-07-05).
 
+### Step 2 — Narration Strategy: **DONE** (2026-07-06, commits `901553c` pins + `7c056e0` + `06f35e8`, 631 tests green)
+- **Pin first (per the rule):** `901553c` golden-pinned the three paths' prompt-assembly
+  inputs through the narrator-client seam BEFORE any production change — a
+  sentinel-per-field "does it reach the prompt" table per path (the audit's drift table
+  in executable form), message role shapes, player_action decorations, exact
+  chat/stream/followup kwargs, and the only-B-streams fact. 618 green at the pin.
+- **What landed:**
+  - `llm/narration.py` — `NarrationSpec` (frozen dataclass: one narration turn as
+    DATA — raw action, decorated player_action, per-path prompt + role, streaming
+    permission, empty-prose policy) + `NarrationStrategy` (the shared skeleton ONCE:
+    injected tier selection riding the Step-0 `_narrator_client_factory` seam →
+    **context union via `dataclasses.replace`** → bookend/basic builder → spec prompt →
+    tool reminder → chat/chat_stream → extraction → empty-prose policy → the audit-#20
+    tool-followup leg → ellipsis fix). Collaborators are injected callables, so 13 unit
+    tests drive it with fakes (`tests/unit/test_narration_strategy.py`).
+  - The three `_narrate_*` methods are now thin spec builders ending in one
+    `strategy.run` call; their hand-copied rebuilds + `_narrator_tool_followup` +
+    the orchestrator's penalty constants deleted (orchestrator 3653→3323 lines).
+- **Drift verdicts** (full evidence in `06f35e8`'s body; every pin flip is one of these):
+  - **BUG → unioned:** A's missing memory/history/summary/quests (all-paths docstrings
+    claimed one architecture; session computes them every turn; the audit's named live
+    cost); kg_context_yaml + narrative_memory (Step 2.75 computed them FOR the narrator,
+    telemetry claimed `context_injected=True`, prompt never saw them — the KG→narrator
+    bridge was dead at prompt assembly); character_stats (`_build_character_context`
+    exists solely to feed the never-firing `<acting_character>` renderer; annotation
+    tidied to `Optional[Union[str, dict]]`); last_turn_trace (built for the bookend
+    "Last turn:" reminder that never rendered); A's missing truncation "..." fix
+    (same 1500-token cap on all three).
+  - **No prompt impact, unified free:** campaign/session ids, current_combatant +
+    initiative_order (latent behind combat_state), recent_messages + party_status
+    (shadowed aliases), combat_round (never populated — the "Current round: 0"
+    cosmetic bug stays out of scope).
+  - **INTENT → spec data:** streaming only on B (`allow_streaming`; stream carries no
+    tools by design — followup is the recovery); prompt role (A=user mech outcome,
+    B/C=system `###INSTRUCTION###`); empty-prose policy (A substitutes the mech hint
+    and continues, B/C bail with placeholder + no effects); A's try/except hint
+    fallback (kept at the call site — mechanics already executed, narration failure
+    must not hide a committed purchase).
+- **Lessons:**
+  - `dataclasses.replace` IS the anti-drift mechanism: the strategy overrides only
+    `player_action`/`player_name`, so "which fields does the narrator get" stopped
+    being a per-path decision anyone can fumble. The audit's exact recommendation;
+    it worked. Field OMISSION is no longer expressible without a spec knob — good.
+  - Sentinel-per-field pins made the bug-vs-intent argument cheap: each verdict is a
+    visible `False→True` diff in one table, not an assertion rewrite. Pin tables that
+    converge (3 tables → 1) are themselves evidence the duplication died.
+  - Telemetry lied: turn logs reported `kg_context_injected` for fields the prompt
+    never contained. When auditing "is feature X live", check the PROMPT, not the logs.
+- **What Step 3 (combat ModeMachine) should know:**
+  - `NarratorBrain.narrate_outcome` (brains/narrator.py:112, driven by the combat
+    coordinator at coordinator.py:1359) is STILL a separate narration stack with its
+    own 11-field rebuild — deliberately out of Step-2 scope. When Step 3 touches the
+    combat loop, migrate that call onto a `NarrationSpec` too (pin first through the
+    coordinator), then `Brain._build_messages/_build_bookend_messages` can go public
+    or move out (the audit's "two access protocols for one component" note).
+  - The strategy is constructor-wired in `DMOrchestrator.__init__` via bound-callable
+    seams; a combat-mode narration turn should be a new spec construction, not a new
+    method — "no business if/elif in the coordinator" applies to prompts too.
+  - Narration now sends kg/narrative-memory/character-stats/last-turn-trace: local
+    context windows are ~1-2KB heavier per turn. If a small local model regresses,
+    the knob is upstream (what Step 2.75 computes), not a per-path field drop.
+
 ### Step 1 — Tool registry: **DONE** (2026-07-05, commits `51118fb` net + `79e391c` + `2a83637` + `a116319`, 609 tests green)
 - **Net first (per the rule):** `51118fb` widened the Step-0 net with 7 per-tool
   `process_action` turns — add_npc / spawn_object / update_player grant+remove
@@ -235,7 +297,7 @@ both **DONE** (`c0b3d67`; the three helpers now route via `_resolve_player_chara
   *specifics* — file:line citations drift, and a few "dead code" / "depends on X" claims
   were stale (e.g. turn_loop's "voice frontend depends on it" was false). Grep-confirm
   before deleting; read the real code before changing it.
-- Baseline: **609 tests pass** (as of Step 1, 2026-07-05; was 506 at Step 0).
+- Baseline: **631 tests pass** (as of Step 2, 2026-07-06; was 609 at Step 1, 506 at Step 0).
   Keep them passing after every step — and keep THIS number current when a
   step lands, or the plan becomes the stale doc it warns about (quality
   re-audit 2026-06-09 caught exactly that).
