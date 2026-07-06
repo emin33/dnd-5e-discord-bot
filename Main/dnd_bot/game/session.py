@@ -5,6 +5,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Callable, Optional
 import asyncio
+import json
 import structlog
 
 from ..models import Character, CombatState
@@ -17,7 +18,7 @@ from ..memory.manager import peek_memory_manager
 from ..llm.orchestrator import get_orchestrator, DMResponse
 from ..llm.brains.base import BrainContext
 from .frontend import GameFrontend, GameEvent
-from ..data.repositories import get_character_repo, get_session_repo
+from ..data.repositories import get_campaign_repo, get_character_repo, get_session_repo
 from ..data.repositories.npc_repo import get_npc_repo
 from ..models.npc import EntityType, Disposition, SceneEntity
 from .combat.manager import CombatManager, get_combat_by_key, clear_combat_by_key
@@ -27,6 +28,11 @@ from .world_state import WorldState
 from .world_store import WorldStateStore
 
 logger = structlog.get_logger()
+
+# Wire-format version of the session_snapshot envelope (ROOT-3). Bump on
+# any shape change; recovery refuses versions it doesn't know rather than
+# resuming from a misread world.
+_SNAPSHOT_VERSION = 1
 
 
 class SessionState(str, Enum):
@@ -298,6 +304,48 @@ class GameSessionManager:
         session.world_state = WorldState()
 
         # Load knowledge graph for persistent entity relationships
+        await self._load_knowledge_graph(session)
+
+        self._sessions[session.session_key] = session
+
+        # Warm the memory cache for this campaign — async getter so persisted
+        # memory tiers (pinned facts, summaries) load from the DB. The module
+        # LRU in memory.manager is the single owner; a session-level copy
+        # used to go split-brain with cogs fetching via get_memory_manager.
+        await get_memory_manager(campaign_id)
+
+        # Persist to database
+        await session_repo.save_session(
+            session_id=session.id,
+            campaign_id=campaign_id,
+            channel_id=channel_id,
+            session_number=session_number,
+            state=self._state_to_db(session.state),
+        )
+
+        # Pre-load known NPCs from database into scene registry.
+        await self._preload_scene_npcs(session)
+
+        logger.info(
+            "session_started",
+            session_id=session.id,
+            channel_id=channel_id,
+            campaign_id=campaign_id,
+            session_number=session_number,
+        )
+
+        return session
+
+    async def _load_knowledge_graph(self, session: GameSession) -> None:
+        """Load the campaign KG + sync entity descriptions to ChromaDB.
+
+        Shared by start_session AND recover_sessions (audit DF-16/N10:
+        recovery previously skipped the Chroma sync entirely). Failure
+        isolation is the caller's contract: a KG failure leaves
+        ``knowledge_graph = None``, a Chroma failure keeps the loaded KG;
+        neither stops the session.
+        """
+        campaign_id = session.campaign_id
         try:
             from .knowledge import KnowledgeGraph, get_kg_repo
             kg_repo = await get_kg_repo()
@@ -331,26 +379,17 @@ class GameSessionManager:
             logger.warning("knowledge_graph_load_failed", error=str(e), exc_info=True)
             session.knowledge_graph = None
 
-        self._sessions[session.session_key] = session
+    async def _preload_scene_npcs(self, session: GameSession) -> None:
+        """Seed the scene registry with the campaign's alive NPCs.
 
-        # Warm the memory cache for this campaign — async getter so persisted
-        # memory tiers (pinned facts, summaries) load from the DB. The module
-        # LRU in memory.manager is the single owner; a session-level copy
-        # used to go split-brain with cogs fetching via get_memory_manager.
-        await get_memory_manager(campaign_id)
-
-        # Persist to database
-        await session_repo.save_session(
-            session_id=session.id,
-            campaign_id=campaign_id,
-            channel_id=channel_id,
-            session_number=session_number,
-            state=self._state_to_db(session.state),
-        )
-
-        # Pre-load known NPCs from database into scene registry. Key by
-        # `session.session_key` (audit #8) so concurrent voice/web sessions
-        # — which all set `channel_id=0` — don't collide on one shared registry.
+        Shared by start_session AND recover_sessions (audit DF-16: recovery
+        previously skipped this, so a recovered narrator lost "who is in
+        the room"). Keyed by ``session.session_key`` (audit #8) so
+        concurrent voice/web sessions — which all set ``channel_id=0`` —
+        don't collide on one shared registry. Failures never stop the
+        session.
+        """
+        campaign_id = session.campaign_id
         scene_registry = get_scene_registry(campaign_id, session.session_key)
         try:
             npc_repo = await get_npc_repo()
@@ -371,13 +410,209 @@ class GameSessionManager:
         except Exception as e:
             logger.warning("npc_preload_failed", error=str(e), exc_info=True)
 
-        logger.info(
-            "session_started",
-            session_id=session.id,
-            channel_id=channel_id,
-            campaign_id=campaign_id,
-            session_number=session_number,
+    async def _persist_world_snapshot(self, session: GameSession) -> None:
+        """Write the session's snapshot envelope (ROOT-3, DF-5).
+
+        Called once per processed turn. The envelope carries the world
+        state (via the store's owned format) plus the session-level facts
+        a restart loses: membership, DM, guild, session key. Characters
+        are stored by id only — the DB row is authoritative for their
+        state (the DF-1 lesson), so recovery re-fetches fresh.
+
+        Persistence failures are logged and never break the turn (the
+        standing persist_failed policy): the player keeps playing, the
+        snapshot retries next turn.
+        """
+        store = session.world_store
+        envelope = {
+            "version": _SNAPSHOT_VERSION,
+            "session_key": session.session_key,
+            "guild_id": session.guild_id,
+            "dm_user_id": session.dm_user_id,
+            "players": [
+                {
+                    "user_id": p.user_id,
+                    "user_name": p.user_name,
+                    "character_id": p.character.id if p.character else None,
+                    "is_dm": p.is_dm,
+                }
+                for p in session.players.values()
+            ],
+            "world_state": store.to_snapshot() if store is not None else None,
+        }
+        try:
+            session_repo = await get_session_repo()
+            await session_repo.save_world_snapshot(session.id, json.dumps(envelope))
+        except Exception as e:
+            logger.error(
+                "persist_failed",
+                entity="world_snapshot",
+                session_id=session.id,
+                error=str(e),
+                exc_info=True,
+            )
+
+    async def recover_sessions(self) -> list[GameSession]:
+        """Rebuild live sessions from persisted snapshots at startup (ROOT-3).
+
+        For every non-ended ``game_session`` row: rebuild the session from
+        its snapshot envelope and run the SAME init helpers as
+        start_session (KG + Chroma sync, scene-NPC preload, memory warm —
+        the DF-16/N10 parity the old deleted recover_sessions never had).
+        Any row that cannot be rebuilt — no snapshot (predates this
+        feature, or a voice/web husk), unknown envelope version, missing
+        campaign, corrupt payload, duplicate session key — is marked ended
+        right there, which replaces the old blanket end_stale_sessions
+        sweep with a per-row verdict.
+
+        Mid-combat resume is a DECLARED NON-GOAL of this slice: a session
+        that died in combat recovers as ACTIVE/exploration (combat state
+        is 100% in-memory bot-layer machinery — manager registry, turn
+        coordinator, Discord views — that the suite cannot hold a net
+        for). The downgrade is logged loudly.
+
+        Returns the recovered sessions; the bot layer rebuilds the
+        active-campaign map from them (DF-7).
+        """
+        session_repo = await get_session_repo()
+        char_repo = await get_character_repo()
+        campaign_repo = await get_campaign_repo()
+
+        rows = await session_repo.load_active_sessions()
+        recovered: list[GameSession] = []
+        for row in rows:
+            session: Optional[GameSession] = None
+            try:
+                session = await self._recover_one(row, session_repo, char_repo, campaign_repo)
+            except Exception as e:
+                logger.error(
+                    "session_recovery_failed",
+                    session_id=row["id"],
+                    error=str(e),
+                    exc_info=True,
+                )
+
+            if session is None:
+                # Unrecoverable: end the row so it never zombie-recurs.
+                await session_repo.end_session(row["id"])
+                continue
+
+            self._sessions[session.session_key] = session
+            recovered.append(session)
+            logger.info(
+                "session_recovered",
+                session_id=session.id,
+                session_key=session.session_key,
+                campaign_id=session.campaign_id,
+                players=len(session.players),
+                world_turn=session.world_state.turn if session.world_state else None,
+            )
+
+        return recovered
+
+    async def _recover_one(
+        self,
+        row: dict,
+        session_repo,
+        char_repo,
+        campaign_repo,
+    ) -> Optional[GameSession]:
+        """Rebuild one session from its snapshot; None = unrecoverable."""
+        session_id = row["id"]
+
+        payload = await session_repo.get_latest_snapshot(session_id)
+        if payload is None:
+            logger.info("session_recovery_no_snapshot", session_id=session_id)
+            return None
+
+        envelope = json.loads(payload)
+        if envelope.get("version") != _SNAPSHOT_VERSION:
+            logger.warning(
+                "session_recovery_unknown_version",
+                session_id=session_id,
+                version=envelope.get("version"),
+            )
+            return None
+
+        # The campaign row is the authoritative guild_id source (DF-7:
+        # the old recover stored guild_id=0, so every slash command's
+        # get_active_campaign_id lookup missed and the session was a
+        # zombie). No campaign row -> nothing to route to -> unrecoverable.
+        campaign = await campaign_repo.get_by_id(row["campaign_id"])
+        if campaign is None:
+            logger.warning(
+                "session_recovery_campaign_missing",
+                session_id=session_id,
+                campaign_id=row["campaign_id"],
+            )
+            return None
+
+        world_data = envelope.get("world_state")
+        world_state = (
+            WorldStateStore.state_from_snapshot(world_data)
+            if world_data is not None
+            else WorldState()
         )
+
+        session = GameSession(
+            id=session_id,
+            channel_id=row["channel_id"],
+            guild_id=campaign.guild_id,
+            campaign_id=row["campaign_id"],
+            session_key=envelope.get("session_key") or "",
+            state=SessionState.ACTIVE,
+            dm_user_id=envelope.get("dm_user_id"),
+        )
+        session.world_state = world_state
+
+        if session.session_key in self._sessions:
+            # Two non-ended rows for one key: rows arrive newest-first,
+            # so the already-registered one is newer. End this husk.
+            logger.warning(
+                "session_recovery_duplicate_key",
+                session_id=session_id,
+                session_key=session.session_key,
+            )
+            return None
+
+        # Combat never survives a restart (declared non-goal): return the
+        # frozen phase to exploration through the store's reconcile seam.
+        if row["state"] == "combat" or world_state.phase == "combat":
+            logger.warning(
+                "combat_not_recovered",
+                session_id=session_id,
+                reason="mid-combat resume is out of scope; session resumes in exploration",
+            )
+        store = session.world_store
+        if store is not None:
+            store.reconcile_phase(in_combat=False)
+
+        # Membership: ids from the envelope, Character state fresh from
+        # the DB (authoritative per the DF-1 lesson).
+        for entry in envelope.get("players", []):
+            character_id = entry.get("character_id")
+            if not character_id:
+                continue
+            character = await char_repo.get_by_id(character_id)
+            if character is None:
+                logger.warning(
+                    "session_recovery_character_missing",
+                    session_id=session_id,
+                    character_id=character_id,
+                )
+                continue
+            player = PlayerInfo(
+                user_id=entry["user_id"],
+                user_name=entry.get("user_name", ""),
+                character=character,
+                is_dm=bool(entry.get("is_dm", False)),
+            )
+            session.players[player.user_id] = player
+
+        # The same post-load init start_session runs (DF-16 / N10 parity).
+        await self._load_knowledge_graph(session)
+        await self._preload_scene_npcs(session)
+        await get_memory_manager(session.campaign_id)
 
         return session
 
@@ -676,6 +911,12 @@ class GameSessionManager:
                 if fact_store is not None and memory.buffer.pinned_facts:
                     for fact in memory.buffer.pinned_facts:
                         fact_store.add_established_fact(fact)
+
+                # Persist the live world so a restart stops silently
+                # dropping it (ROOT-3, DF-5). All of this turn's writes
+                # — extractor delta, effect sync, facts — have landed by
+                # now. Failure-isolated: never breaks the turn.
+                await self._persist_world_snapshot(session)
 
                 # Combat entry needs no handling here: every entry signal
                 # funnels through game.combat.encounter.start_encounter,
