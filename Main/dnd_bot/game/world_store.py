@@ -46,6 +46,26 @@ class WorldStateStore:
         the apply methods below."""
         return self._state
 
+    # ── Persistence format (ROOT-3) ───────────────────────────────────────
+    #
+    # The store owns HOW a WorldState becomes bytes and back; the session
+    # layer owns WHEN (per-turn) and WHERE (session_snapshot via the
+    # session repo). Nothing else may know the wire shape.
+
+    def to_snapshot(self) -> dict:
+        """Serialize the wrapped state to a JSON-safe dict."""
+        return self._state.model_dump(mode="json")
+
+    @staticmethod
+    def state_from_snapshot(data: dict) -> WorldState:
+        """Rebuild a WorldState from :meth:`to_snapshot` output.
+
+        Raises ``pydantic.ValidationError`` on a payload that doesn't
+        validate — recovery treats that session as unrecoverable rather
+        than resuming from a half-parsed world.
+        """
+        return WorldState.model_validate(data)
+
     # ── Session-layer bookkeeping seams ───────────────────────────────────
 
     def begin_turn(self, characters: Iterable["Character"]) -> None:
