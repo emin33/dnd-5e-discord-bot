@@ -924,10 +924,11 @@ class EffectExecutor:
     async def _execute_set_flag(self, effect: ProposedEffect) -> EffectExecutionResult:
         """Acknowledge a flag change — a sync-applied signal effect.
 
-        Not a stub: the actual write (world_state.global_flags[flag] = value)
-        happens in the orchestrator's _sync_effect_to_world_state SET_FLAG
-        branch, which runs only when this returns success — the same division
-        of labor as change_location.
+        Not a stub: the actual write to the world state's global flags
+        happens in ``WorldStateStore.apply_effect``'s SET_FLAG branch
+        (Step 4; was the orchestrator's sync chain), which runs only when
+        this returns success — the same division of labor as
+        change_location.
         """
         return EffectExecutionResult(
             effect=effect,
