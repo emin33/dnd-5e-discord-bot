@@ -670,6 +670,12 @@ class MemoryManager:
         parts.append("")
 
         # Pinned facts from compaction (typed, never re-summarized)
+        # NOTE (context budget): these facts ALSO reach the narrator via
+        # world_state_yaml — session.py syncs pinned_facts into
+        # WorldState.established_facts, which WorldState.to_yaml renders as
+        # "facts:". End-game prompts pay for them twice; deduping is a
+        # design decision (which surface owns facts?), not a cap — left
+        # as-is deliberately (Step-2 review).
         if self.buffer.pinned_facts:
             parts.append("<established_facts>")
             for fact in self.buffer.pinned_facts:

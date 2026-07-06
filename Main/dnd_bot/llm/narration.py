@@ -38,6 +38,10 @@ NARRATOR_PRESENCE_PENALTY = 0.3   # Penalize any already-used token
 # Prose budget shared by every narration turn (streaming and not).
 NARRATOR_MAX_TOKENS = 1500
 
+# Rough token overhead of the serialized tool schemas + tool-call plumbing
+# that rides alongside the messages (full tier measures ~5.1k tokens).
+TOOL_SCHEMA_TOKEN_OVERHEAD = 5000
+
 OnToken = Callable[[str], Awaitable[None]]
 
 
@@ -137,6 +141,24 @@ class NarrationStrategy:
 
         messages.append({"role": spec.prompt_role, "content": spec.prompt})
         self._append_tool_reminder(messages)
+
+        # Soft context-budget check (chars/4 ≈ tokens). Local Ollama
+        # silently truncates the prompt HEAD (system persona +
+        # <world_state>) on overflow — see llm/client.py num_ctx notes —
+        # so warn while the budget is merely tight. Only clients that
+        # declare num_ctx (OllamaClient) have a known hard cap; cloud
+        # narrators (128k+ contexts, no num_ctx attribute) skip the check.
+        num_ctx = getattr(narrator.client, "num_ctx", None)
+        if num_ctx:
+            est_tokens = sum(len(m.get("content") or "") for m in messages) // 4
+            token_budget = num_ctx - NARRATOR_MAX_TOKENS - TOOL_SCHEMA_TOKEN_OVERHEAD
+            if est_tokens > token_budget:
+                logger.warning(
+                    "narration_context_near_cap",
+                    estimated_prompt_tokens=est_tokens,
+                    num_ctx=num_ctx,
+                    token_budget=token_budget,
+                )
 
         # Stream when the spec allows it, a token callback is wired, and the
         # client supports it. The streaming call carries NO tools kwargs —

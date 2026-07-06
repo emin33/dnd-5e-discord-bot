@@ -42,8 +42,19 @@ class MemoryBlock:
         self.last_updated = datetime.utcnow()
 
     def to_context_string(self) -> str:
-        """Format the block for inclusion in LLM context."""
-        return f"<{self.name}>\n{self.content}\n</{self.name}>"
+        """Format the block for inclusion in LLM context.
+
+        Enforces ``max_tokens`` at render time (chars ≈ tokens*4 — same
+        heuristic as ``estimate_tokens``). Blocks grow via ``append()``,
+        which adds the newest facts at the TAIL (see ``add_quest`` /
+        ``add_npc``), so truncation drops the head (oldest) and keeps the
+        most recent content. Stored ``content`` is untouched.
+        """
+        content = self.content
+        max_chars = self.max_tokens * 4
+        if len(content) > max_chars:
+            content = "[...older entries truncated...]\n" + content[-max_chars:]
+        return f"<{self.name}>\n{content}\n</{self.name}>"
 
     def estimate_tokens(self) -> int:
         """Rough token estimate (4 chars per token)."""

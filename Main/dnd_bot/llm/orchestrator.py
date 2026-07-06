@@ -77,6 +77,36 @@ def _get_client_provider(client) -> str:
     return type(client).__name__.replace("Client", "").lower()
 
 
+# Cap for the KG <entity_relationships> YAML injected into narrator context.
+# to_context_yaml caps entity COUNT (max_entities=15) but not per-entity size,
+# so a densely connected end-game subgraph can balloon the block and eat the
+# local narrator's context budget.
+KG_CONTEXT_MAX_CHARS = 4000
+
+
+def _cap_kg_context_yaml(yaml_text: str, max_chars: int = KG_CONTEXT_MAX_CHARS) -> str:
+    """Cap KG context YAML, cutting at an entity-entry boundary.
+
+    Entries in ``KnowledgeGraph.to_context_yaml`` output start with
+    ``- name:`` at column 0 (items of the ``known_entities`` list), so
+    cutting just before one keeps the remaining YAML well-formed. Falls
+    back to a line boundary if even the first entry overflows. A one-line
+    ``# truncated`` marker is appended so the model (and turn-log readers)
+    can tell the block was cut.
+    """
+    if len(yaml_text) <= max_chars:
+        return yaml_text
+    first_entry = yaml_text.find("\n- name:")
+    cut = yaml_text.rfind("\n- name:", 0, max_chars)
+    if cut <= first_entry:
+        # The first entry alone overflows (or no entry marker found) —
+        # fall back to a whole-line boundary rather than keeping nothing.
+        cut = yaml_text.rfind("\n", 0, max_chars)
+        if cut <= 0:
+            cut = max_chars
+    return yaml_text[:cut].rstrip() + "\n# truncated\n"
+
+
 # =============================================================================
 # TRIAGE PROMPT - Rules Brain decides if mechanics are needed
 # =============================================================================
@@ -1078,8 +1108,11 @@ class DMOrchestrator:
                         seen.add(sid)
 
                 if _kg_seed_ids:
-                    # Graph context: structured relationships
-                    context.kg_context_yaml = kg.to_context_yaml(_kg_seed_ids)
+                    # Graph context: structured relationships, capped —
+                    # to_context_yaml limits entity count, not rendered size.
+                    context.kg_context_yaml = _cap_kg_context_yaml(
+                        kg.to_context_yaml(_kg_seed_ids)
+                    )
 
                     # Narrative recall: past prose about these entities
                     try:

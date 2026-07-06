@@ -7,6 +7,31 @@ from typing import Optional, Union
 from ..client import LLMResponse, OllamaClient
 from ..validators.rule_injector import get_rule_injector
 
+# Cap for NON-final history messages spliced into the prompt. A single
+# verbose turn (e.g. a long combat-summary system message) can run ~6k
+# chars; with a 20+ message window that alone can blow a 16k local
+# context. The FINAL (most recent) message is the one the model is
+# responding to and stays uncapped.
+HISTORY_MESSAGE_MAX_CHARS = 1500
+
+
+def _cap_history_messages(history: list[dict]) -> list[dict]:
+    """Return history with every non-final message's content capped.
+
+    Non-mutating: capped entries are copies — the dicts are shared with
+    the memory buffer and must not be modified in place.
+    """
+    if not history:
+        return []
+    capped: list[dict] = []
+    for msg in history[:-1]:
+        content = msg.get("content") or ""
+        if len(content) > HISTORY_MESSAGE_MAX_CHARS:
+            msg = {**msg, "content": content[:HISTORY_MESSAGE_MAX_CHARS] + "…"}
+        capped.append(msg)
+    capped.append(history[-1])
+    return capped
+
 
 @dataclass
 class BrainContext:
@@ -152,7 +177,7 @@ class Brain(ABC):
 
         # Recent messages (use message_history if available, fall back to recent_messages)
         history = context.message_history or context.recent_messages
-        messages.extend(history)
+        messages.extend(_cap_history_messages(history))
 
         # Current player action
         if context.player_action:
@@ -266,9 +291,10 @@ class Brain(ABC):
         # ── Recent messages (verbatim) ──
         # Message window controlled by profile buffer_size. Larger models
         # (Sonnet 200K) can handle more; local models (32K) need less.
-        # The buffer_size IS the message window — no separate cap needed.
+        # Non-final messages are additionally length-capped so one verbose
+        # turn can't blow the local context budget.
         history = context.message_history or context.recent_messages
-        messages.extend(history)
+        messages.extend(_cap_history_messages(history))
 
         # ── FINAL USER (HIGH ATTENTION): Player action + reminders ──
         if context.player_action:

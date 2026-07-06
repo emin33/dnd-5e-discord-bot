@@ -434,3 +434,43 @@ async def test_truncated_prose_gets_ellipsis():
     prose, _ = await h.strategy.run(_spec(), _context(), None)
 
     assert prose == "The rain falls..."
+
+
+# ── Context-budget warning ────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_context_near_cap_warns_when_num_ctx_known():
+    from structlog.testing import capture_logs
+
+    client = ScriptedBrain([
+        narration_response("Fine.", tool_calls=[_REF_TOOL_CALL]),
+    ])
+    # Tiny declared context: budget = 8000 - 1500 - 5000 = 1500 tokens,
+    # so ~8k chars of assembled messages must trip the warning.
+    client.num_ctx = 8000
+    h = _Harness(client)
+
+    with capture_logs() as logs:
+        await h.strategy.run(_spec(prompt="p" * 8000), _context(), None)
+
+    events = [l for l in logs if l["event"] == "narration_context_near_cap"]
+    assert len(events) == 1
+    assert events[0]["num_ctx"] == 8000
+    assert events[0]["token_budget"] == 1500
+    assert events[0]["estimated_prompt_tokens"] > 1500
+
+
+@pytest.mark.asyncio
+async def test_no_near_cap_warning_without_num_ctx():
+    from structlog.testing import capture_logs
+
+    # Cloud-style client: no num_ctx attribute — no known hard cap, no noise.
+    client = ScriptedBrain([
+        narration_response("Fine.", tool_calls=[_REF_TOOL_CALL]),
+    ])
+    h = _Harness(client)
+
+    with capture_logs() as logs:
+        await h.strategy.run(_spec(prompt="p" * 60000), _context(), None)
+
+    assert not [l for l in logs if l["event"] == "narration_context_near_cap"]
