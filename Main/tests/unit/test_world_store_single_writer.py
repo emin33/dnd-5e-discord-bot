@@ -8,7 +8,10 @@ exhaustiveness tests, standing in for the import-linter contract the plan
 wants until that lands. AST (not regex) so docstrings and comments can
 never trip it.
 
-Scope: production code only (``dnd_bot/``). Tests may mutate WorldState
+Scope: the production package (``dnd_bot/``) plus the Main-root harness
+scripts (``Main/*.py``) — the Step-4 review found the harnesses
+hand-rolling phase writes, and prior waves' real breakage hid in exactly
+those files (pytest never collects them). Tests may mutate WorldState
 directly to arrange fixtures. Reads are unrestricted — the read-only view
 is later-step work; this guard is about WRITES.
 
@@ -121,8 +124,9 @@ def _violations_in(path: Path) -> list[str]:
 
 
 def test_no_world_state_writes_outside_the_store():
+    scan_paths = list(DND_BOT.rglob("*.py")) + list(DND_BOT.parent.glob("*.py"))
     violations: list[str] = []
-    for path in sorted(DND_BOT.rglob("*.py")):
+    for path in sorted(scan_paths):
         if path in ALLOWED:
             continue
         violations.extend(_violations_in(path))
