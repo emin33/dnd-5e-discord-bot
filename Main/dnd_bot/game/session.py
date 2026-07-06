@@ -24,6 +24,7 @@ from .combat.manager import CombatManager, get_combat_by_key, clear_combat_by_ke
 from .modes import GameMode, ModeMachine
 from .scene.registry import get_scene_registry, clear_scene_registry
 from .world_state import WorldState
+from .world_store import WorldStateStore
 
 logger = structlog.get_logger()
 
@@ -169,6 +170,20 @@ class GameSession:
     def update_activity(self) -> None:
         """Update last activity timestamp."""
         self.last_activity = datetime.utcnow()
+
+    @property
+    def world_store(self) -> Optional[WorldStateStore]:
+        """Write authority over this session's world state (Step 4).
+
+        Every WorldState mutation goes through the store's apply methods.
+        Derived per access (the store is stateless beyond the wrapped
+        reference), so reassigning ``world_state`` — tests, resets — can
+        never orphan a stale wrapper. None while the session has no world
+        state.
+        """
+        if self.world_state is None:
+            return None
+        return WorldStateStore(self.world_state)
 
     def enter_combat_mode(self, combat_manager: Optional[CombatManager] = None) -> None:
         """Push COMBAT mode — the single combat-entry flip (Step 3).

@@ -25,6 +25,7 @@ from unittest.mock import MagicMock
 import pytest
 import yaml
 
+from dnd_bot.game.world_store import WorldStateStore
 from dnd_bot.game.world_state import (
     WorldState, NPCState, NPCUpdate, StateDelta,
 )
@@ -259,7 +260,7 @@ class TestSyncEffectRecencyBranches:
             ref_alias_used="the innkeeper",
         )
 
-        orch._sync_effect_to_world_state(effect)
+        WorldStateStore(ws).apply_effect(effect)
 
         npc = ws.npcs["bron-uuid"]
         assert npc.last_seen_turn == 10
@@ -279,8 +280,8 @@ class TestSyncEffectRecencyBranches:
             ref_alias_used="the innkeeper",
         )
 
-        orch._sync_effect_to_world_state(effect)
-        orch._sync_effect_to_world_state(effect)
+        WorldStateStore(ws).apply_effect(effect)
+        WorldStateStore(ws).apply_effect(effect)
 
         assert ws.npcs["bron-uuid"].aliases == ["the innkeeper"]
 
@@ -296,7 +297,7 @@ class TestSyncEffectRecencyBranches:
             ref_alias_used="Bron",  # same as canonical name
         )
 
-        orch._sync_effect_to_world_state(effect)
+        WorldStateStore(ws).apply_effect(effect)
 
         # Recency still bumps but no alias spam
         assert ws.npcs["bron-uuid"].last_seen_turn == 10
@@ -316,7 +317,7 @@ class TestSyncEffectRecencyBranches:
             update_disposition="hostile",
         )
 
-        orch._sync_effect_to_world_state(effect)
+        WorldStateStore(ws).apply_effect(effect)
 
         npc = ws.npcs["bron-uuid"]
         assert npc.last_seen_turn == 12
@@ -495,7 +496,7 @@ class TestParaphrasePileUpRegression:
         # non-empty; simulate that gating here.
         if ws.npcs:
             first = await orch._dedup_rewrite(first, "prose-1", ws)
-        orch._sync_effect_to_world_state(first)
+        WorldStateStore(ws).apply_effect(first)
 
         # One NPC now exists, fresh UUID
         assert len(ws.npcs) == 1
@@ -514,7 +515,7 @@ class TestParaphrasePileUpRegression:
         )
         if ws.npcs:
             second = await orch._dedup_rewrite(second, "prose-2", ws)
-        orch._sync_effect_to_world_state(second)
+        WorldStateStore(ws).apply_effect(second)
 
         assert second.effect_type == EffectType.REF_ENTITY
         assert len(ws.npcs) == 1, "rewrite must NOT create a new entity"
@@ -531,7 +532,7 @@ class TestParaphrasePileUpRegression:
         )
         if ws.npcs:
             third = await orch._dedup_rewrite(third, "prose-3", ws)
-        orch._sync_effect_to_world_state(third)
+        WorldStateStore(ws).apply_effect(third)
 
         # ── Verify the regression fence.
         assert len(ws.npcs) == 1, (
@@ -565,7 +566,7 @@ class TestParaphrasePileUpRegression:
         first = ProposedEffect(
             effect_type=EffectType.ADD_NPC, npc_name="Hooded Figure",
         )
-        orch._sync_effect_to_world_state(first)
+        WorldStateStore(ws).apply_effect(first)
         assert len(ws.npcs) == 1
 
         # Turn 2: actually new — old woman by the well, not the hooded one
@@ -579,7 +580,7 @@ class TestParaphrasePileUpRegression:
             npc_description="old woman drawing water",
         )
         second_after = await orch._dedup_rewrite(second, "prose", ws)
-        orch._sync_effect_to_world_state(second_after)
+        WorldStateStore(ws).apply_effect(second_after)
 
         assert second_after.effect_type == EffectType.ADD_NPC
         assert len(ws.npcs) == 2

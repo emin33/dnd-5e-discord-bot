@@ -530,31 +530,25 @@ class TestToolCallsToEffectsBatch:
         assert EffectType.CHANGE_LOCATION in types
 
 
-# ── Orchestrator world-state sync (narrator-authoritative) ──────────────
+# ── World-state sync (narrator-authoritative) ────────────────────────────
 
 
 class TestSyncEffectToWorldState:
-    """_sync_effect_to_world_state: narrator-declared CHANGE_LOCATION and
+    """WorldStateStore.apply_effect (Step 4; was the orchestrator's
+    _sync_effect_to_world_state): narrator-declared CHANGE_LOCATION and
     UPDATE_ENTITY mutate WorldState directly, overriding what the state
     extractor produced earlier in the same turn."""
 
-    def _make_orchestrator_with_session(self):
-        """Build a minimal orchestrator with just enough plumbing to test
-        the sync method in isolation (no LLM, no scene registry, no DB)."""
-        from dnd_bot.llm.orchestrator import DMOrchestrator
+    def _make_store(self):
+        """The store drives the sync in isolation (no LLM, no registry, no DB)."""
         from dnd_bot.game.world_state import WorldState
-        # Bypass __init__ — we only need the method and a session shim.
-        orch = DMOrchestrator.__new__(DMOrchestrator)
+        from dnd_bot.game.world_store import WorldStateStore
         ws = WorldState()
-
-        class _Sess:
-            world_state = ws
-        orch._current_session = _Sess()
-        return orch, ws
+        return WorldStateStore(ws), ws
 
     def test_change_location_overrides_world_state(self):
         from dnd_bot.llm.effects import ProposedEffect, EffectType
-        orch, ws = self._make_orchestrator_with_session()
+        store, ws = self._make_store()
         ws.current_location = "the old square"  # extractor's earlier guess
 
         effect = ProposedEffect(
@@ -562,7 +556,7 @@ class TestSyncEffectToWorldState:
             location_name="the rusty compass",
             location_description="A warm tavern with a roaring fire.",
         )
-        orch._sync_effect_to_world_state(effect)
+        store.apply_effect(effect)
 
         assert ws.current_location == "the rusty compass"
         assert "warm tavern" in ws.location_description
@@ -571,20 +565,20 @@ class TestSyncEffectToWorldState:
 
     def test_change_location_seeds_when_empty(self):
         from dnd_bot.llm.effects import ProposedEffect, EffectType
-        orch, ws = self._make_orchestrator_with_session()
+        store, ws = self._make_store()
         # No prior location
         effect = ProposedEffect(
             effect_type=EffectType.CHANGE_LOCATION,
             location_name="north gate",
         )
-        orch._sync_effect_to_world_state(effect)
+        store.apply_effect(effect)
         assert ws.current_location == "north gate"
         assert ws.connected_locations == []  # nothing to connect from
 
     def test_update_entity_overrides_disposition(self):
         from dnd_bot.llm.effects import ProposedEffect, EffectType
         from dnd_bot.game.world_state import NPCState
-        orch, ws = self._make_orchestrator_with_session()
+        store, ws = self._make_store()
         ws.npcs["kael"] = NPCState(name="kael", disposition="friendly")
 
         effect = ProposedEffect(
@@ -592,13 +586,13 @@ class TestSyncEffectToWorldState:
             update_entity_id="kael",
             update_disposition="hostile",
         )
-        orch._sync_effect_to_world_state(effect)
+        store.apply_effect(effect)
         assert ws.npcs["kael"].disposition == "hostile"
 
     def test_update_entity_status_dead_flips_alive(self):
         from dnd_bot.llm.effects import ProposedEffect, EffectType
         from dnd_bot.game.world_state import NPCState
-        orch, ws = self._make_orchestrator_with_session()
+        store, ws = self._make_store()
         ws.npcs["captain_halloran"] = NPCState(
             name="captain_halloran", alive=True
         )
@@ -607,26 +601,26 @@ class TestSyncEffectToWorldState:
             update_entity_id="captain_halloran",
             update_status="dead",
         )
-        orch._sync_effect_to_world_state(effect)
+        store.apply_effect(effect)
         assert ws.npcs["captain_halloran"].alive is False
 
     def test_update_entity_importance_promotes(self):
         from dnd_bot.llm.effects import ProposedEffect, EffectType
         from dnd_bot.game.world_state import NPCState
-        orch, ws = self._make_orchestrator_with_session()
+        store, ws = self._make_store()
         ws.npcs["grenn"] = NPCState(name="grenn", important=False)
         effect = ProposedEffect(
             effect_type=EffectType.UPDATE_ENTITY,
             update_entity_id="grenn",
             update_importance=True,
         )
-        orch._sync_effect_to_world_state(effect)
+        store.apply_effect(effect)
         assert ws.npcs["grenn"].important is True
 
     def test_update_entity_description_appended(self):
         from dnd_bot.llm.effects import ProposedEffect, EffectType
         from dnd_bot.game.world_state import NPCState
-        orch, ws = self._make_orchestrator_with_session()
+        store, ws = self._make_store()
         ws.npcs["marta"] = NPCState(
             name="marta", description="An old herbalist."
         )
@@ -635,7 +629,7 @@ class TestSyncEffectToWorldState:
             update_entity_id="marta",
             update_description_addition="chipped front teeth",
         )
-        orch._sync_effect_to_world_state(effect)
+        store.apply_effect(effect)
         assert "old herbalist" in ws.npcs["marta"].description
         assert "chipped front teeth" in ws.npcs["marta"].description
 
@@ -644,12 +638,12 @@ class TestSyncEffectToWorldState:
         is a no-op (it's already executed against scene_registry, and the
         extractor will catch up next turn if it matters)."""
         from dnd_bot.llm.effects import ProposedEffect, EffectType
-        orch, ws = self._make_orchestrator_with_session()
+        store, ws = self._make_store()
         effect = ProposedEffect(
             effect_type=EffectType.UPDATE_ENTITY,
             update_entity_id="ghost_who_never_existed",
             update_disposition="hostile",
         )
         # Must not raise
-        orch._sync_effect_to_world_state(effect)
+        store.apply_effect(effect)
         assert "ghost_who_never_existed" not in ws.npcs
