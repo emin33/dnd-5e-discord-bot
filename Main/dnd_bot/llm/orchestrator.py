@@ -2715,22 +2715,13 @@ Write your narration directly."""
                 referenced_entity_ids=referenced_entity_ids,
             )
 
-            # Phase-4 dedup pass: run extractor's new_npcs through the brain
-            # judge BEFORE applying. The narrator-side _dedup_rewrite catches
-            # paraphrase drift in tool-call effects; this catches the same
-            # drift on the extractor side (where the extractor saw prose
-            # like "Old Bram" and proposed a new NPC even though "Bram" is
-            # already registered). On rewrite: drop from new_npcs, append
-            # an NPCUpdate(id=..., add_aliases=[...]) so the alias is
-            # recorded against the existing record.
-            if delta.new_npcs and world_state.npcs:
-                delta = await self._dedup_extractor_new_npcs(
-                    delta, narrative, world_state
-                )
-
-            # Apply through the single-writer store (Step 4); the store's
-            # apply_delta is where the Step-5 dedup pass will slot in.
-            rejections = WorldStateStore(world_state).apply_delta(delta)
+            # Apply through the single-writer store: dedup (the brain judge
+            # catching extractor paraphrases like "Old Bram" for a
+            # registered "Bram") → validate → write, all inside apply_delta
+            # (Step 5).
+            rejections = await WorldStateStore(world_state).apply_delta(
+                delta, narrator_prose=narrative
+            )
 
             if rejections:
                 logger.debug(
@@ -2757,87 +2748,6 @@ Write your narration directly."""
         except Exception as e:
             logger.warning("state_delta_extraction_failed", error=str(e), exc_info=True)
             return None
-
-    async def _dedup_extractor_new_npcs(
-        self,
-        delta: "StateDelta",
-        narrator_prose: str,
-        world_state: "WorldState",
-    ) -> "StateDelta":
-        """Run each ``delta.new_npcs`` entry through the brain dedup judge.
-
-        Mirrors :meth:`_dedup_rewrite` (which runs on narrator-side ADD_NPC
-        effects), but operates on the state-extractor's proposed ``new_npcs``
-        before they reach ``apply_delta``.
-
-        On high-confidence rewrite the entry is dropped from ``new_npcs``
-        and an ``NPCUpdate(id=target_id, add_aliases=[paraphrased_name])``
-        is appended to ``npc_updates`` so ``apply_delta`` records the
-        alias against the existing entity.
-
-        Default safe: any judge error / parse failure / unknown target id
-        keeps the original ``new_npcs`` entry. False negatives (missed
-        dedup) recover next turn when the registry has more recency
-        signal; false positives (wrongly merging two distinct characters)
-        do not, so we bias to keep.
-        """
-        from ..game.world_state import NPCUpdate
-
-        try:
-            from .extractors.dedup_judge import get_dedup_judge
-        except Exception as e:
-            logger.warning("extractor_dedup_judge_import_failed", error=str(e), exc_info=True)
-            return delta
-
-        judge = get_dedup_judge()
-        surviving: list = []
-        appended_updates: list = []
-
-        for proposed in delta.new_npcs:
-            try:
-                decision = await judge.judge_add_npc(
-                    proposed_name=proposed.name or "",
-                    proposed_description=proposed.description or "",
-                    narrator_prose=narrator_prose,
-                    existing_npcs=list(world_state.npcs.values()),
-                    current_turn=world_state.turn,
-                )
-            except Exception as e:
-                logger.warning("extractor_dedup_judge_call_exception", error=str(e), exc_info=True)
-                surviving.append(proposed)
-                continue
-
-            if not decision.is_rewrite:
-                surviving.append(proposed)
-                continue
-
-            target_id = decision.target_id
-            if target_id not in world_state.npcs:
-                logger.warning(
-                    "extractor_dedup_target_not_in_world_state",
-                    target_id=target_id,
-                )
-                surviving.append(proposed)
-                continue
-
-            alias = (decision.alias or proposed.name or "").strip()
-            update = NPCUpdate(
-                id=target_id,
-                add_aliases=[alias] if alias else None,
-            )
-            appended_updates.append(update)
-
-            logger.info(
-                "extractor_dedup_rewrite_applied",
-                proposed_name=proposed.name,
-                target_id=target_id,
-                alias=alias,
-            )
-
-        delta.new_npcs = surviving
-        if appended_updates:
-            delta.npc_updates = list(delta.npc_updates) + appended_updates
-        return delta
 
     def _sync_npcs_to_registry(
         self,
@@ -3019,18 +2929,6 @@ Write your narration directly."""
             if self._current_session else None
         )
 
-        # Phase-5 dedup judge: when an ADD_NPC effect proposes an NPC that
-        # looks like one already in the registry (paraphrase drift), the
-        # judge rewrites the effect to REF_ENTITY pointing at the existing
-        # id. The judge defaults to ACCEPT on any uncertainty (false
-        # negatives are recoverable; false positives merge distinct
-        # characters and are not). Idempotency keys are still indexed by
-        # tool-call position, so retry safety survives the rewrite (per
-        # research: never derive idempotency keys from LLM output).
-        world_state_for_dedup = (
-            getattr(self._current_session, 'world_state', None)
-            if self._current_session else None
-        )
         narrator_prose = getattr(self, "_last_narrator_prose", "") or ""
 
         for i, effect in enumerate(effects):
@@ -3049,17 +2947,16 @@ Write your narration directly."""
                 # TODO: Queue for player confirmation via Discord UI
                 continue
 
-            # Dedup judge — only runs on ADD_NPC effects with a registry to
-            # check against. Ask the brain whether this is genuinely new.
-            if (
-                effect.effect_type == EffectType.ADD_NPC
-                and world_state_for_dedup is not None
-                and world_state_for_dedup.npcs
-                and effect.npc_name
-            ):
-                effect = await self._dedup_rewrite(
-                    effect, narrator_prose, world_state_for_dedup
-                )
+            # Dedup judge — a store-owned write-pipeline step (Step 5):
+            # ADD_NPC effects that look like a paraphrase of a roster
+            # entity are rewritten to REF_ENTITY BEFORE validation and
+            # execution, so the rewritten effect is what executes. The
+            # judge defaults to ACCEPT on any uncertainty (false negatives
+            # are recoverable; false positives merge distinct characters
+            # and are not). Idempotency keys are indexed by tool-call
+            # position, so retry safety survives the rewrite.
+            if world_store is not None:
+                effect = await world_store.dedup_effect(effect, narrator_prose)
 
             # Validate
             validation = self._effect_validator.validate(effect)
@@ -3117,81 +3014,6 @@ Write your narration directly."""
                 )
 
         return combat_triggered
-
-    async def _dedup_rewrite(
-        self,
-        effect: ProposedEffect,
-        narrator_prose: str,
-        world_state: "WorldState",
-    ) -> ProposedEffect:
-        """Run the brain dedup judge on an ADD_NPC effect.
-
-        If the judge confidently identifies the proposed NPC as one
-        already in the registry (paraphrase drift), rewrite the effect
-        in-place to a REF_ENTITY pointing at the existing id and stash
-        the paraphrased name as an alias. Otherwise return the original
-        effect unchanged.
-
-        Default safe: returns original on any judge error / parse failure
-        / "accept" decision.
-        """
-        try:
-            from .extractors.dedup_judge import get_dedup_judge
-        except Exception as e:
-            logger.warning("dedup_judge_import_failed", error=str(e), exc_info=True)
-            return effect
-
-        judge = get_dedup_judge()
-        try:
-            decision = await judge.judge_add_npc(
-                proposed_name=effect.npc_name or "",
-                proposed_description=effect.npc_description or "",
-                narrator_prose=narrator_prose,
-                existing_npcs=list(world_state.npcs.values()),
-                current_turn=world_state.turn,
-            )
-        except Exception as e:
-            logger.warning("dedup_judge_call_exception", error=str(e), exc_info=True)
-            return effect
-
-        if not decision.is_rewrite:
-            return effect
-
-        # Rewrite ADD_NPC → REF_ENTITY pointing at the existing id.
-        # Also accumulate the paraphrased name as an alias on the
-        # existing NPCState so future paraphrases match more easily.
-        target_id = decision.target_id
-        existing = world_state.npcs.get(target_id)
-        if existing is None:
-            # Judge proposed an id that doesn't exist — be safe and accept the original
-            logger.warning(
-                "dedup_judge_target_not_in_world_state",
-                target_id=target_id,
-            )
-            return effect
-
-        if decision.alias and decision.alias != existing.name and decision.alias not in existing.aliases:
-            existing.aliases.append(decision.alias)
-
-        logger.info(
-            "dedup_rewrite_applied",
-            original_name=effect.npc_name,
-            target_id=target_id,
-            existing_name=existing.name,
-            alias=decision.alias,
-        )
-
-        # Build the rewritten REF_ENTITY effect — preserve idempotency-relevant
-        # context (no idempotency key change; that's tied to tool-call index).
-        return ProposedEffect(
-            effect_type=EffectType.REF_ENTITY,
-            ref_entity_id=target_id,
-            ref_alias_used=decision.alias,
-            # Preserve any dialogue tracking the narrator added on the
-            # original add_npc call — those still belong to this entity.
-            dialogue_indices=list(effect.dialogue_indices),
-            dialogue_emotions=list(effect.dialogue_emotions),
-        )
 
     @staticmethod
     def _entity_name_match_score(entity: "SceneEntity", text_lower: str) -> int:
