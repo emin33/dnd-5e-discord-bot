@@ -146,9 +146,9 @@ class NarrationStrategy:
 
         # Bookend layout when world state is available (better grounding).
         if enhanced_context.world_state_yaml:
-            messages = narrator._build_bookend_messages(enhanced_context)
+            messages = narrator.build_bookend_messages(enhanced_context)
         else:
-            messages = narrator._build_messages(enhanced_context)
+            messages = narrator.build_messages(enhanced_context)
 
         messages.append({"role": spec.prompt_role, "content": spec.prompt})
         if spec.enable_tools:

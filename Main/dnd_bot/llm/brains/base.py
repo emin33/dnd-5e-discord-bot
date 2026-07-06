@@ -126,8 +126,14 @@ class Brain(ABC):
         self.temperature = temperature
         self.system_prompt = system_prompt
 
-    def _build_messages(self, context: BrainContext) -> list[dict]:
-        """Build the messages array for the LLM."""
+    def build_messages(self, context: BrainContext) -> list[dict]:
+        """Build the messages array for the LLM.
+
+        Public: the NarrationStrategy (llm/narration.py) drives these
+        builders cross-module — they are the Brain's prompt-assembly API,
+        not internals (the audit's "two access protocols for one
+        component" note).
+        """
         messages = []
 
         # System prompt with full context
@@ -188,8 +194,10 @@ class Brain(ABC):
 
         return messages
 
-    def _build_bookend_messages(self, context: BrainContext) -> list[dict]:
+    def build_bookend_messages(self, context: BrainContext) -> list[dict]:
         """Build messages using bookend layout for narrator calls.
+
+        Public: cross-module API, same as ``build_messages``.
 
         Based on "Lost in the Middle" research: LLMs attend strongly to the
         beginning and end of context, with a 30%+ accuracy drop for info in
