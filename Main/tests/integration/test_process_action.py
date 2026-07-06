@@ -23,6 +23,7 @@ from dnd_bot.data.repositories.inventory_repo import InventoryRepository
 from dnd_bot.data.repositories import character_repo as character_repo_module
 from dnd_bot.llm import client as llm_client
 from dnd_bot.llm import orchestrator as orchestrator_module
+from dnd_bot.llm.client import LLMResponse
 from dnd_bot.llm.orchestrator import DMOrchestrator
 from dnd_bot.llm.brains.base import BrainContext
 from dnd_bot.llm.effects import EffectExecutor, EffectType, ProposedEffect
@@ -72,8 +73,9 @@ class _Net:
         self.narrator: ScriptedBrain | None = None     # narration
 
     async def run(self, action, triage, narration=None, player_name=None,
-                  context=None, narrations=None, on_narrative_token=None):
-        self.brain = FunctionBrain(brain_router(triage))
+                  context=None, narrations=None, on_narrative_token=None,
+                  brain_fn=None):
+        self.brain = FunctionBrain(brain_fn or brain_router(triage))
         # Every get_llm_client()-backed seam → the one branching fake. The
         # extractors and the dedup judge are process-wide singletons, so they
         # go through monkeypatch — teardown restores the real clients instead
@@ -98,6 +100,24 @@ class _Net:
             action, player_name or self.character.name, context,
             on_narrative_token=on_narrative_token,
         )
+
+
+@pytest.fixture(autouse=True)
+def _clean_channel_99_registries():
+    """The net session uses the fixed channel 99, and combat entry registers
+    a CombatManager into module-global registries that outlive each test —
+    the Step-0 attack pin had been leaking its manager at ``discord:99``
+    into every later test in the run (masked only because nothing else read
+    that channel). Clean on both sides.
+    """
+    from dnd_bot.game.combat.coordinator import clear_coordinator_by_key
+    from dnd_bot.game.combat.manager import clear_combat_by_key
+
+    clear_combat_by_key("discord:99")
+    clear_coordinator_by_key("discord:99")
+    yield
+    clear_combat_by_key("discord:99")
+    clear_coordinator_by_key("discord:99")
 
 
 @pytest.fixture
@@ -1082,3 +1102,170 @@ async def test_pin_streaming_only_on_action_path_and_drops_tools(net):
     assert followup["method"] == "chat"
     assert followup["kwargs"]["tool_choice"] == "required"
     assert [e.effect_type for e in result.proposed_effects] == [EffectType.REF_ENTITY]
+
+
+# ── Step-3 combat-entry signal pins (REFACTOR_PLAN Step 3) ────────────────────
+# Combat entry is decided by THREE live signals with different participant
+# logic (AUDIT_QUALITY_2026_06_09, Architecture P2 "three live combat-entry
+# deciders"):
+#   1. the triage attack branch          → _initiate_combat_from_attack
+#   2. the entity-extractor's combat_initiated flag → all scene hostiles
+#   3. the narrator's start_combat tool  → sets combat_triggered ONLY —
+#      builds no encounter, so the session can flip to COMBAT with no
+#      CombatManager ever created (the wedge end_combat has to heal).
+# These pins capture each signal's full observable outcome BEFORE the
+# ModeMachine / EncounterBuilder rewire. Pins marked BROKEN carry flip
+# arrows for the rewire commit.
+
+
+def _hostile_goblin() -> SceneEntity:
+    return SceneEntity(
+        name="Goblin", entity_type=EntityType.CREATURE,
+        description="A snarling goblin", disposition=Disposition.HOSTILE,
+        hostility_score=90,
+    )
+
+
+@pytest.mark.asyncio
+async def test_attack_entry_builds_surprised_encounter(net):
+    """Signal 1: the triage attack branch builds and registers a full
+    encounter (players + target + other hostiles), enemies surprised."""
+    from dnd_bot.game.combat.manager import get_combat_for_channel
+    from dnd_bot.game.session import SessionState
+    from dnd_bot.models import CombatState
+
+    net.registry.register_entity(_hostile_goblin())
+
+    result = await net.run(
+        action="I attack the goblin",
+        triage=triage_response(
+            "attack", target_name="Goblin", is_creature_target=True,
+        ),
+    )
+
+    assert result.combat_triggered is True
+    manager = get_combat_for_channel(99)
+    assert manager is not None
+    assert net.session.combat_manager is manager
+    assert sorted(c.name for c in manager.combat.combatants) == ["Elara", "Goblin"]
+    # Player-initiated: enemies surprised, player not.
+    goblin = next(c for c in manager.combat.combatants if not c.is_player)
+    player = next(c for c in manager.combat.combatants if c.is_player)
+    assert goblin.is_surprised is True
+    assert player.is_surprised is False
+    # Initiative rolled and combat started, ready for the first turn.
+    assert manager.combat.state == CombatState.AWAITING_ACTION
+    # The MODE flip is NOT process_action's today — it happens later, in
+    # process_message's inline combat_triggered branch (the branching Step 3
+    # replaces). Flips when the encounter builder owns the mode push:
+    # state -> COMBAT, phase -> "combat".
+    assert net.session.state == SessionState.STARTING
+    assert net.session.world_state.phase == "exploration"
+
+
+@pytest.mark.asyncio
+async def test_narrative_entry_drafts_scene_hostiles_unsurprised(net):
+    """Signal 2: the entity-extractor's combat_initiated flag builds an
+    encounter from ALL hostile/unfriendly scene NPCs+creatures, no surprise."""
+    from dnd_bot.game.combat.manager import get_combat_for_channel
+    from dnd_bot.game.session import SessionState
+    from dnd_bot.models import CombatState
+
+    net.registry.register_entity(_hostile_goblin())
+    # Entity extraction only runs when the session has NO world state
+    # (world-state extraction supersedes it) — drop it for this signal.
+    net.session.world_state = None
+    # ...and don't let the registry sync test entities into the real NPC DB.
+    net.monkeypatch.setattr(net.registry, "sync_to_npc_repo", _async_none)
+
+    social = triage_response("social", needs_roll=False)
+    extraction = LLMResponse(content=json.dumps({
+        "entities": [], "scene_update": None, "hostility_changes": [],
+        "combat_initiated": True,
+    }))
+
+    def _brain(messages, **kwargs):
+        system = messages[0].get("content", "") if messages else ""
+        if "action classifier" in system:
+            return social
+        if system.startswith("You extract entities"):
+            return extraction
+        return LLMResponse(content="{}")
+
+    narration = narration_response(
+        "The goblin's blade flashes as it lunges straight at Elara."
+    )
+    result = await net.run(
+        action="I stand my ground",
+        triage=social,
+        # No tool calls on either leg: the followup returns prose again and
+        # the effect list stays empty — this signal is extraction-driven.
+        narrations=[narration, narration],
+        brain_fn=_brain,
+    )
+
+    assert result.combat_triggered is True
+    manager = get_combat_for_channel(99)
+    assert manager is not None
+    assert sorted(c.name for c in manager.combat.combatants) == ["Elara", "Goblin"]
+    # NPC-initiated: nobody is surprised.
+    assert all(not c.is_surprised for c in manager.combat.combatants)
+    assert manager.combat.state == CombatState.AWAITING_ACTION
+    # Same mode-flip split as signal 1 — flips with the ModeMachine.
+    assert net.session.state == SessionState.STARTING
+
+
+@pytest.mark.asyncio
+async def test_start_combat_effect_triggers_with_no_encounter(net):
+    """Signal 3, PINNED BROKEN: the narrator's start_combat tool only sets
+    combat_triggered — no encounter is built, no participants selected, so
+    the session flips to COMBAT downstream with no CombatManager (the
+    audit's 'combat with no manager' wedge, healed only by end_combat).
+    Flips when the single entry point routes this signal through the
+    encounter builder: a manager built from the scene hostiles
+    (["Elara", "Goblin"], nobody surprised) and session.combat_manager set.
+    """
+    from dnd_bot.game.combat.manager import get_combat_for_channel
+
+    net.registry.register_entity(_hostile_goblin())
+
+    result = await net.run(
+        action="I stand my ground",
+        triage=triage_response("social", needs_roll=False),
+        narration=narration_response(
+            "The goblin snarls and springs at Elara, blade first!",
+            tool_calls=[{
+                "name": "start_combat",
+                "arguments": {"reason": "The goblin attacks"},
+            }],
+        ),
+    )
+
+    assert result.combat_triggered is True
+    assert get_combat_for_channel(99) is None      # -> manager built when fixed
+    assert net.session.combat_manager is None      # -> is manager when fixed
+
+
+@pytest.mark.asyncio
+async def test_start_combat_effect_with_no_hostiles_still_triggers(net):
+    """Signal 3 with an EMPTY scene, PINNED BROKEN: combat_triggered=True
+    with nothing to fight — the purest form of the no-manager wedge.
+    Flips when the entry point refuses to trigger an encounter with no
+    participants: combat_triggered False, session state untouched.
+    """
+    from dnd_bot.game.combat.manager import get_combat_for_channel
+
+    result = await net.run(
+        action="I ready my staff",
+        triage=triage_response("social", needs_roll=False),
+        narration=narration_response(
+            "Shadows coil at the room's edge, and something unseen strikes!",
+            tool_calls=[{
+                "name": "start_combat",
+                "arguments": {"reason": "Ambush from the shadows"},
+            }],
+        ),
+    )
+
+    assert result.combat_triggered is True          # -> False when fixed
+    assert get_combat_for_channel(99) is None
