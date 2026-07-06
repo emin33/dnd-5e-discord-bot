@@ -7,12 +7,12 @@ Two surfaces:
    steers it toward updates over new_npcs when prose paraphrases an
    already-registered entity.
 
-2. ``DMOrchestrator._dedup_extractor_new_npcs`` — runs each
-   ``delta.new_npcs`` entry through ``EntityDedupJudge`` before the
-   delta is applied. High-confidence dedup → drop the entry from
-   ``new_npcs`` and append an ``NPCUpdate(id=..., add_aliases=[...])``
-   so the alias is recorded against the existing record. Default safe
-   on any judge error.
+2. ``WorldStateStore._dedup_delta`` (Step 5; was the orchestrator's
+   ``_dedup_extractor_new_npcs``) — runs each ``delta.new_npcs`` entry
+   through ``EntityDedupJudge`` inside ``apply_delta``, before the write
+   lands. High-confidence dedup → drop the entry from ``new_npcs`` and
+   append an ``NPCUpdate(id=..., add_aliases=[...])`` so the alias is
+   recorded against the existing record. Default safe on any judge error.
 """
 from __future__ import annotations
 from dataclasses import dataclass
@@ -23,6 +23,7 @@ import pytest
 from dnd_bot.game.world_state import (
     WorldState, NPCState, NPCUpdate, StateDelta,
 )
+from dnd_bot.game.world_store import WorldStateStore
 from dnd_bot.llm.extractors.state_extractor import EXTRACTION_PROMPT
 from dnd_bot.llm.extractors import dedup_judge as dedup_judge_module
 from dnd_bot.llm.extractors.dedup_judge import EntityDedupJudge
@@ -137,10 +138,8 @@ class TestExtractorDedupRewrite:
             '{"action": "rewrite", "target_id": "bram-uuid", "alias": "Old Bram"}'
         ))
 
-        orch = _make_orchestrator()
-        result = await orch._dedup_extractor_new_npcs(
-            delta, narrator_prose="Old Bram leaned on his cart, eyeing the square.",
-            world_state=ws,
+        result = await WorldStateStore(ws)._dedup_delta(
+            delta, "Old Bram leaned on his cart, eyeing the square."
         )
 
         assert result.new_npcs == [], "rewritten entry must be dropped from new_npcs"
@@ -168,8 +167,10 @@ class TestExtractorDedupRewrite:
         ))
 
         orch = _make_orchestrator()
-        delta = await orch._dedup_extractor_new_npcs(delta, "prose", ws)
-        rejections = ws.apply_delta(delta)
+        # Through the real choke point: dedup runs INSIDE apply_delta.
+        rejections = await WorldStateStore(ws).apply_delta(
+            delta, narrator_prose="prose"
+        )
 
         assert rejections == []
         assert len(ws.npcs) == 1
@@ -192,9 +193,8 @@ class TestExtractorDedupRewrite:
             client=_MockBrain('{"action": "accept"}')
         )
 
-        orch = _make_orchestrator()
-        result = await orch._dedup_extractor_new_npcs(
-            delta, "Marta tended her herb stall.", ws,
+        result = await WorldStateStore(ws)._dedup_delta(
+            delta, "Marta tended her herb stall."
         )
 
         assert len(result.new_npcs) == 1
@@ -217,7 +217,7 @@ class TestExtractorDedupRewrite:
         ))
 
         orch = _make_orchestrator()
-        result = await orch._dedup_extractor_new_npcs(delta, "prose", ws)
+        result = await WorldStateStore(ws)._dedup_delta(delta, "prose")
 
         assert len(result.new_npcs) == 1
         assert result.new_npcs[0].name == "Stranger"
@@ -236,7 +236,7 @@ class TestExtractorDedupRewrite:
         dedup_judge_module._JUDGE = EntityDedupJudge(client=_BrokenBrain())
 
         orch = _make_orchestrator()
-        result = await orch._dedup_extractor_new_npcs(delta, "prose", ws)
+        result = await WorldStateStore(ws)._dedup_delta(delta, "prose")
 
         assert len(result.new_npcs) == 1
         assert result.new_npcs[0].name == "Newcomer"
@@ -283,7 +283,7 @@ class TestExtractorDedupRewrite:
         dedup_judge_module._JUDGE = EntityDedupJudge(client=_SeqBrain())
 
         orch = _make_orchestrator()
-        result = await orch._dedup_extractor_new_npcs(delta, "prose", ws)
+        result = await WorldStateStore(ws)._dedup_delta(delta, "prose")
 
         # Marta survives; Old Bram becomes alias-update on bram-uuid
         assert len(result.new_npcs) == 1
@@ -312,7 +312,7 @@ class TestExtractorDedupRewrite:
         ))
 
         orch = _make_orchestrator()
-        result = await orch._dedup_extractor_new_npcs(delta, "prose", ws)
+        result = await WorldStateStore(ws)._dedup_delta(delta, "prose")
 
         # Both updates present
         assert len(result.npc_updates) == 2

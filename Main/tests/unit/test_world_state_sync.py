@@ -258,10 +258,14 @@ class TestStoreDerivation:
         ))
         assert world.global_flags == {"x": True}
 
-    def test_apply_delta_delegates_to_the_state(self, store, world):
+    async def test_apply_delta_delegates_to_the_state(self, store, world):
         from dnd_bot.game.world_state import StateDelta
 
-        rejections = store.apply_delta(StateDelta(new_facts=["The bridge is out"]))
+        # No proposed NPCs -> the Step-5 dedup step is skipped entirely
+        # (judge never consulted) and the write lands directly.
+        rejections = await store.apply_delta(
+            StateDelta(new_facts=["The bridge is out"])
+        )
         assert rejections == []
         assert world.established_facts == ["The bridge is out"]
 

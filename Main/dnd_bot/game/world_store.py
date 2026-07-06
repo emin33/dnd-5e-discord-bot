@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Iterable, Optional
 
 import structlog
 
-from .world_state import NPCState, StateDelta, WorldState
+from .world_state import NPCState, NPCUpdate, StateDelta, WorldState
 from ..llm.effects import EffectType, ProposedEffect
 
 if TYPE_CHECKING:
@@ -89,13 +89,181 @@ class WorldStateStore:
 
     # ── The extractor pipeline's apply seam ──────────────────────────────
 
-    def apply_delta(self, delta: StateDelta) -> list[str]:
-        """Validate and apply a StateDelta; returns rejections.
+    async def apply_delta(
+        self, delta: StateDelta, *, narrator_prose: str = ""
+    ) -> list[str]:
+        """Dedup → validate → write: the extractor pipeline's apply seam.
 
-        The Step-5 dedup pass runs HERE (inside the write pipeline), never
-        as an event or a coordinator method (plan anti-re-flag rule).
+        The dedup pass runs HERE, inside the write pipeline — never as an
+        event or a coordinator method (plan anti-re-flag rule; Step 5).
+        ``narrator_prose`` gives the brain judge the turn's prose for its
+        paraphrase decision; with no proposed NPCs or an empty roster the
+        judge is never consulted.
         """
+        if delta.new_npcs and self._state.npcs:
+            delta = await self._dedup_delta(delta, narrator_prose)
         return self._state.apply_delta(delta)
+
+    async def _dedup_delta(
+        self, delta: StateDelta, narrator_prose: str
+    ) -> StateDelta:
+        """Run each ``delta.new_npcs`` entry through the brain dedup judge.
+
+        Mirrors :meth:`dedup_effect` (the narrator-side ADD_NPC rewrite),
+        but operates on the state-extractor's proposed ``new_npcs`` before
+        they land. On high-confidence rewrite the entry is dropped from
+        ``new_npcs`` and an ``NPCUpdate(id=target_id, add_aliases=[…])``
+        is appended so the write records the alias against the existing
+        entity.
+
+        Default safe: any judge error / parse failure / unknown target id
+        keeps the original ``new_npcs`` entry. False negatives (missed
+        dedup) recover next turn when the registry has more recency
+        signal; false positives (wrongly merging two distinct characters)
+        do not, so we bias to keep.
+        """
+        world_state = self._state
+
+        try:
+            from ..llm.extractors.dedup_judge import get_dedup_judge
+        except Exception as e:
+            logger.warning("extractor_dedup_judge_import_failed", error=str(e), exc_info=True)
+            return delta
+
+        judge = get_dedup_judge()
+        surviving: list = []
+        appended_updates: list = []
+
+        for proposed in delta.new_npcs:
+            try:
+                decision = await judge.judge_add_npc(
+                    proposed_name=proposed.name or "",
+                    proposed_description=proposed.description or "",
+                    narrator_prose=narrator_prose,
+                    existing_npcs=list(world_state.npcs.values()),
+                    current_turn=world_state.turn,
+                )
+            except Exception as e:
+                logger.warning("extractor_dedup_judge_call_exception", error=str(e), exc_info=True)
+                surviving.append(proposed)
+                continue
+
+            if not decision.is_rewrite:
+                surviving.append(proposed)
+                continue
+
+            target_id = decision.target_id
+            if target_id not in world_state.npcs:
+                logger.warning(
+                    "extractor_dedup_target_not_in_world_state",
+                    target_id=target_id,
+                )
+                surviving.append(proposed)
+                continue
+
+            alias = (decision.alias or proposed.name or "").strip()
+            update = NPCUpdate(
+                id=target_id,
+                add_aliases=[alias] if alias else None,
+            )
+            appended_updates.append(update)
+
+            logger.info(
+                "extractor_dedup_rewrite_applied",
+                proposed_name=proposed.name,
+                target_id=target_id,
+                alias=alias,
+            )
+
+        delta.new_npcs = surviving
+        if appended_updates:
+            delta.npc_updates = list(delta.npc_updates) + appended_updates
+        return delta
+
+    async def dedup_effect(
+        self, effect: ProposedEffect, narrator_prose: str = ""
+    ) -> ProposedEffect:
+        """Run the brain dedup judge on an ADD_NPC effect.
+
+        The pre-execution step of the effect write pipeline (whose tail is
+        :meth:`apply_effect`): if the judge confidently identifies the
+        proposed NPC as one already in the roster (paraphrase drift), the
+        effect is rewritten to a REF_ENTITY pointing at the existing id and
+        the paraphrased name is stashed as an alias — a world-state write
+        that previously lived on the orchestrator (exactly the sub-object
+        bypass class the Step-4 review flagged as its watch item).
+
+        Self-gating: anything that isn't an ADD_NPC with a name against a
+        non-empty roster passes through untouched, judge never consulted.
+        Default safe: returns the original on any judge error / parse
+        failure / "accept" decision.
+        """
+        world_state = self._state
+
+        if (
+            effect.effect_type != EffectType.ADD_NPC
+            or not effect.npc_name
+            or not world_state.npcs
+        ):
+            return effect
+
+        try:
+            from ..llm.extractors.dedup_judge import get_dedup_judge
+        except Exception as e:
+            logger.warning("dedup_judge_import_failed", error=str(e), exc_info=True)
+            return effect
+
+        judge = get_dedup_judge()
+        try:
+            decision = await judge.judge_add_npc(
+                proposed_name=effect.npc_name or "",
+                proposed_description=effect.npc_description or "",
+                narrator_prose=narrator_prose,
+                existing_npcs=list(world_state.npcs.values()),
+                current_turn=world_state.turn,
+            )
+        except Exception as e:
+            logger.warning("dedup_judge_call_exception", error=str(e), exc_info=True)
+            return effect
+
+        if not decision.is_rewrite:
+            return effect
+
+        # Rewrite ADD_NPC → REF_ENTITY pointing at the existing id.
+        # Also accumulate the paraphrased name as an alias on the
+        # existing NPCState so future paraphrases match more easily.
+        target_id = decision.target_id
+        existing = world_state.npcs.get(target_id)
+        if existing is None:
+            # Judge proposed an id that doesn't exist — be safe and accept the original
+            logger.warning(
+                "dedup_judge_target_not_in_world_state",
+                target_id=target_id,
+            )
+            return effect
+
+        if decision.alias and decision.alias != existing.name and decision.alias not in existing.aliases:
+            existing.aliases.append(decision.alias)
+
+        logger.info(
+            "dedup_rewrite_applied",
+            original_name=effect.npc_name,
+            target_id=target_id,
+            existing_name=existing.name,
+            alias=decision.alias,
+        )
+
+        # Build the rewritten REF_ENTITY effect — preserve idempotency-relevant
+        # context (no idempotency key change; that's tied to tool-call index).
+        return ProposedEffect(
+            effect_type=EffectType.REF_ENTITY,
+            ref_entity_id=target_id,
+            ref_alias_used=decision.alias,
+            # Preserve any dialogue tracking the narrator added on the
+            # original add_npc call — those still belong to this entity.
+            dialogue_indices=list(effect.dialogue_indices),
+            dialogue_emotions=list(effect.dialogue_emotions),
+        )
 
     # ── The narrator-effect sync seam ─────────────────────────────────────
 

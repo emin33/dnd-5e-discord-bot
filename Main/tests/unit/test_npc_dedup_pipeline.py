@@ -4,8 +4,9 @@ The unit suite already covers each layer in isolation
 (``test_world_state.py``, ``test_knowledge_graph.py``, ``test_dedup_judge.py``,
 ``test_state_extractor.py``). This file fills the remaining gaps:
 
-* Narrator-side ``_dedup_rewrite`` (the primary hook for the fix)
-* ``_sync_effect_to_world_state`` REF_ENTITY + UPDATE_ENTITY recency branches
+* Narrator-side ``WorldStateStore.dedup_effect`` (Step 5; was the
+  orchestrator's ``_dedup_rewrite`` — the primary hook for the fix)
+* ``WorldStateStore.apply_effect`` REF_ENTITY + UPDATE_ENTITY recency branches
 * Idempotency-key invariance across rewrite (research-grounded invariant)
 * ``WorldState.to_yaml()`` id-first rendering with ``aliases`` /
   ``last_seen_turn`` (the surface the narrator actually reads)
@@ -19,8 +20,6 @@ Mocks the brain client so every test runs in <100ms and survives in CI.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from types import SimpleNamespace
-from unittest.mock import MagicMock
 
 import pytest
 import yaml
@@ -34,7 +33,6 @@ from dnd_bot.llm.effects import (
 )
 from dnd_bot.llm.extractors import dedup_judge as dedup_judge_module
 from dnd_bot.llm.extractors.dedup_judge import EntityDedupJudge
-from dnd_bot.llm.orchestrator import DMOrchestrator
 
 
 # ── Mock infrastructure ────────────────────────────────────────────
@@ -73,19 +71,6 @@ class _BrokenBrain:
         raise RuntimeError("simulated brain failure")
 
 
-def _make_orchestrator(world_state: WorldState | None = None) -> DMOrchestrator:
-    """Build a DMOrchestrator with all heavy deps mocked and an
-    attached mock session carrying a real WorldState."""
-    orch = DMOrchestrator(
-        narrator=MagicMock(),
-        adjudicator=MagicMock(),
-        client=MagicMock(),
-    )
-    if world_state is not None:
-        orch._current_session = SimpleNamespace(world_state=world_state)
-    return orch
-
-
 @pytest.fixture
 def reset_dedup_singleton():
     """Restore the module-level ``_JUDGE`` after each test so a test's
@@ -95,13 +80,50 @@ def reset_dedup_singleton():
     dedup_judge_module._JUDGE = saved
 
 
-# ── 1-4: Narrator-side _dedup_rewrite ──────────────────────────────
+# ── 1-4: Narrator-side dedup_effect (Step 5: store-owned) ──────────
 
 
 @pytest.mark.asyncio
 class TestDedupRewrite:
-    """Phase 6's primary hook. ADD_NPC effects routed through the brain
-    dedup judge before validation. The whole bug fix lives here."""
+    """Phase 6's primary hook, now WorldStateStore.dedup_effect. ADD_NPC
+    effects routed through the brain dedup judge before validation. The
+    whole bug fix lives here."""
+
+    async def test_non_add_npc_effect_passes_through_untouched(
+        self, reset_dedup_singleton
+    ):
+        """Self-gate (Step 5): the call-site ADD_NPC gate moved inside
+        dedup_effect — other effect types pass through with the judge
+        never consulted."""
+        ws = WorldState(turn=6)
+        ws.npcs["bron-uuid"] = NPCState(id="bron-uuid", name="Bron", last_seen_turn=5)
+        brain = _MockBrain('{"action": "rewrite", "target_id": "bron-uuid", "alias": "X"}')
+        dedup_judge_module._JUDGE = EntityDedupJudge(client=brain)
+        effect = ProposedEffect(
+            effect_type=EffectType.SPAWN_OBJECT, object_name="Rope",
+        )
+
+        result = await WorldStateStore(ws).dedup_effect(effect, "prose")
+
+        assert result is effect
+        assert brain.call_count == 0
+
+    async def test_empty_roster_passes_through_untouched(
+        self, reset_dedup_singleton
+    ):
+        """Self-gate: with no roster there is nothing to dedup against —
+        judge never consulted (the old call-site npcs gate, moved in)."""
+        ws = WorldState(turn=6)
+        brain = _MockBrain('{"action": "rewrite", "target_id": "x", "alias": "X"}')
+        dedup_judge_module._JUDGE = EntityDedupJudge(client=brain)
+        effect = ProposedEffect(
+            effect_type=EffectType.ADD_NPC, npc_name="Bron",
+        )
+
+        result = await WorldStateStore(ws).dedup_effect(effect, "prose")
+
+        assert result is effect
+        assert brain.call_count == 0
 
     async def test_rewrite_converts_add_npc_to_ref_entity(self, reset_dedup_singleton):
         ws = WorldState(turn=6)
@@ -120,9 +142,8 @@ class TestDedupRewrite:
             '{"action": "rewrite", "target_id": "bron-uuid", "alias": "Old Bron"}'
         ))
 
-        orch = _make_orchestrator(ws)
-        rewritten = await orch._dedup_rewrite(
-            effect, "Old Bron leaned on the bar", ws,
+        rewritten = await WorldStateStore(ws).dedup_effect(
+            effect, "Old Bron leaned on the bar"
         )
 
         # Effect type flipped, identity points at the existing entity
@@ -151,8 +172,7 @@ class TestDedupRewrite:
             client=_MockBrain('{"action": "accept"}')
         )
 
-        orch = _make_orchestrator(ws)
-        result = await orch._dedup_rewrite(effect, "Marta waves hello.", ws)
+        result = await WorldStateStore(ws).dedup_effect(effect, "Marta waves hello.")
 
         # Identity preserved — same object reference, no mutation
         assert result is effect
@@ -171,8 +191,7 @@ class TestDedupRewrite:
         )
         dedup_judge_module._JUDGE = EntityDedupJudge(client=_BrokenBrain())
 
-        orch = _make_orchestrator(ws)
-        result = await orch._dedup_rewrite(effect, "prose", ws)
+        result = await WorldStateStore(ws).dedup_effect(effect, "prose")
 
         # Brain blew up → keep the original effect. False negatives are
         # recoverable; false positives are not.
@@ -195,8 +214,7 @@ class TestDedupRewrite:
             '{"action": "rewrite", "target_id": "ghost-uuid", "alias": "X"}'
         ))
 
-        orch = _make_orchestrator(ws)
-        result = await orch._dedup_rewrite(effect, "prose", ws)
+        result = await WorldStateStore(ws).dedup_effect(effect, "prose")
 
         assert result is effect
         assert result.effect_type == EffectType.ADD_NPC
@@ -253,7 +271,6 @@ class TestSyncEffectRecencyBranches:
         ws.npcs["bron-uuid"] = NPCState(
             id="bron-uuid", name="Bron", last_seen_turn=5,
         )
-        orch = _make_orchestrator(ws)
         effect = ProposedEffect(
             effect_type=EffectType.REF_ENTITY,
             ref_entity_id="bron-uuid",
@@ -273,7 +290,6 @@ class TestSyncEffectRecencyBranches:
             aliases=["the innkeeper"],
             last_seen_turn=5,
         )
-        orch = _make_orchestrator(ws)
         effect = ProposedEffect(
             effect_type=EffectType.REF_ENTITY,
             ref_entity_id="bron-uuid",
@@ -290,7 +306,6 @@ class TestSyncEffectRecencyBranches:
         ws.npcs["bron-uuid"] = NPCState(
             id="bron-uuid", name="Bron", last_seen_turn=5,
         )
-        orch = _make_orchestrator(ws)
         effect = ProposedEffect(
             effect_type=EffectType.REF_ENTITY,
             ref_entity_id="bron-uuid",
@@ -310,7 +325,6 @@ class TestSyncEffectRecencyBranches:
             disposition="neutral",
             last_seen_turn=3,
         )
-        orch = _make_orchestrator(ws)
         effect = ProposedEffect(
             effect_type=EffectType.UPDATE_ENTITY,
             update_entity_id="bron-uuid",
@@ -467,9 +481,9 @@ class TestWorldStateYamlIdFirst:
 @pytest.mark.asyncio
 class TestParaphrasePileUpRegression:
     """The pre-fix bug: 9 ``add_npc`` calls across 4 paraphrases of one
-    hooded character. The fix routes paraphrases through ``_dedup_rewrite``
-    → REF_ENTITY → ``_sync_effect_to_world_state`` accumulates aliases
-    instead of fragmenting.
+    hooded character. The fix routes paraphrases through ``dedup_effect``
+    → REF_ENTITY → ``apply_effect`` accumulates aliases instead of
+    fragmenting (both store-owned since Steps 4/5).
 
     This test simulates that exact failure path with mocked judge
     decisions and asserts a single NPC survives with all paraphrases
@@ -479,7 +493,6 @@ class TestParaphrasePileUpRegression:
         self, reset_dedup_singleton
     ):
         ws = WorldState(turn=1)
-        orch = _make_orchestrator(ws)
 
         # ── Turn 1: first introduction (registry empty, judge fast-path
         # accepts, sync mints the NPCState).
@@ -492,10 +505,10 @@ class TestParaphrasePileUpRegression:
             npc_name="Hooded Figure",
             npc_description="cloaked stranger by the fire",
         )
-        # The orchestrator only calls _dedup_rewrite when registry is
-        # non-empty; simulate that gating here.
+        # dedup_effect self-gates on an empty roster (Step 5) — the guard
+        # here just documents that turn 1 skips the judge entirely.
         if ws.npcs:
-            first = await orch._dedup_rewrite(first, "prose-1", ws)
+            first = await WorldStateStore(ws).dedup_effect(first, "prose-1")
         WorldStateStore(ws).apply_effect(first)
 
         # One NPC now exists, fresh UUID
@@ -514,7 +527,7 @@ class TestParaphrasePileUpRegression:
             npc_description="hooded figure by the hearth",
         )
         if ws.npcs:
-            second = await orch._dedup_rewrite(second, "prose-2", ws)
+            second = await WorldStateStore(ws).dedup_effect(second, "prose-2")
         WorldStateStore(ws).apply_effect(second)
 
         assert second.effect_type == EffectType.REF_ENTITY
@@ -531,7 +544,7 @@ class TestParaphrasePileUpRegression:
             npc_description="the same hooded one",
         )
         if ws.npcs:
-            third = await orch._dedup_rewrite(third, "prose-3", ws)
+            third = await WorldStateStore(ws).dedup_effect(third, "prose-3")
         WorldStateStore(ws).apply_effect(third)
 
         # ── Verify the regression fence.
@@ -557,7 +570,6 @@ class TestParaphrasePileUpRegression:
         appears. False positives (merging distinct characters) are
         worse than false negatives, so this path is the safety valve."""
         ws = WorldState(turn=1)
-        orch = _make_orchestrator(ws)
 
         # Seed: Hooded Figure
         dedup_judge_module._JUDGE = EntityDedupJudge(
@@ -579,7 +591,7 @@ class TestParaphrasePileUpRegression:
             npc_name="Marta",
             npc_description="old woman drawing water",
         )
-        second_after = await orch._dedup_rewrite(second, "prose", ws)
+        second_after = await WorldStateStore(ws).dedup_effect(second, "prose")
         WorldStateStore(ws).apply_effect(second_after)
 
         assert second_after.effect_type == EffectType.ADD_NPC
