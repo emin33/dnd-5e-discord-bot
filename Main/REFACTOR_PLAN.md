@@ -354,6 +354,43 @@ transitions / tool-call sequences; semantic-similarity threshold for narration p
     codebase even though pytest can't see them. Fences and sweeps must
     include them BY DEFAULT now.
 
+### Step 5 — Dedup into the write pipeline: **DONE** (2026-07-06, branch `step-5-dedup-in-apply`, commit `f25ee13` + review cleanup, 695 tests green)
+- Both dedup passes left the orchestrator god object and became store-owned
+  write-pipeline steps — the anti-re-flag rule ("dedup runs as a step inside
+  apply(), never as an event or a coordinator method") now holds:
+  - **Extractor side:** `WorldStateStore.apply_delta` is async and runs
+    `_dedup_delta` (the moved `_dedup_extractor_new_npcs`, review-verified
+    verbatim) BEFORE the write — dedup → validate → write behind one seam.
+    The new_npcs/roster gating moved inside; with nothing to judge, the
+    judge is never consulted.
+  - **Narrator side:** `WorldStateStore.dedup_effect` (the moved
+    `_dedup_rewrite`, verbatim) is the pre-execution step of the effect
+    pipeline — ADD_NPC→REF_ENTITY rewrite before validation/execution, now
+    self-gating (two new tests prove pass-through never consults the judge
+    and preserves object identity, so idempotency keying is untouched).
+    Its alias write onto the existing NPCState was a world-state mutation
+    on the orchestrator — the exact sub-object bypass class the Step-4
+    review flagged as its watch item; store-owned now.
+- **No new pins needed:** both passes already had strong nets (7 + 8 test
+  sites); the move was repoint-style with every assertion preserved
+  verbatim (review-diffed), one test upgraded to drive the real choke
+  point (`await apply_delta(..., narrator_prose=...)`), and the dead
+  orchestrator-builder helpers/mock imports deleted from both test files
+  (the review caught the second file's half-finished cleanup — CRLF line
+  endings had silently defeated a bulk edit; check replace counts, not
+  script exit codes).
+- **Adversarial review: APPROVE.** Verified empirically: verbatim bodies
+  incl. all eight log event names; async flip fully propagated (exactly
+  one production caller, all callers await, keyword-only narrator_prose —
+  no orphaned-coroutine risk); delta object identity through the rebind
+  (registry sync + KG bridge see the deduped delta); the effect-side gate
+  now resolves via `session.world_store` — equivalent for real sessions
+  and CONSISTENT with the Step-4 sync seam (a duck-typed session exposing
+  world_state but not the property would lose both seams together, not
+  one).
+- Orchestrator: −156 more lines; its dedup surface is now two one-line
+  store calls.
+
 ### Step 1 — Tool registry: **DONE** (2026-07-05, commits `51118fb` net + `79e391c` + `2a83637` + `a116319`, 609 tests green)
 - **Net first (per the rule):** `51118fb` widened the Step-0 net with 7 per-tool
   `process_action` turns — add_npc / spawn_object / update_player grant+remove
@@ -485,7 +522,7 @@ both **DONE** (`c0b3d67`; the three helpers now route via `_resolve_player_chara
   *specifics* — file:line citations drift, and a few "dead code" / "depends on X" claims
   were stale (e.g. turn_loop's "voice frontend depends on it" was false). Grep-confirm
   before deleting; read the real code before changing it.
-- Baseline: **693 tests pass** (as of Step 4 core, 2026-07-06; was 668 at Step 3, 631 at Step 2, 609 at Step 1, 506 at Step 0).
+- Baseline: **695 tests pass** (as of Step 5, 2026-07-06; was 693 at Step 4 core, 668 at Step 3, 631 at Step 2, 609 at Step 1, 506 at Step 0).
   Keep them passing after every step — and keep THIS number current when a
   step lands, or the plan becomes the stale doc it warns about (quality
   re-audit 2026-06-09 caught exactly that).
