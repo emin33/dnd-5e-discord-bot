@@ -24,6 +24,7 @@ from .combat.manager import CombatManager, get_combat_by_key, clear_combat_by_ke
 from .modes import GameMode, ModeMachine
 from .scene.registry import get_scene_registry, clear_scene_registry
 from .world_state import WorldState
+from .world_store import WorldStateStore
 
 logger = structlog.get_logger()
 
@@ -170,6 +171,20 @@ class GameSession:
         """Update last activity timestamp."""
         self.last_activity = datetime.utcnow()
 
+    @property
+    def world_store(self) -> Optional[WorldStateStore]:
+        """Write authority over this session's world state (Step 4).
+
+        Every WorldState mutation goes through the store's apply methods.
+        Derived per access (the store is stateless beyond the wrapped
+        reference), so reassigning ``world_state`` — tests, resets — can
+        never orphan a stale wrapper. None while the session has no world
+        state.
+        """
+        if self.world_state is None:
+            return None
+        return WorldStateStore(self.world_state)
+
     def enter_combat_mode(self, combat_manager: Optional[CombatManager] = None) -> None:
         """Push COMBAT mode — the single combat-entry flip (Step 3).
 
@@ -185,8 +200,9 @@ class GameSession:
         self.state = SessionState.COMBAT
         if combat_manager is not None:
             self.combat_manager = combat_manager
-        if self.world_state is not None and self.world_state.phase != "combat":
-            self.world_state.phase = "combat"
+        store = self.world_store
+        if store is not None:
+            store.reconcile_phase(in_combat=True)
         logger.warning(
             "session_transitioned_to_combat",
             session_id=self.id,
@@ -206,8 +222,9 @@ class GameSession:
         if was_combat:
             self.state = SessionState.ACTIVE
         self.combat_manager = None
-        if self.world_state is not None and self.world_state.phase == "combat":
-            self.world_state.phase = "exploration"
+        store = self.world_store
+        if store is not None:
+            store.reconcile_phase(in_combat=False)
         return was_combat
 
 
@@ -575,26 +592,16 @@ class GameSessionManager:
             author_name=player.character.name if player.character else user_name,
         )
 
-        # Sync player snapshots into world state before building context
-        if session.world_state:
-            session.world_state.increment_turn()
-            for p in session.players.values():
-                if p.character:
-                    conditions = [
-                        c.condition.value for c in p.character.conditions
-                    ] if p.character.conditions else []
-                    session.world_state.sync_player(
-                        name=p.character.name,
-                        hp=p.character.hp.current,
-                        max_hp=p.character.hp.maximum,
-                        conditions=conditions,
-                        concentration=p.character.concentration_spell_id or "",
-                    )
-            # Sync phase from session state
-            if session.state == SessionState.COMBAT:
-                session.world_state.phase = "combat"
-            elif session.world_state.phase == "combat" and session.state != SessionState.COMBAT:
-                session.world_state.phase = "exploration"
+        # Turn bookkeeping through the single-writer store (Step 4):
+        # advance the counter, refresh party snapshots, and reconcile the
+        # narrative phase with the session mode (the OTHER phase writer is
+        # the delta extractor).
+        store = session.world_store
+        if store is not None:
+            store.begin_turn(
+                p.character for p in session.players.values() if p.character
+            )
+            store.reconcile_phase(session.state == SessionState.COMBAT)
 
         # Build context with acting player's character data
         context = self._build_context(
@@ -665,10 +672,10 @@ class GameSessionManager:
                         memory.update_scene(scene_summary)
 
                 # Sync pinned facts from memory into world state
-                if session.world_state and memory.buffer.pinned_facts:
+                fact_store = session.world_store
+                if fact_store is not None and memory.buffer.pinned_facts:
                     for fact in memory.buffer.pinned_facts:
-                        if fact not in session.world_state.established_facts:
-                            session.world_state.established_facts.append(fact)
+                        fact_store.add_established_fact(fact)
 
                 # Combat entry needs no handling here: every entry signal
                 # funnels through game.combat.encounter.start_encounter,

@@ -413,10 +413,11 @@ class TestSession:
             if response.combat_triggered:
                 game_session = self.manager._sessions.get(self.channel_id)
                 if game_session:
-                    from dnd_bot.game.session import SessionState
-                    game_session.state = SessionState.ACTIVE
-                    if game_session.world_state:
-                        game_session.world_state.phase = "exploration"
+                    # Route through the mode machine's pop (Step 3/4): the
+                    # hand-rolled state/phase writes bypassed the
+                    # single-writer store and never cleared the session's
+                    # combat_manager reference.
+                    game_session.exit_combat_mode()
 
             self.action_log.append({
                 "turn": self.turn_number,

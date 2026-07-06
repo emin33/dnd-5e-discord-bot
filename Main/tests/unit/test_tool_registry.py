@@ -176,16 +176,17 @@ class TestExecutorCrossCheck:
 
     def test_every_world_sync_type_has_a_sync_branch(self):
         """Specs declaring world_sync=True must have a branch in the
-        orchestrator's _sync_effect_to_world_state elif chain, or their
-        effects execute but never reach the WorldState the narrator sees —
-        the other half of the silent-no-op class. (Source inspection: the
-        chain is the one dispatch site the registry deliberately does not
-        own yet; it becomes data when the single-writer store lands.)"""
+        single-writer store's apply_effect elif chain (Step 4; was the
+        orchestrator's _sync_effect_to_world_state), or their effects
+        execute but never reach the WorldState the narrator sees — the
+        other half of the silent-no-op class. (Source inspection: the
+        chain stays hand-written inside the store until a later step
+        datafies it.)"""
         import inspect
-        from dnd_bot.llm.orchestrator import DMOrchestrator
+        from dnd_bot.game.world_store import WorldStateStore
 
         refs = self._effect_type_refs(
-            inspect.getsource(DMOrchestrator._sync_effect_to_world_state)
+            inspect.getsource(WorldStateStore.apply_effect)
         )
         for spec in tool_registry.all_specs():
             if not spec.world_sync:
@@ -193,7 +194,7 @@ class TestExecutorCrossCheck:
             for etype in spec.effect_types:
                 assert etype.name in refs, (
                     f"{spec.name} declares world_sync but "
-                    f"_sync_effect_to_world_state has no EffectType.{etype.name} branch"
+                    f"WorldStateStore.apply_effect has no EffectType.{etype.name} branch"
                 )
 
     def test_every_emittable_type_is_deliberately_validated(self):

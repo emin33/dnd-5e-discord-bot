@@ -277,6 +277,83 @@ transitions / tool-call sequences; semantic-similarity threshold for narration p
     that is fine and honest — its value TODAY is single-ownership of the flip,
     not polymorphism. Resist growing state classes until a consumer exists.
 
+### Step 4 — Single-writer WorldStateStore: **CORE DONE** (2026-07-06, branch `step-4-worldstate-store`, commits `3b943f1`..review-fixes, 693 tests green)
+- **Scoped by inventory, not by audit citation:** two fan-out maps (every
+  WorldState WRITER, every READER) before any design. The decisive finding:
+  all three writer families live in suite-testable code — session.py (8
+  sites), the one `apply_delta` call site, and the 11-branch effect-sync
+  chain. Nothing in bot/ or voice/ writes world state; the KG bridge only
+  reads; no reader holds a long-lived reference and deltas apply
+  post-narration. Unlike Step 3, this strangle had no venv-only blind spots.
+- **Pin first:** `3b943f1` — 19 pins, one exact WorldState diff per sync-chain
+  branch. CORRECTION recorded in `ada5644`: the net commit's "NO direct
+  coverage" was overstated — CHANGE_LOCATION/UPDATE_ENTITY/REF_ENTITY already
+  had 13 tests; the other 8 branches were bare.
+- **What landed:**
+  - `game/world_store.py` (`ada5644`): `WorldStateStore` wrapping one
+    WorldState. `apply_effect` = the sync chain moved VERBATIM out of the
+    orchestrator (deleted by AST span, 227 lines; review verified the move
+    line-by-line — four deltas, all declared). `apply_delta` = the extractor
+    pipeline's seam, where Step 5's dedup pass slots in (anti-re-flag rule:
+    dedup runs INSIDE apply). `GameSession.world_store` derives per access,
+    so `world_state` reassignment can't orphan a stale wrapper.
+  - Session bookkeeping (`5d7d271`): `begin_turn` (turn counter + party
+    snapshots), `reconcile_phase(in_combat)` — ONE method now serving the
+    ModeMachine push/pop phase writes AND process_message's per-turn
+    reconcile (their guard semantics were already identical; narrative
+    phases like dialogue survive outside combat), `add_established_fact`.
+    session.py's only remaining world-state write is construction.
+  - Single-writer GUARD (`8ed27ae` + review fix): an AST-scanning test bans
+    WorldState mutating calls / field assigns / container mutations outside
+    the store across dnd_bot/ AND the Main-root harness scripts — the
+    import-linter contract the plan wants, in test form. AST not regex: the
+    regex draft's first catch was a docstring (which was itself stale,
+    pointing at the deleted chain — fixed).
+- **Adversarial review (real findings again; fixed in-range):**
+  - `test_eval.py`/`test_harness.py` hand-rolled combat auto-resolve with
+    direct `state`/`phase` writes — outside the guard's original fence, in
+    exactly the files where Step 3's breakage hid. Both now route through
+    `exit_combat_mode()` (which also clears the `combat_manager` reference
+    they never dropped), and the guard's fence now covers `Main/*.py`.
+  - Declared delta the review confirmed test-covered: `add_established_fact`
+    gained an `if fact` empty-guard the old inline loop lacked — a semantic
+    improvement, not a verbatim move; recorded here per the exact-diff
+    standard.
+  - Guard heuristic gaps (aliased receivers, setattr, del, tuple targets):
+    probed empirically, none exist in the code today; the receiver-name
+    heuristic is declared in the guard's docstring. WATCH ITEM: sub-object
+    NPCState mutation through retained `_find_npc()` references is the
+    likeliest future bypass (bridge.py holds such references, all reads
+    today).
+  - Coverage note: the orchestrator's call-site no-session guard
+    (store-resolution before the effect loop) has no direct test — the old
+    in-method guard pin was replaced by store-derivation pins; safe today
+    because `set_session` only ever receives a real GameSession or None.
+- **Deliberately deferred (with reader-inventory evidence):**
+  - **WorldStateView / reader migration:** every reader is snapshot-safe
+    today (to_yaml serialization, pre-filtered lists, no cross-await holds),
+    so a read-only facade would be ceremony without a threat model; the
+    write-side guard enforces the invariant that matters. Revisit when
+    Step 5 puts policy inside apply or if async boundaries shift
+    (matcher.scene_seeds is the first candidate consumer).
+  - **Stage B (#6/#7 per-turn TurnContext + per-session lock):** the audit
+    itself marks it biggest/riskiest and not urgent behind the global lock.
+    Belongs with Step 6's thin-coordinator work, not here.
+  - **ROOT-3 (WorldState/combat serialization + recover parity):** the store
+    is its natural owner (save/load as store methods) but it is an
+    independent feature slice with schema decisions — its own branch.
+- **Lessons:**
+  - Map writers AND readers before designing a store: the reader inventory
+    is what licensed deferring the view — scope cut by evidence, not by
+    fatigue. The two fan-out maps cost minutes and shaped every slice.
+  - An AST source-scan is the cheap stand-in for import-linter, and building
+    it immediately pays: its first run caught stale documentation, its
+    review probe proved it non-vacuous (15 hits against the pre-branch
+    orchestrator).
+  - Same lesson, third wave: the Main-root harness scripts are part of the
+    codebase even though pytest can't see them. Fences and sweeps must
+    include them BY DEFAULT now.
+
 ### Step 1 — Tool registry: **DONE** (2026-07-05, commits `51118fb` net + `79e391c` + `2a83637` + `a116319`, 609 tests green)
 - **Net first (per the rule):** `51118fb` widened the Step-0 net with 7 per-tool
   `process_action` turns — add_npc / spawn_object / update_player grant+remove
@@ -408,7 +485,7 @@ both **DONE** (`c0b3d67`; the three helpers now route via `_resolve_player_chara
   *specifics* — file:line citations drift, and a few "dead code" / "depends on X" claims
   were stale (e.g. turn_loop's "voice frontend depends on it" was false). Grep-confirm
   before deleting; read the real code before changing it.
-- Baseline: **668 tests pass** (as of Step 3, 2026-07-06; was 631 at Step 2, 609 at Step 1, 506 at Step 0).
+- Baseline: **693 tests pass** (as of Step 4 core, 2026-07-06; was 668 at Step 3, 631 at Step 2, 609 at Step 1, 506 at Step 0).
   Keep them passing after every step — and keep THIS number current when a
   step lands, or the plan becomes the stale doc it warns about (quality
   re-audit 2026-06-09 caught exactly that).
