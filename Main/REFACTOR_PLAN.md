@@ -342,6 +342,7 @@ transitions / tool-call sequences; semantic-similarity threshold for narration p
   - **ROOT-3 (WorldState/combat serialization + recover parity):** the store
     is its natural owner (save/load as store methods) but it is an
     independent feature slice with schema decisions — its own branch.
+    **DONE** — see the ROOT-3 entry below (2026-07-06).
 - **Lessons:**
   - Map writers AND readers before designing a store: the reader inventory
     is what licensed deferring the view — scope cut by evidence, not by
@@ -390,6 +391,104 @@ transitions / tool-call sequences; semantic-similarity threshold for narration p
   one).
 - Orchestrator: −156 more lines; its dedup surface is now two one-line
   store calls.
+
+### ROOT-3 — World serialization + session recovery: **DONE** (2026-07-06, branch `root-3-world-serialization`, commits `3875c72`..`803a8fa`, 723 tests green)
+- **Audit-vs-reality (verify-don't-trust, again):** the audit's fix shape —
+  "recover_sessions is a thin drifted subset; make both call the same init
+  helpers" — was STALE. Quality P0-10 (`ffc1b1b`, 2026-06-09) had already
+  deleted recover_sessions/load_active_sessions/the snapshot repo methods and
+  installed a blanket `end_stale_sessions` startup sweep. This slice BUILT
+  resume properly rather than patching a deleted twin. Lesson: audits go
+  stale on the FIX SHAPE, not just file:line — re-derive the shape from HEAD
+  before planning a slice.
+- **Pin first:** start_session had ZERO direct coverage; 6 pins (`3875c72`:
+  registration/identity, fresh WorldState, exact save_session row, memory
+  warm, KG load + Chroma sync incl. empty-skip, NPC preload field mapping,
+  both failure isolations) written before any extraction and passed through
+  it untouched — the behavior-neutrality evidence for the start path.
+- **What landed:**
+  - Repo (`4481a22` + `a082f5c`): the migration-001 `session_snapshot` table
+    gains its first writers. `save_world_snapshot` = single-statement
+    `INSERT OR REPLACE` under stable id `world:<session_id>` — one row per
+    session (per-turn saves can't grow the table) and no multi-statement
+    window: the shared aiosqlite connection means any interleaved `commit()`
+    between awaits commits half a DELETE+INSERT; a single statement with the
+    invariant in the KEY closes that torn-write class. `get_latest_snapshot`,
+    `load_active_sessions` (newest-first, `rowid` tie-break — `started_at`
+    is 1-second resolution).
+  - Store (`defed54`): `to_snapshot`/`state_from_snapshot` — the store owns
+    the wire format (it already owned every write); the session layer owns
+    when/where. Round-trip tests drive dict→JSON→dict→WorldState over every
+    field family and assert model_dump equality.
+  - Session layer (`a0a5d63`): start_session's KG-load+Chroma-sync and
+    scene-NPC-preload blocks → `_load_knowledge_graph`/`_preload_scene_npcs`
+    (verbatim moves, review-verified byte-identical modulo the campaign_id
+    binding). `_persist_world_snapshot` once per processed turn, after the
+    extractor delta + effect sync + fact sync have all landed (review
+    confirmed: no WorldState write escapes the persist point; the only
+    out-of-turn writer is the combat-mode phase flip, neutralized at
+    recovery). Envelope v1: world state + membership ids/names + is_dm +
+    dm_user_id + session_key + guild_id; characters by id ONLY — the DB row
+    stays authoritative (DF-1 lesson). persist_failed policy: log, never
+    break the turn. `recover_sessions` rebuilds per row (world via
+    state_from_snapshot, membership re-fetched fresh, guild_id from the
+    CAMPAIGN row — DF-7) then runs the SAME init helpers (DF-16/N10 parity);
+    unrecoverable rows (no snapshot / unknown version / corrupt / missing
+    campaign / duplicate key / foreign frontend) are ended PER-ROW.
+  - Bot wiring (`2316c66`): setup_hook recovers + rebuilds the
+    active-campaign map (newest session wins a contested guild).
+    `end_stale_sessions` DELETED, not kept as a backstop — run after
+    recovery it would end exactly the rows just recovered; its job is done
+    per-row inside recover. Its 2 pins retired by name.
+- **Declared non-goals** (each logged where it bites, all in the
+  recover_sessions docstring):
+  - **Mid-combat resume** — NOT because the combat tables drifted
+    (CombatState's values still match the schema CHECK exactly) but because
+    a live encounter is bot-layer driver machinery (manager registry, turn
+    coordinator, per-channel locks, Discord views) the suite cannot net;
+    a recovered COMBAT session with no driver would be wedged. Combat rows
+    downgrade to ACTIVE/exploration via the store's reconcile seam.
+  - **Voice/web recovery** — no lifecycle owner in this process (see F1).
+  - **Memory-tier crash amnesia** — tiers persist only at graceful
+    end_session; a crash loses buffer/summary since the last graceful end
+    while the WORLD is current. Follow-up: per-consolidation persistence.
+  - **Extractor-minted NPCs** re-enter the scene registry only on next
+    reference; durable registry membership is Stage-C canonical-id work.
+- **Adversarial review (7 findings, no P0 — every wave finds something
+  real, again):** F1 fixed — recovery ended up IMMORTALIZING voice/web rows
+  (end_session reaches only `discord:` keys; the voice API is a separate
+  process that never recovers; /api/game/end 404s after restart), while the
+  deleted sweep had been the only bound on that population: foreign-frontend
+  rows are now ended per-row, test flipped visibly. F2 fixed (guild map:
+  oldest session's campaign was winning — reversed iteration). F5 fixed
+  (same-second ORDER BY tie could keep the older husk in the duplicate-key
+  sweep — rowid tie-break + pinned). F7 fixed (envelope construction moved
+  inside its try; the docstring promised no-turn-breakage the code didn't
+  fully deliver). F3/F4 declared (above). F6 no-fix with evidence: legacy
+  uuid-id snapshot rows require a DB that ran this branch's unmerged
+  intermediate commits; none exists — a perpetual cleanup DELETE for an
+  empty population is overcorrection.
+- **Stage-C facts this wave established (don't re-derive):** the
+  orchestrator's per-turn `sync_to_npc_repo` (orchestrator.py:~2864) is
+  DEAD — gated on `skip_entity_extraction`, which is always true now that
+  world_state is always present; the scene registry reaches the npc DB only
+  at graceful end_session. So recovery's registry preload can only ever see
+  end_session-persisted NPCs (the F4 gap). Both belong to Stage C alongside
+  the canonical-id decision.
+- **Lessons:**
+  - When a slice DELETES a blanket safety mechanism, inventory what
+    unrelated populations it was bounding. F1 existed precisely because the
+    startup sweep had been the only terminator for voice/web rows, and this
+    branch removed the sweep while making those rows recoverable forever.
+    Ask "what else did the deleted thing do?" before celebrating the
+    per-row replacement.
+  - A shared async DB connection makes every multi-statement write a
+    torn-write risk (interleaved commits between awaits). Single-statement
+    upserts with the invariant in the key beat transactions you don't
+    actually control.
+  - Shared fixtures ARE the parity argument: the start pins and the
+    recovery tests drive the same fakes from one conftest, so "recovery
+    runs the same init" is checked by construction, not by prose.
 
 ### Step 1 — Tool registry: **DONE** (2026-07-05, commits `51118fb` net + `79e391c` + `2a83637` + `a116319`, 609 tests green)
 - **Net first (per the rule):** `51118fb` widened the Step-0 net with 7 per-tool
@@ -522,7 +621,7 @@ both **DONE** (`c0b3d67`; the three helpers now route via `_resolve_player_chara
   *specifics* — file:line citations drift, and a few "dead code" / "depends on X" claims
   were stale (e.g. turn_loop's "voice frontend depends on it" was false). Grep-confirm
   before deleting; read the real code before changing it.
-- Baseline: **695 tests pass** (as of Step 5, 2026-07-06; was 693 at Step 4 core, 668 at Step 3, 631 at Step 2, 609 at Step 1, 506 at Step 0).
+- Baseline: **723 tests pass** (as of ROOT-3, 2026-07-06; was 695 at Step 5, 693 at Step 4 core, 668 at Step 3, 631 at Step 2, 609 at Step 1, 506 at Step 0).
   Keep them passing after every step — and keep THIS number current when a
   step lands, or the plan becomes the stale doc it warns about (quality
   re-audit 2026-06-09 caught exactly that).
