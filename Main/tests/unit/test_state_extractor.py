@@ -16,7 +16,6 @@ Two surfaces:
 """
 from __future__ import annotations
 from dataclasses import dataclass
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -27,7 +26,6 @@ from dnd_bot.game.world_store import WorldStateStore
 from dnd_bot.llm.extractors.state_extractor import EXTRACTION_PROMPT
 from dnd_bot.llm.extractors import dedup_judge as dedup_judge_module
 from dnd_bot.llm.extractors.dedup_judge import EntityDedupJudge
-from dnd_bot.llm.orchestrator import DMOrchestrator
 
 
 # ── Mock brain client (mirrors the pattern in test_dedup_judge.py) ──
@@ -85,19 +83,7 @@ class TestExtractionPromptSchema:
         assert "paraphras" in text
 
 
-# ── Part C2 + C3: Orchestrator dedup pass ──────────────────────────
-
-
-def _make_orchestrator() -> DMOrchestrator:
-    """Build a DMOrchestrator with all heavy deps mocked.
-
-    The dedup pass only touches the dedup_judge module-level singleton,
-    so we mock the three constructor deps to skip ollama init."""
-    return DMOrchestrator(
-        narrator=MagicMock(),
-        adjudicator=MagicMock(),
-        client=MagicMock(),
-    )
+# ── Part C2 + C3: Store dedup pass (Step 5) ────────────────────────
 
 
 @pytest.fixture
@@ -111,8 +97,9 @@ def reset_dedup_singleton():
 
 @pytest.mark.asyncio
 class TestExtractorDedupRewrite:
-    """Phase 4 Part B: orchestrator runs extractor's new_npcs through
-    the brain dedup judge BEFORE apply_delta."""
+    """Phase 4 Part B: the store runs the extractor's new_npcs through
+    the brain dedup judge INSIDE apply_delta, before the write lands
+    (Step 5; previously an orchestrator pass upstream of apply)."""
 
     async def test_rewrite_drops_new_npc_and_appends_alias_update(
         self, reset_dedup_singleton
@@ -166,7 +153,6 @@ class TestExtractorDedupRewrite:
             '{"action": "rewrite", "target_id": "bram-uuid", "alias": "Old Bram"}'
         ))
 
-        orch = _make_orchestrator()
         # Through the real choke point: dedup runs INSIDE apply_delta.
         rejections = await WorldStateStore(ws).apply_delta(
             delta, narrator_prose="prose"
@@ -216,7 +202,6 @@ class TestExtractorDedupRewrite:
             '{"action": "rewrite", "target_id": "ghost-uuid", "alias": "X"}'
         ))
 
-        orch = _make_orchestrator()
         result = await WorldStateStore(ws)._dedup_delta(delta, "prose")
 
         assert len(result.new_npcs) == 1
@@ -235,7 +220,6 @@ class TestExtractorDedupRewrite:
         )
         dedup_judge_module._JUDGE = EntityDedupJudge(client=_BrokenBrain())
 
-        orch = _make_orchestrator()
         result = await WorldStateStore(ws)._dedup_delta(delta, "prose")
 
         assert len(result.new_npcs) == 1
@@ -282,7 +266,6 @@ class TestExtractorDedupRewrite:
 
         dedup_judge_module._JUDGE = EntityDedupJudge(client=_SeqBrain())
 
-        orch = _make_orchestrator()
         result = await WorldStateStore(ws)._dedup_delta(delta, "prose")
 
         # Marta survives; Old Bram becomes alias-update on bram-uuid
@@ -311,7 +294,6 @@ class TestExtractorDedupRewrite:
             '{"action": "rewrite", "target_id": "bram-uuid", "alias": "Old Bram"}'
         ))
 
-        orch = _make_orchestrator()
         result = await WorldStateStore(ws)._dedup_delta(delta, "prose")
 
         # Both updates present
