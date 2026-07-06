@@ -15,12 +15,15 @@ coordinator already takes for NarrationSpec; the eventual ``protocols.py``
 boundary owns relocating these DTOs.
 """
 
-from typing import Optional
+from typing import TYPE_CHECKING, Iterable, Optional
 
 import structlog
 
 from .world_state import NPCState, StateDelta, WorldState
 from ..llm.effects import EffectType, ProposedEffect
+
+if TYPE_CHECKING:
+    from ..models import Character
 
 logger = structlog.get_logger()
 
@@ -42,6 +45,47 @@ class WorldStateStore:
         view lands. Do not mutate through this; every write goes through
         the apply methods below."""
         return self._state
+
+    # ── Session-layer bookkeeping seams ───────────────────────────────────
+
+    def begin_turn(self, characters: Iterable["Character"]) -> None:
+        """Turn bookkeeping: advance the counter, refresh party snapshots.
+
+        Moved from ``process_message``'s inline turn-start block — the
+        snapshot fields mirror what the narrator's ``<party>`` block reads.
+        """
+        self._state.increment_turn()
+        for character in characters:
+            conditions = [
+                c.condition.value for c in character.conditions
+            ] if character.conditions else []
+            self._state.sync_player(
+                name=character.name,
+                hp=character.hp.current,
+                max_hp=character.hp.maximum,
+                conditions=conditions,
+                concentration=character.concentration_spell_id or "",
+            )
+
+    def reconcile_phase(self, in_combat: bool) -> None:
+        """Align the narrative phase with the session's combat mode.
+
+        One method serves both the ModeMachine push/pop (enter/exit combat)
+        and ``process_message``'s per-turn reconcile — the OTHER phase
+        writer is the delta extractor, and its narrative phases (dialogue,
+        rest, …) are deliberately preserved outside combat: only a literal
+        "combat" phase resets to exploration.
+        """
+        if in_combat:
+            if self._state.phase != "combat":
+                self._state.phase = "combat"
+        elif self._state.phase == "combat":
+            self._state.phase = "exploration"
+
+    def add_established_fact(self, fact: str) -> None:
+        """Record a pinned fact once (the memory→world-state fact sync)."""
+        if fact and fact not in self._state.established_facts:
+            self._state.established_facts.append(fact)
 
     # ── The extractor pipeline's apply seam ──────────────────────────────
 

@@ -264,3 +264,39 @@ class TestStoreDerivation:
         rejections = store.apply_delta(StateDelta(new_facts=["The bridge is out"]))
         assert rejections == []
         assert world.established_facts == ["The bridge is out"]
+
+
+class TestSessionBookkeepingSeams:
+    """The third writer family (process_message's inline turn-start block,
+    the mode machine's phase writes, the pinned-facts sync) as store
+    methods — same semantics, one owner."""
+
+    def test_begin_turn_advances_and_snapshots_party(
+        self, store, world, mock_character
+    ):
+        store.begin_turn([mock_character])
+
+        assert world.turn == 8  # 7 + 1
+        snapshot = world.players["Test Hero"]
+        assert (snapshot.hp, snapshot.max_hp) == (44, 44)
+        assert snapshot.conditions == []
+        assert snapshot.concentration == ""
+
+    def test_reconcile_phase_enters_and_exits_combat(self, store, world):
+        store.reconcile_phase(in_combat=True)
+        assert world.phase == "combat"
+        store.reconcile_phase(in_combat=False)
+        assert world.phase == "exploration"
+
+    def test_reconcile_phase_preserves_narrative_phase(self, store, world):
+        # A phase the delta extractor set (dialogue/rest/…) survives the
+        # out-of-combat reconcile — only a literal "combat" phase resets.
+        world.phase = "dialogue"
+        store.reconcile_phase(in_combat=False)
+        assert world.phase == "dialogue"
+
+    def test_add_established_fact_dedupes(self, store, world):
+        store.add_established_fact("The bridge is out")
+        store.add_established_fact("The bridge is out")
+        store.add_established_fact("")
+        assert world.established_facts == ["The bridge is out"]
