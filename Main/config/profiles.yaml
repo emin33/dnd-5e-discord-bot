@@ -25,6 +25,11 @@ production:
     condensed_size: 16
     compaction_threshold: 10
 
+# NOTE (2026-07-06, Step 2): narration now sends kg context / narrative memory /
+# char stats / last-turn trace — local narrator prompts grew ~1.2-4k tokens vs
+# pre-Step-2. Sizes below are unchanged without measurement; local_dense was
+# measured and bumped (see its comment block).
+
 # Local MoE: everything on one model, zero cost
 # Local 35B MoE: 32K context, weaker middle-attention — keep window moderate
 local_moe:
@@ -88,16 +93,21 @@ local_split:
 # matters more than the raw-accuracy gap.
 #
 # VRAM budget (32GB GPU):
-#   qwen3.5:27b Q4 @ 16k: ~15.5GB
-#   gemma4:e2b @ 4k:      ~5-7GB
-#   Total:                ~22GB → ~10GB free for Kokoro/images/etc.
-# Realistic end-game narrator prompts run ~12-13k tokens; 16k narrator
-# context is tight but adequate. Bump to 24k if mid-game memory grows.
+#   qwen3.5:27b Q4 weights:   ~14GB
+#   KV cache @ 24k:           ~3GB   (scales linearly; was ~1.5-2GB @ 16k)
+#   qwen3.5:27b Q4 @ 24k:     ~17GB
+#   gemma4:e2b @ 4k:          ~5-7GB
+#   Total:                    ~22-24GB → ~8GB free for Kokoro/images/etc.
+# Context (measured 2026-07-06, post-Step-2): narration now sends kg context /
+# narrative memory / char stats — realistic end-game prompts run ~14-15.5k
+# tokens (messages ~8.7k + full-tier tool schemas ~5.1k + 1500 completion) and
+# worst cases EXCEED 16k, where Ollama silently truncates the prompt head
+# (system persona + world_state). 24k gives ~8k tokens of headroom.
 local_dense:
   narrator:
     provider: ollama
     model: qwen3.5:27b
-    context_size: 16000
+    context_size: 24000
     tools: full                      # 27B dense hit 88% on full tier in benchmark
   brain:
     provider: ollama
