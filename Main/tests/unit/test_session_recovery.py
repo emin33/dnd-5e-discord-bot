@@ -406,7 +406,7 @@ class TestRecoverSessions:
         assert manager.get_session_by_key(key).id == "s-newer"
         assert fake_session_repo.ended == ["s-older"]
 
-    async def test_custom_session_key_is_preserved(
+    async def test_foreign_frontend_session_is_ended_not_recovered(
         self,
         manager,
         fake_session_repo,
@@ -416,11 +416,17 @@ class TestRecoverSessions:
         fake_kg,
         chroma_calls,
         memory_warm_calls,
-        registry_cleanup,
     ):
-        """Voice/web sessions recover under their own key, not discord:0."""
+        """Review F1: this process cannot serve a voice/web key — nothing
+        could ever END the recovered session (end_session reaches only
+        discord: keys; the voice API runs as its own process), so every
+        boot would rebuild it forever. Ending the row restores the bound
+        the old startup sweep gave these sessions.
+
+        Flipped from test_custom_session_key_is_preserved, which pinned
+        voice recovery as intended without an owner for its lifecycle.
+        """
         fake_campaign_repo.campaigns[CAMPAIGN_ID] = _campaign()
-        registry_cleanup.append("voice:room-1")
         fake_session_repo.active_rows = [_row("s-voice", 0)]
         fake_session_repo.snapshots["s-voice"] = _envelope(
             _world(), session_key="voice:room-1"
@@ -428,9 +434,9 @@ class TestRecoverSessions:
 
         recovered = await manager.recover_sessions()
 
-        assert len(recovered) == 1
-        assert recovered[0].session_key == "voice:room-1"
-        assert manager.get_session_by_key("voice:room-1") is recovered[0]
+        assert recovered == []
+        assert fake_session_repo.ended == ["s-voice"]
+        assert manager.get_session_by_key("voice:room-1") is None
 
 
 class FakeOrchestrator:

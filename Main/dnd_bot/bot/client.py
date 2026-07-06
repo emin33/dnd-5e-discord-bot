@@ -132,10 +132,13 @@ class DnDBot(commands.Bot):
         from .views.campaign_lobby import set_active_campaign
 
         recovered = await get_session_manager().recover_sessions()
-        for session in recovered:
-            # Rebuild the active-campaign map so slash commands can route
-            # to the recovered session (audit DF-7: without this the
-            # session was an unreachable zombie until /campaign re-ran).
+        # Rebuild the active-campaign map so slash commands can route to
+        # the recovered sessions (audit DF-7: without this a recovered
+        # session was an unreachable zombie until /campaign re-ran).
+        # Sessions arrive newest-first; iterate oldest-first so the
+        # NEWEST session's campaign is written last and wins a guild
+        # with sessions from two campaigns (review F2).
+        for session in reversed(recovered):
             if session.guild_id:
                 set_active_campaign(session.guild_id, session.campaign_id)
         if recovered:

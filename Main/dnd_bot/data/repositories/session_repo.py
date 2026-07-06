@@ -81,6 +81,10 @@ class SessionRepository:
         the caller. Legacy 'paused' rows are included — nothing can write
         that state anymore (pause_session was deleted), so they resolve
         the same way: no snapshot, swept.
+
+        Newest first. started_at has 1-second resolution, so rowid breaks
+        same-second ties — recovery's duplicate-session-key sweep keeps
+        the FIRST row per key and depends on newest-first being real.
         """
         db = await self._get_db()
 
@@ -89,7 +93,7 @@ class SessionRepository:
             SELECT id, campaign_id, channel_id, session_number, state, active_combat_id, started_at
             FROM game_session
             WHERE state != 'ended'
-            ORDER BY started_at DESC
+            ORDER BY started_at DESC, rowid DESC
             """,
         )
 

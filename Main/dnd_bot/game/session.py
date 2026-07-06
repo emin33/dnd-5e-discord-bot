@@ -423,24 +423,24 @@ class GameSessionManager:
         standing persist_failed policy): the player keeps playing, the
         snapshot retries next turn.
         """
-        store = session.world_store
-        envelope = {
-            "version": _SNAPSHOT_VERSION,
-            "session_key": session.session_key,
-            "guild_id": session.guild_id,
-            "dm_user_id": session.dm_user_id,
-            "players": [
-                {
-                    "user_id": p.user_id,
-                    "user_name": p.user_name,
-                    "character_id": p.character.id if p.character else None,
-                    "is_dm": p.is_dm,
-                }
-                for p in session.players.values()
-            ],
-            "world_state": store.to_snapshot() if store is not None else None,
-        }
         try:
+            store = session.world_store
+            envelope = {
+                "version": _SNAPSHOT_VERSION,
+                "session_key": session.session_key,
+                "guild_id": session.guild_id,
+                "dm_user_id": session.dm_user_id,
+                "players": [
+                    {
+                        "user_id": p.user_id,
+                        "user_name": p.user_name,
+                        "character_id": p.character.id if p.character else None,
+                        "is_dm": p.is_dm,
+                    }
+                    for p in session.players.values()
+                ],
+                "world_state": store.to_snapshot() if store is not None else None,
+            }
             session_repo = await get_session_repo()
             await session_repo.save_world_snapshot(session.id, json.dumps(envelope))
         except Exception as e:
@@ -465,11 +465,29 @@ class GameSessionManager:
         right there, which replaces the old blanket end_stale_sessions
         sweep with a per-row verdict.
 
-        Mid-combat resume is a DECLARED NON-GOAL of this slice: a session
-        that died in combat recovers as ACTIVE/exploration (combat state
-        is 100% in-memory bot-layer machinery — manager registry, turn
-        coordinator, Discord views — that the suite cannot hold a net
-        for). The downgrade is logged loudly.
+        Declared non-goals of this slice (each logged where it bites):
+        - Mid-combat resume: a session that died in combat recovers as
+          ACTIVE/exploration (combat state is 100% in-memory bot-layer
+          machinery — manager registry, turn coordinator, Discord views —
+          that the suite cannot hold a net for).
+        - Voice/web sessions: this process has no frontend that can serve
+          a ``voice:*``/``web:*`` key (the voice API runs as its own
+          process and never calls recover_sessions), and nothing could
+          ever END such a recovered session, so those rows are ended —
+          the same bound the pre-recovery startup sweep gave them. A real
+          voice-resume story needs its own owner.
+        - Memory tiers: they persist only at graceful end_session, so a
+          crash loses the message buffer / running summary accumulated
+          since the last graceful end (pinned facts partially survive via
+          the per-turn established_facts sync). The recovered WORLD is
+          current; the narrator's conversational memory is as of the last
+          graceful end.
+        - Scene-registry roster: recovery re-seeds from the npc DB (same
+          as start_session). NPCs the extractor minted mid-session live
+          in the recovered WorldState but re-enter the registry only when
+          next referenced (the per-turn registry sync) — making them
+          durable in the registry is Stage-C canonical-id work; seeding
+          them naively here would mint duplicate SceneEntities.
 
         Returns the recovered sessions; the bot layer rebuilds the
         active-campaign map from them (DF-7).
@@ -531,6 +549,21 @@ class GameSessionManager:
                 "session_recovery_unknown_version",
                 session_id=session_id,
                 version=envelope.get("version"),
+            )
+            return None
+
+        # Frontends this process cannot serve (review F1): a recovered
+        # voice/web session would be immortal — end_session only reaches
+        # discord: keys, the voice API process never recovers, and every
+        # boot would rebuild it (KG + Chroma + registry warm) forever.
+        # Ending the row restores the bound the old startup sweep gave
+        # these sessions.
+        snapshot_key = envelope.get("session_key") or ""
+        if snapshot_key and not snapshot_key.startswith("discord:"):
+            logger.info(
+                "session_recovery_foreign_frontend",
+                session_id=session_id,
+                session_key=snapshot_key,
             )
             return None
 

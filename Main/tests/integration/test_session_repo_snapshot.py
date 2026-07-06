@@ -131,3 +131,23 @@ class TestLoadActiveSessions:
 
     async def test_empty_table_returns_empty_list(self, db, repo):
         assert await repo.load_active_sessions() == []
+
+    async def test_same_second_rows_order_newest_insert_first(self, db, repo):
+        """started_at has 1-second resolution; rowid must break ties so
+        recovery's duplicate-key sweep keeps the genuinely newest row
+        (review F5)."""
+        # Same explicit timestamp -> the ORDER BY tie is guaranteed.
+        for sid in ("s-first-insert", "s-second-insert"):
+            await db.execute(
+                """
+                INSERT INTO game_session
+                    (id, campaign_id, channel_id, session_number, state, started_at)
+                VALUES (?, 'test-campaign', 123, 1, 'exploration', '2026-07-06 12:00:00')
+                """,
+                (sid,),
+            )
+        await db.commit()
+
+        rows = await repo.load_active_sessions()
+
+        assert [r["id"] for r in rows] == ["s-second-insert", "s-first-insert"]
