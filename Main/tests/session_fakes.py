@@ -50,16 +50,40 @@ class FakeSessionRepo:
 
 
 class FakeNpcRepo:
-    """Serves campaign NPCs; can be armed to raise."""
+    """Serves campaign NPCs; can be armed to raise.
+
+    Extended for the Stage-C net (canonical NPC id): the registry's
+    ``sync_to_npc_repo`` surface — id/name lookup, create, update — with
+    write journals so pins can assert exactly what reached the "DB".
+    """
 
     def __init__(self, npcs=None, raises: Optional[Exception] = None):
         self.npcs = npcs or []
         self.raises = raises
+        self.created: list = []
+        self.updated: list = []
 
     async def get_alive_by_campaign(self, campaign_id: str):
         if self.raises:
             raise self.raises
         return self.npcs
+
+    async def get_by_id(self, npc_id: str):
+        return next((n for n in self.npcs if n.id == npc_id), None)
+
+    async def get_by_exact_name(self, campaign_id: str, name: str):
+        return next(
+            (n for n in self.npcs if n.name.lower() == name.lower()), None
+        )
+
+    async def create(self, npc):
+        self.npcs.append(npc)
+        self.created.append(npc)
+        return npc
+
+    async def update(self, npc) -> bool:
+        self.updated.append(npc)
+        return True
 
 
 class FakeCharacterRepo:
