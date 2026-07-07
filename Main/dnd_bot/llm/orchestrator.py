@@ -2780,6 +2780,7 @@ Write your narration directly."""
                     entity_type=EntityType.NPC,
                     description=npc_state.description,
                     disposition=disposition_map.get(npc_state.disposition, Disposition.NEUTRAL),
+                    npc_id=npc_state.id,  # Stage C (DF-29): stamp the canonical id
                 )
                 self._scene_registry.register_entity(entity)
 

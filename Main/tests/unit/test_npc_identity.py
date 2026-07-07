@@ -186,11 +186,12 @@ class TestExecutorResolution:
 
 
 class TestDeltaPathStamp:
-    def test_sync_npcs_to_registry_mints_unlinked_entity(self, world, registry):
-        """PINNED-BROKEN → flips: SceneEntity.npc_id == NPCState.id (DF-29).
+    def test_sync_npcs_to_registry_stamps_canonical_id(self, world, registry):
+        """FLIPPED (was PINNED-BROKEN): SceneEntity.npc_id == NPCState.id (DF-29).
 
-        The delta path registers extractor-minted NPCs with no id link, so
-        every later cross-store join for them rides fuzzy get_by_name.
+        The delta path now stamps the canonical id on the SceneEntity it
+        mints, so every later cross-store join resolves by id, not fuzzy
+        name.
         """
         from dnd_bot.llm.orchestrator import DMOrchestrator
 
@@ -204,16 +205,17 @@ class TestDeltaPathStamp:
 
         entity = registry.get_by_name("Grit")
         assert entity is not None
-        assert entity.npc_id is None  # → flips: == npc_state.id
+        assert entity.npc_id == npc_state.id
 
 
 class TestToolPathStamp:
-    async def test_execute_add_npc_leaves_ids_unlinked(self, registry, world):
-        """PINNED-BROKEN → flips: the executor mints/links the canonical id.
+    async def test_execute_add_npc_stamps_canonical_id(self, registry, world):
+        """FLIPPED (was PINNED-BROKEN): the executor mints/links the canonical id.
 
-        Today _execute_add_npc registers a SceneEntity with npc_id=None and
-        never touches the world; apply_effect later mints an UNRELATED
-        NPCState UUID. Two fresh ids for one NPC in one turn.
+        _execute_add_npc now mints the NPCState through the store's identity
+        seam and stamps its id on the SceneEntity — one id for the NPC, not
+        two unrelated UUIDs in one turn. apply_effect's later ADD_NPC branch
+        resolves the same NPCState by name and no-ops (no twin).
         """
         session = SimpleNamespace(world_store=WorldStateStore(world))
         executor = EffectExecutor(scene_registry=registry, session=session)
@@ -224,9 +226,25 @@ class TestToolPathStamp:
             npc_disposition="neutral",
         ))
         assert result.success is True
+        assert len(world.npcs) == 1
+        npc_state = next(iter(world.npcs.values()))
+        assert npc_state.name == "Grit"
         entity = registry.get_by_name("Grit")
-        assert entity.npc_id is None   # → flips: == the minted NPCState.id
-        assert world.npcs == {}        # → flips: NPCState pre-minted via the store
+        assert entity.npc_id == npc_state.id
+
+    async def test_add_npc_executor_then_apply_effect_no_twin(self, registry, world):
+        """The two ADD_NPC seams (executor pre-mint + apply_effect sync)
+        resolve the SAME NPCState — the second is a find, never a twin."""
+        store = WorldStateStore(world)
+        session = SimpleNamespace(world_store=store)
+        executor = EffectExecutor(scene_registry=registry, session=session)
+        effect = ProposedEffect(
+            effect_type=EffectType.ADD_NPC, npc_name="Grit",
+            npc_description="a gruff porter", npc_disposition="neutral",
+        )
+        await executor.execute(effect)
+        store.apply_effect(effect)  # the orchestrator's next step
+        assert len(world.npcs) == 1
 
 
 # ─────────────────────────────────────────────────────────────────────────

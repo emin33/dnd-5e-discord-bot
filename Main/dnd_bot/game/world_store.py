@@ -285,6 +285,39 @@ class WorldStateStore:
             dialogue_emotions=list(effect.dialogue_emotions),
         )
 
+    # ── Canonical NPC identity seam (Stage C) ─────────────────────────────
+
+    def ensure_npc(
+        self,
+        name: str,
+        *,
+        disposition: str = "neutral",
+        description: str = "",
+    ) -> NPCState:
+        """Find-or-mint the canonical NPCState for ``name`` and return it.
+
+        The ONE place a tool-path NPCState is minted (both the narrator's
+        add_npc executor and :meth:`apply_effect`'s ADD_NPC branch route
+        here), so the WorldState UUID it returns is the shared cross-store
+        key: the executor stamps it onto the SceneEntity's ``npc_id``, the
+        KG bridge keys its node on it, and the DB row later adopts it.
+        Find is by name/alias/slug via ``_find_npc`` — a paraphrase already
+        collapses to a REF_ENTITY upstream (the dedup judge), so a genuine
+        second call for the same NPC returns the existing one, never a twin.
+        """
+        existing = self._state._find_npc(name)
+        if existing is not None:
+            return existing
+        npc = NPCState(
+            name=name,
+            location=self._state.current_location,
+            disposition=disposition or "neutral",
+            description=description or "",
+            last_seen_turn=self._state.turn,
+        )
+        self._state.npcs[npc.id] = npc
+        return npc
+
     # ── The narrator-effect sync seam ─────────────────────────────────────
 
     def apply_effect(self, effect: ProposedEffect) -> None:
@@ -334,22 +367,17 @@ class WorldStateStore:
         # conditions flow through UPDATE_PLAYER below.
 
         elif etype == EffectType.ADD_NPC:
-            npc_name = effect.npc_name or "Unknown"
-            # Mint a new NPCState only if we don't already have a matching
-            # one (by name or alias). Dedup by id is enforced inside
-            # apply_delta; here at the effect-sync we use name lookup as
-            # the cheap pre-check (the brain dedup judge runs upstream of
-            # this to catch paraphrases).
-            existing = world_state._find_npc(npc_name)
-            if existing is None:
-                npc = NPCState(
-                    name=npc_name,
-                    location=world_state.current_location,
-                    disposition=effect.npc_disposition or "neutral",
-                    description=effect.npc_description or "",
-                    last_seen_turn=world_state.turn,
-                )
-                world_state.npcs[npc.id] = npc
+            # Find-or-mint through the one identity seam (Stage C). The
+            # add_npc executor already minted+stamped this NPCState (so the
+            # SceneEntity's npc_id points at it); here we resolve the same
+            # one by name and no-op. When the executor path didn't run
+            # (e.g. a sessionless effect apply), this is the mint. Dedup by
+            # paraphrase is the brain judge's job upstream of both.
+            self.ensure_npc(
+                name=effect.npc_name or "Unknown",
+                disposition=effect.npc_disposition or "neutral",
+                description=effect.npc_description or "",
+            )
 
         elif etype == EffectType.CONSUME_RESOURCE:
             resource = effect.resource_name or effect.item_name or "a resource"
