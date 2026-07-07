@@ -83,23 +83,26 @@ class TestRegistryResolution:
         assert registry.get_by_name("Old Bram") is entity
         assert registry.get_by_name("the innkeeper") is entity
 
-    def test_get_by_name_misses_canonical_id(self, registry):
-        """PINNED-BROKEN → flips: canonical-id lookup resolves.
+    def test_get_by_name_resolves_canonical_id(self, registry):
+        """FLIPPED (was PINNED-BROKEN): canonical-id lookup resolves.
 
         The dedup judge rewrites a paraphrased ADD_NPC to
         REF_ENTITY(ref_entity_id=<NPCState UUID>); the executor hands that
-        UUID to get_by_name, which only knows names/aliases/slugs — the
-        rewritten ref silently misses the scene registry.
+        UUID to get_by_name, which now matches it against the entity's
+        npc_id link (Stage C) instead of silently missing.
         """
-        _scene_npc(registry, "Old Bram", npc_id="11111111-2222-4333-8444-555555555555")
-        assert registry.get_by_name("11111111-2222-4333-8444-555555555555") is None
+        entity = _scene_npc(
+            registry, "Old Bram", npc_id="11111111-2222-4333-8444-555555555555"
+        )
+        assert registry.get_by_name("11111111-2222-4333-8444-555555555555") is entity
 
-    def test_register_entity_name_upsert_drops_incoming_npc_id(self, registry):
-        """PINNED-BROKEN → flips: the upsert adopts the incoming npc_id.
+    def test_register_entity_name_upsert_adopts_incoming_npc_id(self, registry):
+        """FLIPPED (was PINNED-BROKEN): the upsert adopts the incoming npc_id.
 
         Preload order dependence: an extractor-minted entity (npc_id=None)
-        registered before the DB preload swallows the DB entity's link —
-        the merged survivor keeps npc_id=None and the row goes dark.
+        registered before the DB preload would otherwise swallow the DB
+        entity's link — now the merged survivor adopts it, keeping the row
+        reachable. First non-empty link wins.
         """
         bare = _scene_npc(registry, "Old Bram")
         merged = registry.register_entity(SceneEntity(
@@ -108,7 +111,7 @@ class TestRegistryResolution:
             npc_id="npc-row-1",
         ))
         assert merged is bare
-        assert bare.npc_id is None  # → flips: == "npc-row-1"
+        assert bare.npc_id == "npc-row-1"
 
 
 class TestWorldStateResolution:
@@ -119,24 +122,22 @@ class TestWorldStateResolution:
         assert world._find_npc("old bram") is npc
         assert world._find_npc("THE INNKEEPER") is npc
 
-    def test_find_npc_misses_multiword_roster_slug(self, world):
-        """PINNED-BROKEN → flips: slug-equality bridges the roster dialect.
+    def test_find_npc_resolves_multiword_roster_slug(self, world):
+        """FLIPPED (was PINNED-BROKEN): slug-equality bridges the dialect.
 
-        The roster says '[id: old-bram]'; _find_npc compares exact
-        lowercased names, and 'old-bram' != 'old bram'. Single-word names
-        resolve by accident; every multi-word NPC misses.
+        The roster says '[id: old-bram]'; exact-lowercase compare can't
+        reach 'Old Bram', so every multi-word NPC missed. Slug-equality on
+        names/aliases closes it.
         """
-        _world_npc(world, "Old Bram")
-        assert world._find_npc("old-bram") is None
+        npc = _world_npc(world, "Old Bram")
+        assert world._find_npc("old-bram") is npc
 
-    def test_store_update_entity_by_slug_misses_world(self, store, world):
-        """PINNED-BROKEN → flips: alive flips False through the slug ref.
+    def test_store_update_entity_by_slug_reaches_world(self, store, world):
+        """FLIPPED (was PINNED-BROKEN): alive flips False through the slug ref.
 
         The narrator kills 'Old Bram' via update_entity(entity_id=
-        'old-bram', status='dead'): the SceneEntity gets status='dead'
-        (executor resolves slugs) but THIS sync — the one the narrator's
-        next-turn YAML reads — misses, so the world roster shows a living
-        NPC the prose just buried.
+        'old-bram', status='dead'): the world roster the narrator's
+        next-turn YAML reads now agrees with the prose that buried them.
         """
         npc = _world_npc(world, "Old Bram")
         store.apply_effect(ProposedEffect(
@@ -144,10 +145,10 @@ class TestWorldStateResolution:
             update_entity_id="old-bram",
             update_status="dead",
         ))
-        assert npc.alive is True  # → flips: False
+        assert npc.alive is False
 
-    def test_store_ref_entity_by_slug_misses_recency(self, store, world):
-        """PINNED-BROKEN → flips: the slug ref bumps last_seen_turn."""
+    def test_store_ref_entity_by_slug_bumps_recency(self, store, world):
+        """FLIPPED (was PINNED-BROKEN): the slug ref bumps last_seen_turn."""
         npc = _world_npc(world, "Old Bram")
         npc.last_seen_turn = 2
         store.apply_effect(ProposedEffect(
@@ -155,17 +156,17 @@ class TestWorldStateResolution:
             ref_entity_id="old-bram",
             ref_alias_used="the innkeeper",
         ))
-        assert npc.last_seen_turn == 2  # → flips: 7
-        assert npc.aliases == []        # → flips: ["the innkeeper"]
+        assert npc.last_seen_turn == 7
+        assert npc.aliases == ["the innkeeper"]
 
 
 class TestExecutorResolution:
-    async def test_ref_entity_with_canonical_uuid_misses_registry(self, registry):
-        """PINNED-BROKEN → flips: found_in_scene True via the npc_id link.
+    async def test_ref_entity_with_canonical_uuid_resolves_registry(self, registry):
+        """FLIPPED (was PINNED-BROKEN): found_in_scene True via the npc_id link.
 
         The dedup-rewrite shape end-to-end: REF_ENTITY carrying the
-        WorldState UUID reaches the executor, whose registry lookup only
-        speaks the name dialect.
+        WorldState UUID reaches the executor, whose registry lookup now
+        matches the entity by its npc_id link.
         """
         canonical = "11111111-2222-4333-8444-555555555555"
         _scene_npc(registry, "Old Bram", npc_id=canonical)
@@ -176,7 +177,7 @@ class TestExecutorResolution:
             ref_alias_used="the innkeeper",
         ))
         assert result.success is True
-        assert result.details["found_in_scene"] is False  # → flips: True
+        assert result.details["found_in_scene"] is True
 
 
 # ─────────────────────────────────────────────────────────────────────────

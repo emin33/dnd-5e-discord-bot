@@ -63,6 +63,14 @@ class SceneEntityRegistry:
                 existing.disposition = entity.disposition
             if entity.monster_index and not existing.monster_index:
                 existing.monster_index = entity.monster_index
+            # Adopt the canonical NPC id link (Stage C): preload order is
+            # not guaranteed — an extractor-minted entity (npc_id=None) can
+            # register before the DB/world preload of the same NPC, and the
+            # by-name upsert would otherwise swallow the incoming link and
+            # leave the row dark. First non-empty link wins; never clobber
+            # an existing one (that would repoint a resolved entity).
+            if entity.npc_id and not existing.npc_id:
+                existing.npc_id = entity.npc_id
             # Merge aliases
             existing_aliases = set(a.lower() for a in (existing.aliases or []))
             for alias in (entity.aliases or []):
@@ -116,17 +124,25 @@ class SceneEntityRegistry:
         return self._entities.get(entity_id)
 
     def get_by_name(self, name: str) -> Optional[SceneEntity]:
-        """Get entity by name or alias (case-insensitive partial match).
+        """Get entity by name, alias, or the canonical NPC id.
 
         Also accepts the roster id dialect (final review): the narrator
         context lists entities as ``[id: slug]`` — ``slugify(name)``,
         hyphenated — which the substring check cannot bridge to spaced
         names ('old-bram' vs 'Old Bram'). Slugified equality on the name
         and aliases covers it.
+
+        And the canonical id (Stage C): when a caller passes the WorldState
+        NPCState UUID — the dedup rewrite echoes it as ``ref_entity_id``,
+        and it is the shared cross-store key — match it against the
+        entity's ``npc_id`` link. Exact, checked first so it wins.
         """
         name_lower = name.lower()
         query_slug = slugify(name)
         for entity in self._entities.values():
+            # Canonical id link (Stage C) — authoritative, exact.
+            if name and entity.npc_id and name == entity.npc_id:
+                return entity
             # Check main name
             if name_lower in entity.name.lower() or entity.name.lower() in name_lower:
                 return entity

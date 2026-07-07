@@ -423,6 +423,23 @@ class WorldState(BaseModel):
             for alias in npc.aliases:
                 if alias and alias.lower() == target_lower:
                     return npc
+        # Roster-slug dialect (Stage C): the narrator echoes the roster's
+        # '[id: old-bram]' slug, which the exact-lowercase compares above
+        # can't bridge to a spaced 'Old Bram' — single-word names resolve by
+        # accident, every multi-word NPC missed. Slug-equality on names and
+        # aliases closes it, mirroring the scene registry's get_by_name.
+        # Lazy import: knowledge/__init__ pulls in bridge/graph which import
+        # world_state at load, so a module-level import would cycle; by call
+        # time every module is loaded and this is a sys.modules cache hit.
+        from .knowledge.models import slugify
+        target_slug = slugify(name_or_id)
+        if target_slug:
+            for npc in self.npcs.values():
+                if slugify(npc.name or "") == target_slug:
+                    return npc
+                for alias in npc.aliases:
+                    if slugify(alias or "") == target_slug:
+                        return npc
         return None
 
     def _resolve_npc(
