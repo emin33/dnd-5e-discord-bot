@@ -457,12 +457,12 @@ class TestPreloadSeed:
 
 
 class TestBridgeLifecycle:
-    def test_update_entity_produces_no_kg_ops(self, world):
-        """PINNED-BROKEN → flips: UPDATE_ENTITY emits UpdateNode (DF-4 KG side).
+    def test_update_entity_produces_kg_update_node(self, world):
+        """FLIPPED (was PINNED-BROKEN): UPDATE_ENTITY emits UpdateNode (DF-4 KG side).
 
-        update_entity(status='dead') flips WorldState.alive but
-        convert_effects has no UPDATE_ENTITY case — the KG node (and its
-        Chroma vector's name/description) never learn about the death.
+        update_entity(status='dead') now reaches the KG node (and, via the
+        orchestrator re-index step, the Chroma vector), so death stops
+        dead-ending in WorldState.
         """
         npc = _world_npc(world, "Old Bram")
         bridge = DeltaBridge("camp")
@@ -474,16 +474,36 @@ class TestBridgeLifecycle:
             )],
             world,
         )
-        assert ops == []  # → flips: [UpdateNode(node_id=npc.id, …alive=false…)]
+        assert len(ops) == 1
+        assert isinstance(ops[0], UpdateNode)
+        assert ops[0].node_id == npc.id
+        assert ops[0].properties.get("alive") == "false"
+        assert ops[0].properties.get("status") == "dead"
         assert promotions == []
 
-    def test_ref_entity_slug_promotion_targets_wrong_node(self, world):
-        """PINNED-BROKEN → flips: the promotion resolves to the UUID node.
+    def test_update_entity_resolves_roster_slug_to_uuid_node(self, world):
+        """The roster-slug dialect resolves to the UUID node, not a slug id."""
+        npc = _world_npc(world, "the hooded figure")
+        bridge = DeltaBridge("camp")
+        ops, _ = bridge.convert_effects(
+            [ProposedEffect(
+                effect_type=EffectType.UPDATE_ENTITY,
+                update_entity_id="the-hooded-figure",
+                update_disposition="hostile",
+            )],
+            world,
+        )
+        assert len(ops) == 1
+        assert ops[0].node_id == npc.id
+        assert ops[0].properties.get("disposition") == "hostile"
+
+    def test_ref_entity_slug_promotion_resolves_uuid_node(self, world):
+        """FLIPPED (was PINNED-BROKEN): the promotion resolves to the UUID node.
 
         The narrator refs the roster slug ('the-hooded-figure') with a
-        proper-name alias; _effect_ref_entity passes the slug through as
-        the node_id, but NPC nodes are UUID-keyed (ROOT-2) — the
-        promotion targets a node that doesn't exist and silently no-ops.
+        proper-name alias; _effect_ref_entity now resolves the slug to the
+        UUID-keyed NPC node (ROOT-2) instead of promoting a nonexistent
+        slug node (DF-13/14).
         """
         npc = _world_npc(world, "the hooded figure")
         bridge = DeltaBridge("camp")
@@ -494,15 +514,15 @@ class TestBridgeLifecycle:
                 ref_alias_used="Captain Vex",
             ),
             set(),
+            world,
         )
-        assert promo == NamePromotion(
-            node_id="the-hooded-figure", new_name="Captain Vex"
-        )  # → flips: node_id == npc.id
+        assert promo == NamePromotion(node_id=npc.id, new_name="Captain Vex")
 
     def test_ref_entity_uuid_promotion_already_resolves(self, world):
         """Survives (audit correction): slugify is identity for uuid4
         strings, so a UUID ref already targets the right node — DF-14's
-        'mangled UUID' mechanism was stale."""
+        'mangled UUID' mechanism was stale. Now it resolves via the world
+        lookup directly."""
         npc = _world_npc(world, "the hooded figure")
         assert slugify(npc.id) == npc.id  # the identity fact itself
         bridge = DeltaBridge("camp")
@@ -513,6 +533,7 @@ class TestBridgeLifecycle:
                 ref_alias_used="Captain Vex",
             ),
             set(),
+            world,
         )
         assert promo == NamePromotion(node_id=npc.id, new_name="Captain Vex")
 

@@ -521,9 +521,11 @@ class DeltaBridge:
             elif etype == EffectType.SPAWN_OBJECT:
                 ops.extend(self._effect_spawn_object(effect, world_state, known, now))
             elif etype == EffectType.REF_ENTITY:
-                promo = self._effect_ref_entity(effect, known)
+                promo = self._effect_ref_entity(effect, known, world_state)
                 if promo:
                     promotions.append(promo)
+            elif etype == EffectType.UPDATE_ENTITY:
+                ops.extend(self._effect_update_entity(effect, world_state))
             elif etype == EffectType.REMOVE_ENTITY:
                 ops.extend(self._effect_remove_entity(effect, world_state))
 
@@ -675,20 +677,77 @@ class DeltaBridge:
         self,
         effect: "ProposedEffect",
         known: set[str],
+        world_state: "WorldState" = None,
     ) -> NamePromotion | None:
-        """REF_ENTITY → name promotion suggestion (if alias is a proper name)."""
+        """REF_ENTITY → name promotion suggestion (if alias is a proper name).
+
+        NPC nodes are keyed on the WorldState NPCState UUID (ROOT-2), so the
+        roster slug the narrator echoes as ``ref_entity_id`` must resolve
+        UUID-first, mirroring ``_effect_remove_entity``. The old
+        ``slugify(entity_id)`` produced an id no NPC node has — so every
+        name promotion for a UUID-anchored node silently no-oped (DF-13/14).
+        The slug fallback still serves non-NPC / legacy slug-anchored nodes.
+        """
         entity_id = effect.ref_entity_id
         alias = effect.ref_alias_used
         if not entity_id or not alias:
             return None
 
-        node_id = slugify(entity_id)
+        node_id = entity_id
+        if world_state is not None and node_id not in world_state.npcs:
+            existing = world_state._find_npc(entity_id)
+            node_id = existing.id if existing is not None else slugify(entity_id)
+        elif world_state is None:
+            node_id = slugify(entity_id)
         if not node_id or alias.lower() == entity_id.lower():
             return None
 
         if _is_proper_name(alias):
             return NamePromotion(node_id=node_id, new_name=alias)
         return None
+
+    def _effect_update_entity(
+        self,
+        effect: "ProposedEffect",
+        world_state: "WorldState" = None,
+    ) -> list[GraphOperation]:
+        """UPDATE_ENTITY → UpdateNode reflecting the narrator's change.
+
+        The tool-path twin of the delta path's ``_handle_npc_update``: the
+        narrator's disposition/status/importance edits reach the KG node
+        (and, via the orchestrator's re-index step, the Chroma vector), so
+        death and disposition stop dead-ending in WorldState (DF-4, KG
+        side). Resolution is UUID-first like the other effect handlers.
+        WorldState's ``alive`` bool is derived from a ``status`` of 'dead',
+        mirroring ``WorldStateStore.apply_effect``.
+        """
+        entity_id = (effect.update_entity_id or "").strip()
+        if not entity_id:
+            return []
+
+        node_id = entity_id
+        if world_state is not None and node_id not in world_state.npcs:
+            existing = world_state._find_npc(entity_id)
+            node_id = existing.id if existing is not None else slugify(entity_id)
+        elif world_state is None:
+            node_id = slugify(entity_id)
+        if not node_id:
+            return []
+
+        changed: dict[str, str] = {}
+        if effect.update_disposition is not None:
+            changed["disposition"] = effect.update_disposition.lower()
+        if effect.update_status is not None:
+            status = effect.update_status.lower()
+            changed["status"] = status
+            if status == "dead":
+                changed["alive"] = "false"
+        if effect.update_importance is not None:
+            changed["important"] = str(bool(effect.update_importance)).lower()
+
+        if not changed:
+            return []
+        return [UpdateNode(node_id=node_id, properties=changed)]
 
     def _effect_remove_entity(
         self,
