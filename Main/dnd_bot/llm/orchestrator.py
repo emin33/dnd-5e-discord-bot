@@ -2764,40 +2764,47 @@ Write your narration directly."""
         if not self._scene_registry:
             return
 
+        disposition_map = {
+            "hostile": Disposition.HOSTILE,
+            "unfriendly": Disposition.UNFRIENDLY,
+            "neutral": Disposition.NEUTRAL,
+            "friendly": Disposition.FRIENDLY,
+            "allied": Disposition.ALLIED,
+        }
+
         # Register new NPCs
         for npc_state in delta.new_npcs:
             # Only add to registry if they're at the party's location
             if not npc_state.location or npc_state.location == world_state.current_location:
-                disposition_map = {
-                    "hostile": Disposition.HOSTILE,
-                    "unfriendly": Disposition.UNFRIENDLY,
-                    "neutral": Disposition.NEUTRAL,
-                    "friendly": Disposition.FRIENDLY,
-                    "allied": Disposition.ALLIED,
-                }
                 entity = SceneEntity(
                     name=npc_state.name,
                     entity_type=EntityType.NPC,
                     description=npc_state.description,
                     disposition=disposition_map.get(npc_state.disposition, Disposition.NEUTRAL),
+                    npc_id=npc_state.id,  # Stage C (DF-29): stamp the canonical id
                 )
                 self._scene_registry.register_entity(entity)
 
-        # Update dispositions for existing NPCs
+        # Update existing NPCs from the extractor's npc_updates.
         for update in delta.npc_updates:
+            key = update.id or update.name
+            if not key:
+                continue
+            existing = self._scene_registry.get_by_name(key)
+            if existing is None:
+                continue
             if update.disposition:
-                existing = self._scene_registry.get_by_name(update.name)
-                if existing:
-                    disposition_map = {
-                        "hostile": Disposition.HOSTILE,
-                        "unfriendly": Disposition.UNFRIENDLY,
-                        "neutral": Disposition.NEUTRAL,
-                        "friendly": Disposition.FRIENDLY,
-                        "allied": Disposition.ALLIED,
-                    }
-                    new_disp = disposition_map.get(update.disposition)
-                    if new_disp:
-                        existing.disposition = new_disp
+                new_disp = disposition_map.get(update.disposition)
+                if new_disp:
+                    existing.disposition = new_disp
+            # Extractor-channel death (Stage-C DF-4): the extractor reports a
+            # kill as NPCUpdate(alive=False), which reached WorldState + the
+            # KG but never the SceneEntity — so sync_to_npc_repo left the DB
+            # row alive and the NPC resurrected on the next fresh session.
+            # Mark the entity dead here, mirroring the tool path's
+            # _execute_update_entity status write, so death reaches the DB.
+            if update.alive is False:
+                existing.status = "dead"
 
         # Remove NPCs who left
         for name in delta.removed_npcs:

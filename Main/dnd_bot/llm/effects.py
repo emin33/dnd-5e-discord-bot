@@ -739,12 +739,29 @@ class EffectExecutor:
 
         from ..models.npc import SceneEntity
 
+        # Stage C: mint/resolve the canonical NPCState up front so the
+        # SceneEntity links to it via npc_id. That WorldState UUID is the
+        # shared cross-store key — the KG node keys on it and the DB row
+        # later adopts it, so all five stores converge on ONE id instead of
+        # minting three unrelated UUIDs for one NPC in one turn. No store
+        # (a sessionless apply) → npc_id stays None, unchanged from before.
+        canonical_id = None
+        store = getattr(self.session, "world_store", None) if self.session else None
+        if store is not None:
+            npc_state = store.ensure_npc(
+                name=effect.npc_name or "Unknown",
+                disposition=effect.npc_disposition or "neutral",
+                description=effect.npc_description or "",
+            )
+            canonical_id = npc_state.id
+
         entity = SceneEntity(
             name=effect.npc_name,
             description=effect.npc_description or "",
             entity_type="npc",
             disposition=effect.npc_disposition or "neutral",
             monster_index=effect.monster_index,
+            npc_id=canonical_id,
         )
         self.scene_registry.register_entity(entity)
 

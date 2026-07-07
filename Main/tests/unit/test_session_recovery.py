@@ -203,9 +203,16 @@ class TestRecoverSessions:
             }
         ]
 
-        # DF-16: the scene-registry roster recovery used to skip.
+        # DF-16: the scene-registry roster recovery used to skip. Stage C
+        # closes the F4 gap too — Fred lives only in the recovered
+        # WorldState (not the DB), and preload now seeds the registry from
+        # there, linked by his canonical NPCState id (previously he re-entered
+        # the registry only when next referenced).
         registry = get_scene_registry(CAMPAIGN_ID, key)
-        assert [e.name for e in registry.get_all()] == ["Grokk"]
+        by_name = {e.name: e for e in registry.get_all()}
+        assert set(by_name) == {"Grokk", "Fred"}
+        fred_state = session.world_state._find_npc("Fred")
+        assert by_name["Fred"].npc_id == fred_state.id
 
         # Memory tiers warmed.
         assert memory_warm_calls == [CAMPAIGN_ID]

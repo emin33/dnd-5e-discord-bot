@@ -34,6 +34,11 @@ logger = structlog.get_logger()
 # resuming from a misread world.
 _SNAPSHOT_VERSION = 1
 
+# WorldState stores disposition as a str; the registry/SceneEntity use the
+# Disposition enum. This maps the former back to the latter when the F4
+# preload seeds registry entities from recovered NPCStates (Stage C).
+_DISPOSITION_BY_VALUE = {d.value: d for d in Disposition}
+
 
 class SessionState(str, Enum):
     """States of a game session."""
@@ -380,7 +385,7 @@ class GameSessionManager:
             session.knowledge_graph = None
 
     async def _preload_scene_npcs(self, session: GameSession) -> None:
-        """Seed the scene registry with the campaign's alive NPCs.
+        """Seed the scene registry with the campaign's NPCs.
 
         Shared by start_session AND recover_sessions (audit DF-16: recovery
         previously skipped this, so a recovered narrator lost "who is in
@@ -388,25 +393,90 @@ class GameSessionManager:
         concurrent voice/web sessions — which all set ``channel_id=0`` —
         don't collide on one shared registry. Failures never stop the
         session.
+
+        Seeds the registry (NOT WorldState — see below) from the UNION of
+        two rosters, both stamping the canonical NPCState UUID onto the
+        SceneEntity so every cross-store join resolves by it:
+
+        - The durable DB roster (``get_alive_by_campaign``): each alive row
+          registers a SceneEntity under its id (== the KG node id post
+          Stage C). A row the recovered WorldState knows is DEAD is skipped:
+          WorldState is authoritative for the live session, and the DB row
+          is just stale (death that never reached it before a crash) —
+          registering it would resurrect the corpse.
+        - The recovered WorldState's own NPCs (F4): extractor-minted NPCs
+          live only in the snapshot (the per-turn DB sync is dead; a crash
+          beat end_session), so they seed the registry here — otherwise the
+          narrator roster forgets someone the world remembers. Dead ones and
+          those a DB row already covered are skipped (no duplicate
+          SceneEntity — the naive-seed hazard the ROOT-3 wave flagged).
+
+        Deliberately does NOT seed ``WorldState.npcs`` with the DB roster.
+        An earlier Stage-C draft did, to converge a returning NPC's id
+        across the session boundary — but ``world_state.npcs`` means "NPCs
+        in the current scene" to four consumers (the narrator ENTITY-FACTS /
+        HOSTILE-DIRECTIVE block, ``to_yaml``'s ``npcs_here``, the KG BFS
+        ``scene_seeds``, and the dedup judge's candidate slice), none
+        location-gated, and seeding the whole campaign roster flooded all
+        four (adversarial review, 3 confirmed regressions). The canonical id
+        is durably PRESERVED in the DB row (created under it), so a returning
+        NPC's row/KG/registry stay converged; only a freshly-minted
+        session-local NPCState gets a new UUID, same as before Stage C.
+        On-reference WorldState re-convergence, if wanted, is a separate
+        slice with its own consumer-side location gating.
         """
         campaign_id = session.campaign_id
         scene_registry = get_scene_registry(campaign_id, session.session_key)
+        world = session.world_state
         try:
             npc_repo = await get_npc_repo()
             campaign_npcs = await npc_repo.get_alive_by_campaign(campaign_id)
+            seen_ids: set[str] = set()
+
+            # 1. Durable DB roster — registry only, under the row id.
             for npc in campaign_npcs:
-                entity = SceneEntity(
+                ws_state = world.npcs.get(npc.id) if world else None
+                if ws_state is not None and not ws_state.alive:
+                    continue  # world says dead; don't resurrect the corpse
+                disposition = (
+                    npc.base_disposition
+                    if isinstance(npc.base_disposition, Disposition)
+                    else Disposition.NEUTRAL
+                )
+                scene_registry.register_entity(SceneEntity(
                     name=npc.name,
                     npc_id=npc.id,
                     entity_type=EntityType.NPC,
                     description=npc.description or "",
                     monster_index=npc.monster_index,
-                    disposition=npc.base_disposition if isinstance(npc.base_disposition, Disposition) else Disposition.NEUTRAL,
+                    disposition=disposition,
                     voice_id=npc.voice_id,
+                ))
+                seen_ids.add(npc.id)
+
+            # 2. WorldState-only NPCs (recovery, F4) — registry only.
+            if world is not None:
+                for npc_state in list(world.npcs.values()):
+                    if not npc_state.alive or npc_state.id in seen_ids:
+                        continue
+                    scene_registry.register_entity(SceneEntity(
+                        name=npc_state.name,
+                        npc_id=npc_state.id,
+                        entity_type=EntityType.NPC,
+                        description=npc_state.description or "",
+                        disposition=_DISPOSITION_BY_VALUE.get(
+                            npc_state.disposition, Disposition.NEUTRAL
+                        ),
+                    ))
+                    seen_ids.add(npc_state.id)
+
+            if seen_ids:
+                logger.info(
+                    "npcs_loaded",
+                    count=len(seen_ids),
+                    db_count=len(campaign_npcs),
+                    campaign_id=campaign_id,
                 )
-                scene_registry.register_entity(entity)
-            if campaign_npcs:
-                logger.info("npcs_loaded_from_db", count=len(campaign_npcs), campaign_id=campaign_id)
         except Exception as e:
             logger.warning("npc_preload_failed", error=str(e), exc_info=True)
 
@@ -669,10 +739,16 @@ class GameSessionManager:
             # Persist final state and sync characters
             await self._sync_session_characters(session)
 
-            # Sync NPCs to repository and clear scene registry
+            # Sync NPCs to repository and clear scene registry. Pass the
+            # world's current location so the npc rows get a real place
+            # (DF-19), not the old scene-description slice.
             try:
                 scene_registry = get_scene_registry(session.campaign_id, session.session_key)
-                await scene_registry.sync_to_npc_repo()
+                current_location = (
+                    session.world_state.current_location
+                    if session.world_state else None
+                )
+                await scene_registry.sync_to_npc_repo(current_location=current_location)
                 clear_scene_registry(session.session_key)
             except Exception as e:
                 logger.error(

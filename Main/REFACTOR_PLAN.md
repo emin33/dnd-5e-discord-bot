@@ -490,6 +490,101 @@ transitions / tool-call sequences; semantic-similarity threshold for narration p
     recovery tests drive the same fakes from one conftest, so "recovery
     runs the same init" is checked by construction, not by prose.
 
+### Stage C — Canonical NPC identity end-to-end: **DONE** (2026-07-07, branch `stage-c-npc-identity`, commits `93a4f24`..`63237bf`, 750 tests green)
+- **The decision:** ONE canonical NPC id — the WorldState `NPCState.id` UUID
+  — shared across all five stores (WorldState, scene registry, npc DB, KG,
+  ChromaDB). It was already the KG node id (ROOT-2 core) and the matcher
+  seed; Stage C stamps it onto the other three and makes every cross-store
+  lookup resolve by it (or the roster-slug dialect the narrator emits).
+- **Audit corrections pinned as facts (verify-don't-trust, again):** DF-10's
+  "narrator gets a UUID, `get_by_name` substring-misses it" was STALE — the
+  roster hands the narrator `[id: slugify(name)]` SLUGS, and
+  `get_by_name`/`_find_npc` already resolved most of that dialect. DF-14's
+  "slugify mangles the UUID" was STALE — `slugify` is the identity function
+  for lowercase uuid4 strings, so a UUID ref promotes fine; the REAL
+  DF-13/14 miss was the common case (the narrator echoes the roster SLUG and
+  `_effect_ref_entity` handed it to a UUID-keyed KG). Both re-derived from
+  HEAD and pinned so the next wave doesn't re-chase the stale mechanism.
+- **Pin first (per the rule):** `93a4f24` — 22 pins across five groups
+  (resolution / stamp / DB persistence / preload-seed / KG lifecycle), each
+  PINNED-BROKEN test carrying a `→ flips` note. FakeNpcRepo gained the sync
+  surface (get_by_id/get_by_exact_name/create/update with write journals).
+- **What landed (six slices, each green + typecheck exit-0):**
+  - Resolution (`afbb277`): `registry.get_by_name` matches the canonical
+    `npc_id` first; `register_entity`'s by-name upsert ADOPTS an incoming
+    `npc_id` when the survivor has none (preload order isn't guaranteed — an
+    extractor-minted bare entity can register before the DB preload and
+    would otherwise swallow the link); `WorldState._find_npc` gains a
+    slug-equality fallback (lazy `slugify` import — `knowledge/__init__`
+    pulls in bridge/graph which import world_state, so module-level cycles).
+  - Stamp (`a34859b`): `WorldStateStore.ensure_npc` is the ONE find-or-mint
+    seam for a tool-path NPCState (`apply_effect`'s ADD_NPC inline mint
+    deleted, routed here; the add_npc executor calls it up front to stamp
+    `SceneEntity.npc_id`). The two seams resolve the same NPCState, never a
+    twin (guard test). `_sync_npcs_to_registry` stamps `npc_id` (DF-29).
+  - DB persistence (`5a79733`): `sync_to_npc_repo` CREATES the row under the
+    canonical id when a world-minted NPC's id never reached the DB (was
+    silently dropped); death (SceneEntity `status=='dead'`) writes
+    `is_alive=False`; location is world-authoritative via a
+    `current_location` param, not the old scene-description slice (DF-19).
+    `end_session` passes `world_state.current_location`.
+  - Preload/seed (`75dab41`, later trimmed — see review): seeds the registry
+    from the DB roster + recovered WorldState-only NPCs (F4), skipping
+    world-dead. **Its original world-seed half was reverted** (`63237bf`).
+  - KG lifecycle (`cc08fff`): `convert_effects` gains an
+    UPDATE_ENTITY→UpdateNode case (the tool-path twin of `_handle_npc_update`)
+    so death/disposition reach the KG node (and Chroma via the existing
+    Step-4b re-index); `_effect_ref_entity` resolves the roster slug to the
+    UUID node (DF-13/14). Death now propagates to all five stores.
+- **Adversarial review — TWO rounds, 6 lenses each refuted-or-confirmed by an
+  independent skeptic (found real things again, both rounds):**
+  - Round 1 (`2051d0e`): **extractor-channel death never reached the DB**
+    (medium, real). The Commit-4 death→DB fix covered only the narrator TOOL
+    path (`SceneEntity.status`). The state extractor reports a kill as
+    `NPCUpdate(alive=False)`, which reached WorldState + the KG node but never
+    the SceneEntity — so `sync_to_npc_repo` left the DB row alive and the NPC
+    resurrected on the next fresh session (the exact DF-4 scenario). Fixed:
+    `_sync_npcs_to_registry` translates `alive=False` → `SceneEntity.status
+    ='dead'`, mirroring the tool path. Plus two test-quality fixes (a
+    non-discriminating no-twin pin that passed pre-fix; an untested
+    idempotency guard).
+  - Round 2 (`63237bf`): **the preload world-seed flooded four scene-scoped
+    consumers** (3 confirmed + 1 uncertain, all one root cause). Seeding the
+    ENTIRE alive campaign roster into `world_state.npcs` at start broke the
+    "`world_state.npcs` == current-scene NPCs" assumption that four
+    consumers rely on, none location-gated: the narrator ENTITY-FACTS /
+    HOSTILE-DIRECTIVE block (distant hostiles injected as facts AND ordered
+    to attack every turn — a correctness regression), `to_yaml`'s
+    `npcs_here` (turn-1 dumps the whole roster as "present"), the KG BFS
+    `scene_seeds` (roster crowds the current location + active quest out of
+    the 15-node cap), and the dedup judge's candidate slice. Fixed by
+    REVERTING the world-seed (not by bolting a location gate onto four
+    consumers): the canonical id is durably preserved in the DB row, so a
+    returning NPC's row/KG/registry stay converged across restarts; only a
+    freshly-minted session-local NPCState gets a new UUID — master's
+    behavior, no regression. Kept the F4 registry seed + skip-dead
+    (registry-only, no flood). `seed_npc` deleted.
+- **Net effect:** within-session id convergence + persistence of the id +
+  five-store death propagation + F4 registry durability. Cross-session
+  WorldState *re-convergence* was attempted and withdrawn — it belongs in a
+  separate slice with consumer-side location gating and its own review.
+- **Lessons:**
+  - A lifecycle event (death, rename) has TWO producers — the narrator tool
+    path AND the state-extractor delta — and a cross-store fix must cover
+    BOTH or it's a half-fix the next audit re-flags. The review caught
+    exactly the extractor half of death that Commit 4 missed.
+  - `world_state.npcs` is scene-scoped by four independent consumers' silent
+    assumption; do NOT populate it with campaign-wide data. The single-store
+    fix (make the id resolvable) is right; pre-seeding a working set to force
+    convergence is the overreach. The DB row is the durable id anchor — let
+    it be, don't mirror the whole roster into the live world.
+  - The audit's file:line AND its *mechanism* both go stale: DF-10/DF-14
+    were right that a bug existed but wrong about why. Re-derive the
+    mechanism from HEAD; don't port the audit's explanation into the pin.
+  - `75dab41`'s message ("the canonical id survives the session boundary")
+    overclaims post-revert — recorded here since commit messages are
+    immutable history.
+
 ### Step 1 — Tool registry: **DONE** (2026-07-05, commits `51118fb` net + `79e391c` + `2a83637` + `a116319`, 609 tests green)
 - **Net first (per the rule):** `51118fb` widened the Step-0 net with 7 per-tool
   `process_action` turns — add_npc / spawn_object / update_player grant+remove
@@ -621,7 +716,7 @@ both **DONE** (`c0b3d67`; the three helpers now route via `_resolve_player_chara
   *specifics* — file:line citations drift, and a few "dead code" / "depends on X" claims
   were stale (e.g. turn_loop's "voice frontend depends on it" was false). Grep-confirm
   before deleting; read the real code before changing it.
-- Baseline: **723 tests pass** (as of ROOT-3, 2026-07-06; was 695 at Step 5, 693 at Step 4 core, 668 at Step 3, 631 at Step 2, 609 at Step 1, 506 at Step 0).
+- Baseline: **750 tests pass** (as of Stage C, 2026-07-07; was 723 at ROOT-3, 695 at Step 5, 693 at Step 4 core, 668 at Step 3, 631 at Step 2, 609 at Step 1, 506 at Step 0).
   Keep them passing after every step — and keep THIS number current when a
   step lands, or the plan becomes the stale doc it warns about (quality
   re-audit 2026-06-09 caught exactly that).
