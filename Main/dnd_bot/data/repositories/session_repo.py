@@ -1,6 +1,6 @@
 """Session repository for game session persistence."""
 
-from typing import Optional
+from typing import Any, Optional
 
 from ..database import Database, get_database
 
@@ -73,25 +73,81 @@ class SessionRepository:
         )
         await db.commit()
 
-    async def end_stale_sessions(self) -> int:
-        """
-        Mark lingering non-terminal sessions as ended (startup hygiene).
+    async def load_active_sessions(self) -> list[dict[str, Any]]:
+        """Load every non-ended session row (bot-restart recovery, ROOT-3).
 
-        Session resume is not supported, so rows left active by a crashed
-        or killed previous run would otherwise stay active forever. Called
-        once at bot startup. Returns the number of rows updated.
+        Candidates for recovery; rows the recovery pass cannot rebuild
+        (no world snapshot, missing campaign) are ended individually by
+        the caller. Legacy 'paused' rows are included — nothing can write
+        that state anymore (pause_session was deleted), so they resolve
+        the same way: no snapshot, swept.
+
+        Newest first. started_at has 1-second resolution, so rowid breaks
+        same-second ties — recovery's duplicate-session-key sweep keeps
+        the FIRST row per key and depends on newest-first being real.
         """
         db = await self._get_db()
 
-        cursor = await db.execute(
+        rows = await db.fetch_all(
             """
-            UPDATE game_session
-            SET state = 'ended', ended_at = CURRENT_TIMESTAMP
+            SELECT id, campaign_id, channel_id, session_number, state, active_combat_id, started_at
+            FROM game_session
             WHERE state != 'ended'
+            ORDER BY started_at DESC, rowid DESC
             """,
         )
+
+        return [
+            {
+                "id": row[0],
+                "campaign_id": row[1],
+                "channel_id": row[2],
+                "session_number": row[3],
+                "state": row[4],
+                "active_combat_id": row[5],
+                "started_at": row[6],
+            }
+            for row in rows
+        ]
+
+    async def save_world_snapshot(self, session_id: str, game_state: str) -> None:
+        """Persist the session's world snapshot (replace semantics).
+
+        One 'world' row per session under the stable id
+        ``world:<session_id>``, replaced in a single statement — per-turn
+        saves can't grow the table, and there is no multi-statement window
+        in which an interleaved commit on the shared connection could
+        strand a deleted-but-not-reinserted snapshot. ``game_state`` is
+        the already-serialized JSON envelope — the session layer owns its
+        shape, this layer just stores bytes.
+        """
+        db = await self._get_db()
+
+        await db.execute(
+            """
+            INSERT OR REPLACE INTO session_snapshot (id, session_id, snapshot_type, game_state)
+            VALUES (?, ?, 'world', ?)
+            """,
+            (f"world:{session_id}", session_id, game_state),
+        )
         await db.commit()
-        return cursor.rowcount
+
+    async def get_latest_snapshot(self, session_id: str) -> Optional[str]:
+        """The session's most recent 'world' snapshot JSON, or None."""
+        db = await self._get_db()
+
+        row = await db.fetch_one(
+            """
+            SELECT game_state
+            FROM session_snapshot
+            WHERE session_id = ? AND snapshot_type = 'world'
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (session_id,),
+        )
+
+        return row[0] if row else None
 
     async def get_session_number(self, campaign_id: str) -> int:
         """Get the next session number for a campaign."""

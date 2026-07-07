@@ -85,3 +85,4 @@ Main/data/creativity_logs/
 Main/data/long_horizon_run*.log
 Main/data/claude_play_*.log
 Main/_testout.txt
+Main/_mypyout.txt
