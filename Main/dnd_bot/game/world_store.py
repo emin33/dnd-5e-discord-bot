@@ -318,38 +318,6 @@ class WorldStateStore:
         self._state.npcs[npc.id] = npc
         return npc
 
-    def seed_npc(
-        self,
-        npc_id: str,
-        name: str,
-        *,
-        location: str = "",
-        disposition: str = "neutral",
-        description: str = "",
-    ) -> NPCState:
-        """Seed a returning NPC into WorldState under its durable id.
-
-        The session preload calls this so a DB-persisted NPC re-enters the
-        world under the SAME id it carried last session — which (Stage C) is
-        also its KG node id and DB row id — instead of the narrator's first
-        mention minting a fresh UUID that fragments identity across the
-        session boundary. Both the tool path (ensure_npc → _find_npc) and
-        the extractor path (the dedup judge against the roster) then anchor
-        on it. Idempotent by id; a recovered snapshot's NPCState wins over
-        the DB row (never overwritten).
-        """
-        if npc_id in self._state.npcs:
-            return self._state.npcs[npc_id]
-        npc = NPCState(
-            id=npc_id,
-            name=name,
-            location=location,
-            disposition=disposition or "neutral",
-            description=description,
-        )
-        self._state.npcs[npc_id] = npc
-        return npc
-
     # ── The narrator-effect sync seam ─────────────────────────────────────
 
     def apply_effect(self, effect: ProposedEffect) -> None:

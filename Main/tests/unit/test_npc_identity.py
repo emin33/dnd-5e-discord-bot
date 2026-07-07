@@ -229,33 +229,6 @@ class TestDeltaPathStamp:
         assert registry.get_by_name("Old Bram").status == "dead"
 
 
-class TestSeedNpc:
-    def test_seed_npc_mints_under_given_id(self, store, world):
-        seeded = store.seed_npc(
-            "npc-7", "Mira", location="Docks", disposition="friendly",
-        )
-        assert world.npcs["npc-7"] is seeded
-        assert (seeded.name, seeded.location, seeded.disposition) == (
-            "Mira", "Docks", "friendly",
-        )
-
-    def test_seed_npc_is_idempotent_snapshot_wins(self, store, world):
-        """The snapshot-wins-over-DB invariant: seeding an id already present
-        returns the existing NPCState UNMODIFIED (a recovered live NPCState
-        must not be clobbered by a stale DB row). Un-pinned before the
-        review; the sole production caller pre-filters, so a guard regression
-        would otherwise slip through green."""
-        original = store.seed_npc("id-1", "Mira", location="Docks", disposition="friendly")
-        again = store.seed_npc(
-            "id-1", "Mira the Traitor", location="Dungeon", disposition="hostile",
-        )
-        assert again is original
-        assert (again.name, again.location, again.disposition) == (
-            "Mira", "Docks", "friendly",
-        )
-        assert len(world.npcs) == 1
-
-
 class TestToolPathStamp:
     async def test_execute_add_npc_stamps_canonical_id(self, registry, world):
         """FLIPPED (was PINNED-BROKEN): the executor mints/links the canonical id.
@@ -438,15 +411,14 @@ def _session(channel_id: int, world: WorldState) -> GameSession:
 
 
 class TestPreloadSeed:
-    async def test_preload_seeds_world_state_from_db(
+    async def test_preload_seeds_registry_not_world_state(
         self, manager, fake_npc_repo, registry_cleanup, unique_channel_id, world
     ):
-        """FLIPPED (was PINNED-BROKEN): DB rows seed NPCState with id == NPC.id.
-
-        A fresh session's WorldState no longer starts blind to returning
-        NPCs — the durable DB roster seeds an NPCState under the row id
-        (== the KG node id), so the first mention resolves the existing id
-        instead of minting a divergent UUID. Cross-session convergence.
+        """The DB roster seeds the REGISTRY (stamped with the canonical id),
+        NOT WorldState. Seeding world_state.npcs with the whole campaign
+        roster flooded four scene-scoped consumers (review regressions), so
+        the world stays empty until an NPC is actually referenced — the DB
+        row durably preserves the id regardless.
         """
         fake_npc_repo.npcs = [
             NPC(id="npc-7", campaign_id="camp", name="Mira", location="Docks"),
@@ -456,10 +428,13 @@ class TestPreloadSeed:
 
         await manager._preload_scene_npcs(session)
 
-        assert set(world.npcs) == {"npc-7"}
-        seeded = world.npcs["npc-7"]
-        assert seeded.name == "Mira"
-        assert seeded.location == "Docks"
+        # World untouched; registry seeded with the canonical id link.
+        assert world.npcs == {}
+        from dnd_bot.game.scene.registry import get_scene_registry
+        registry = get_scene_registry("camp", session.session_key)
+        entity = registry.get_by_name("Mira")
+        assert entity is not None
+        assert entity.npc_id == "npc-7"
 
     async def test_preload_skips_world_dead_npc(
         self, manager, fake_npc_repo, registry_cleanup, unique_channel_id, world

@@ -385,7 +385,7 @@ class GameSessionManager:
             session.knowledge_graph = None
 
     async def _preload_scene_npcs(self, session: GameSession) -> None:
-        """Seed the scene registry (and world) with the campaign's NPCs.
+        """Seed the scene registry with the campaign's NPCs.
 
         Shared by start_session AND recover_sessions (audit DF-16: recovery
         previously skipped this, so a recovered narrator lost "who is in
@@ -394,35 +394,46 @@ class GameSessionManager:
         don't collide on one shared registry. Failures never stop the
         session.
 
-        Stage C makes this the id-convergence point across the session
-        boundary. It seeds from the UNION of two rosters, both keyed on the
-        canonical NPCState UUID:
+        Seeds the registry (NOT WorldState — see below) from the UNION of
+        two rosters, both stamping the canonical NPCState UUID onto the
+        SceneEntity so every cross-store join resolves by it:
 
-        - The durable DB roster (``get_alive_by_campaign``): each row seeds
-          a registry SceneEntity AND — the new part — a WorldState NPCState
-          under the SAME id (== the row id == the KG node id), so a
-          returning NPC keeps its canonical id instead of the first mention
-          minting a fresh divergent UUID. A row the recovered WorldState
-          knows is DEAD is skipped: WorldState is authoritative for the live
-          session, and the DB row is just stale (death that never reached it
-          before a crash) — seeding it would resurrect the corpse.
+        - The durable DB roster (``get_alive_by_campaign``): each alive row
+          registers a SceneEntity under its id (== the KG node id post
+          Stage C). A row the recovered WorldState knows is DEAD is skipped:
+          WorldState is authoritative for the live session, and the DB row
+          is just stale (death that never reached it before a crash) —
+          registering it would resurrect the corpse.
         - The recovered WorldState's own NPCs (F4): extractor-minted NPCs
           live only in the snapshot (the per-turn DB sync is dead; a crash
           beat end_session), so they seed the registry here — otherwise the
           narrator roster forgets someone the world remembers. Dead ones and
           those a DB row already covered are skipped (no duplicate
           SceneEntity — the naive-seed hazard the ROOT-3 wave flagged).
+
+        Deliberately does NOT seed ``WorldState.npcs`` with the DB roster.
+        An earlier Stage-C draft did, to converge a returning NPC's id
+        across the session boundary — but ``world_state.npcs`` means "NPCs
+        in the current scene" to four consumers (the narrator ENTITY-FACTS /
+        HOSTILE-DIRECTIVE block, ``to_yaml``'s ``npcs_here``, the KG BFS
+        ``scene_seeds``, and the dedup judge's candidate slice), none
+        location-gated, and seeding the whole campaign roster flooded all
+        four (adversarial review, 3 confirmed regressions). The canonical id
+        is durably PRESERVED in the DB row (created under it), so a returning
+        NPC's row/KG/registry stay converged; only a freshly-minted
+        session-local NPCState gets a new UUID, same as before Stage C.
+        On-reference WorldState re-convergence, if wanted, is a separate
+        slice with its own consumer-side location gating.
         """
         campaign_id = session.campaign_id
         scene_registry = get_scene_registry(campaign_id, session.session_key)
         world = session.world_state
-        store = session.world_store
         try:
             npc_repo = await get_npc_repo()
             campaign_npcs = await npc_repo.get_alive_by_campaign(campaign_id)
             seen_ids: set[str] = set()
 
-            # 1. Durable DB roster — registry + world, under the row id.
+            # 1. Durable DB roster — registry only, under the row id.
             for npc in campaign_npcs:
                 ws_state = world.npcs.get(npc.id) if world else None
                 if ws_state is not None and not ws_state.alive:
@@ -442,14 +453,6 @@ class GameSessionManager:
                     voice_id=npc.voice_id,
                 ))
                 seen_ids.add(npc.id)
-                if store is not None and npc.id not in (world.npcs if world else {}):
-                    store.seed_npc(
-                        npc.id,
-                        npc.name,
-                        location=npc.location or "",
-                        disposition=disposition.value,
-                        description=npc.description or "",
-                    )
 
             # 2. WorldState-only NPCs (recovery, F4) — registry only.
             if world is not None:
