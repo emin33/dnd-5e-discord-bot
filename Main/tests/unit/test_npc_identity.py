@@ -268,25 +268,27 @@ def fake_repo(monkeypatch):
 
 
 class TestSyncToNpcRepo:
-    async def test_npc_id_with_no_row_persists_nothing(self, registry, fake_repo):
-        """PINNED-BROKEN → flips: the row is created WITH the canonical id.
+    async def test_npc_id_with_no_row_creates_under_canonical_id(self, registry, fake_repo):
+        """FLIPPED (was PINNED-BROKEN): the row is created WITH the canonical id.
 
-        A world-minted NPC whose canonical id has never reached the DB hits
-        the `if entity.npc_id:` branch, get_by_id returns None, and the
-        sync silently drops it — the NPC never becomes durable.
+        A world-minted NPC whose canonical id never reached the DB used to
+        hit the update branch, get_by_id None, and drop silently. Now it is
+        created under that same id, so the row, KG node and NPCState share
+        one key.
         """
-        _scene_npc(registry, "Grit", npc_id="11111111-2222-4333-8444-555555555555")
+        canonical = "11111111-2222-4333-8444-555555555555"
+        _scene_npc(registry, "Grit", npc_id=canonical)
         synced = await registry.sync_to_npc_repo()
-        assert synced == 0            # → flips: 1
-        assert fake_repo.created == []  # → flips: one row, id == the canonical id
+        assert synced == 1
+        assert len(fake_repo.created) == 1
+        assert fake_repo.created[0].id == canonical
 
-    async def test_update_clobbers_location_with_scene_slice(self, registry, fake_repo):
-        """PINNED-BROKEN → flips: location is world-authoritative (DF-19).
+    async def test_update_leaves_location_when_world_unknown(self, registry, fake_repo):
+        """FLIPPED (was PINNED-BROKEN): no world location ⇒ no clobber (DF-19).
 
-        The row's location is overwritten with a 100-char slice of the
-        scene DESCRIPTION — prose, not a place. After the fix the sync
-        writes the NPC's world location, and leaves the column alone when
-        the world doesn't know one.
+        The old sync overwrote the row's location with a 100-char slice of
+        the scene DESCRIPTION (prose, not a place). Now, with no
+        current_location supplied, the column is left untouched.
         """
         row = NPC(id="npc-row-1", campaign_id="camp", name="Grit", location="Docks")
         fake_repo.npcs.append(row)
@@ -296,16 +298,26 @@ class TestSyncToNpcRepo:
         await registry.sync_to_npc_repo()
 
         assert len(fake_repo.updated) == 1
-        assert fake_repo.updated[0].location == (
-            "A dim tavern thick with pipe smoke"
-        )  # → flips: "Docks" stays (no world knowledge ⇒ no clobber)
+        assert fake_repo.updated[0].location == "Docks"
 
-    async def test_dead_in_scene_stays_alive_in_db(self, registry, fake_repo):
-        """PINNED-BROKEN → flips: death reaches the row (DF-4 DB side).
+    async def test_update_writes_world_location_when_provided(self, registry, fake_repo):
+        """The world-authoritative half of DF-19: a supplied current_location
+        is what the row records — a real place, from WorldState."""
+        row = NPC(id="npc-row-1", campaign_id="camp", name="Grit", location="Docks")
+        fake_repo.npcs.append(row)
+        _scene_npc(registry, "Grit", npc_id="npc-row-1")
+        registry.set_scene_description("A dim tavern thick with pipe smoke")
 
-        The narrator killed this NPC (SceneEntity.status='dead', world
-        alive=False) but the sync never writes is_alive, so
-        get_alive_by_campaign resurrects the corpse next session.
+        await registry.sync_to_npc_repo(current_location="the Rusty Anchor")
+
+        assert fake_repo.updated[0].location == "the Rusty Anchor"
+
+    async def test_dead_in_scene_reaches_db(self, registry, fake_repo):
+        """FLIPPED (was PINNED-BROKEN): death reaches the row (DF-4 DB side).
+
+        The narrator killed this NPC (SceneEntity.status='dead'); the sync
+        now writes is_alive=False so get_alive_by_campaign stops resurrecting
+        the corpse next session.
         """
         row = NPC(id="npc-row-1", campaign_id="camp", name="Grit")
         fake_repo.npcs.append(row)
@@ -315,7 +327,19 @@ class TestSyncToNpcRepo:
         await registry.sync_to_npc_repo()
 
         assert len(fake_repo.updated) == 1
-        assert fake_repo.updated[0].is_alive is True  # → flips: False
+        assert fake_repo.updated[0].is_alive is False
+
+    async def test_create_under_canonical_id_carries_death(self, registry, fake_repo):
+        """A never-persisted dead NPC is created already is_alive=False —
+        it must not spring back to life on its first write."""
+        entity = _scene_npc(registry, "Grit", npc_id="npc-canon-1")
+        entity.status = "dead"
+
+        await registry.sync_to_npc_repo()
+
+        assert len(fake_repo.created) == 1
+        assert fake_repo.created[0].id == "npc-canon-1"
+        assert fake_repo.created[0].is_alive is False
 
     async def test_name_match_adopts_existing_row_id(self, registry, fake_repo):
         """Survives: the legacy by-name adoption branch keeps working."""

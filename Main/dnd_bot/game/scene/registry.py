@@ -429,9 +429,24 @@ class SceneEntityRegistry:
 
     # ==================== Persistence ====================
 
-    async def sync_to_npc_repo(self) -> int:
-        """
-        Sync named NPCs to persistent storage.
+    async def sync_to_npc_repo(self, current_location: Optional[str] = None) -> int:
+        """Sync named NPCs to persistent storage.
+
+        Canonical id is authoritative (Stage C): a SceneEntity carrying an
+        ``npc_id`` that has no DB row yet — a world-minted NPC whose id
+        never reached the DB — is CREATED under that id, so the row, the KG
+        node, and the WorldState NPCState all share one key (previously the
+        ``if npc:`` update branch silently dropped it and the NPC never
+        became durable). Death propagates: a SceneEntity ``status == 'dead'``
+        writes ``is_alive = False`` so ``get_alive_by_campaign`` stops
+        resurrecting the corpse next session (DF-4, DB side). Never
+        resurrects — status other than 'dead' leaves ``is_alive`` alone.
+
+        Location is world-authoritative (DF-19): written only when the
+        caller supplies a real ``current_location``. The old
+        ``scene_description[:100]`` slice was narration prose, not a place,
+        and permanently disagreed with WorldState; when the world doesn't
+        know a location the DB column is left untouched rather than clobbered.
 
         Returns count of NPCs synced.
         """
@@ -439,37 +454,45 @@ class SceneEntityRegistry:
         synced = 0
 
         for entity in self.get_by_type(EntityType.NPC):
+            is_dead = bool(entity.status) and entity.status.lower() == "dead"
             try:
+                npc = None
                 if entity.npc_id:
-                    # Update existing NPC
                     npc = await repo.get_by_id(entity.npc_id)
-                    if npc:
-                        npc.location = self._scene_description[:100] if self._scene_description else None
-                        npc.last_seen_at = datetime.utcnow()
-                        await repo.update(npc)
-                        synced += 1
-                else:
-                    # Check if NPC exists by name
-                    existing = await repo.get_by_exact_name(self.campaign_id, entity.name)
-                    if existing:
-                        entity.npc_id = existing.id
-                        existing.location = self._scene_description[:100] if self._scene_description else None
-                        existing.last_seen_at = datetime.utcnow()
-                        await repo.update(existing)
-                        synced += 1
-                    else:
-                        # Create new NPC
-                        npc = NPC(
-                            campaign_id=self.campaign_id,
-                            name=entity.name,
-                            description=entity.description,
-                            location=self._scene_description[:100] if self._scene_description else None,
-                            monster_index=entity.monster_index,
-                            base_disposition=entity.disposition,
-                        )
-                        await repo.create(npc)
+                elif entity.name:
+                    # Legacy by-name adoption for entities minted before the
+                    # canonical id was stamped onto them.
+                    npc = await repo.get_by_exact_name(self.campaign_id, entity.name)
+                    if npc is not None:
                         entity.npc_id = npc.id
-                        synced += 1
+
+                if npc is not None:
+                    # Update the existing row.
+                    if current_location:
+                        npc.location = current_location
+                    npc.last_seen_at = datetime.utcnow()
+                    if is_dead:
+                        npc.is_alive = False
+                    await repo.update(npc)
+                    synced += 1
+                else:
+                    # Create — preserving the canonical id when we have one,
+                    # so a world-minted NPC's row adopts the shared key.
+                    npc_kwargs: dict = dict(
+                        campaign_id=self.campaign_id,
+                        name=entity.name,
+                        description=entity.description,
+                        location=current_location,
+                        monster_index=entity.monster_index,
+                        base_disposition=entity.disposition,
+                        is_alive=not is_dead,
+                    )
+                    if entity.npc_id:
+                        npc_kwargs["id"] = entity.npc_id
+                    npc = NPC(**npc_kwargs)
+                    await repo.create(npc)
+                    entity.npc_id = npc.id
+                    synced += 1
             except Exception as e:
                 # Uniform persist-failure taxonomy: "persist_failed" with an
                 # entity key, like every other missed write.

@@ -669,10 +669,16 @@ class GameSessionManager:
             # Persist final state and sync characters
             await self._sync_session_characters(session)
 
-            # Sync NPCs to repository and clear scene registry
+            # Sync NPCs to repository and clear scene registry. Pass the
+            # world's current location so the npc rows get a real place
+            # (DF-19), not the old scene-description slice.
             try:
                 scene_registry = get_scene_registry(session.campaign_id, session.session_key)
-                await scene_registry.sync_to_npc_repo()
+                current_location = (
+                    session.world_state.current_location
+                    if session.world_state else None
+                )
+                await scene_registry.sync_to_npc_repo(current_location=current_location)
                 clear_scene_registry(session.session_key)
             except Exception as e:
                 logger.error(
