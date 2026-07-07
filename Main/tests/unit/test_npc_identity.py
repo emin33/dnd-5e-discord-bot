@@ -381,16 +381,15 @@ def _session(channel_id: int, world: WorldState) -> GameSession:
 
 
 class TestPreloadSeed:
-    async def test_preload_does_not_seed_world_state(
+    async def test_preload_seeds_world_state_from_db(
         self, manager, fake_npc_repo, registry_cleanup, unique_channel_id, world
     ):
-        """PINNED-BROKEN → flips: DB rows seed NPCState with id == NPC.id.
+        """FLIPPED (was PINNED-BROKEN): DB rows seed NPCState with id == NPC.id.
 
-        Today a fresh session's WorldState starts empty, so the first
-        mention of a returning NPC mints a NEW NPCState UUID — the KG node
-        keyed on last session's UUID orphans, and identity fragments per
-        session. (test_session_lifecycle pins the same emptiness at the
-        start_session level; both flip together.)
+        A fresh session's WorldState no longer starts blind to returning
+        NPCs — the durable DB roster seeds an NPCState under the row id
+        (== the KG node id), so the first mention resolves the existing id
+        instead of minting a divergent UUID. Cross-session convergence.
         """
         fake_npc_repo.npcs = [
             NPC(id="npc-7", campaign_id="camp", name="Mira", location="Docks"),
@@ -400,16 +399,20 @@ class TestPreloadSeed:
 
         await manager._preload_scene_npcs(session)
 
-        assert world.npcs == {}  # → flips: {"npc-7": NPCState(id="npc-7", name="Mira", …)}
+        assert set(world.npcs) == {"npc-7"}
+        seeded = world.npcs["npc-7"]
+        assert seeded.name == "Mira"
+        assert seeded.location == "Docks"
 
-    async def test_preload_resurrects_world_dead_npc(
+    async def test_preload_skips_world_dead_npc(
         self, manager, fake_npc_repo, registry_cleanup, unique_channel_id, world
     ):
-        """PINNED-BROKEN → flips: a world-dead NPC is skipped.
+        """FLIPPED (was PINNED-BROKEN): a world-dead NPC is skipped.
 
         Crash-after-death: the snapshot knows the NPC died but the DB row
-        is still alive (death only reaches the DB at graceful end), so
-        recovery's preload marches the corpse back into the roster.
+        is still alive (death reaches the DB only at graceful end). Preload
+        now trusts the authoritative WorldState and leaves the corpse out
+        of the roster.
         """
         dead = NPCState(id="npc-7", name="Grokk", alive=False)
         world.npcs[dead.id] = dead
@@ -421,17 +424,17 @@ class TestPreloadSeed:
 
         from dnd_bot.game.scene.registry import get_scene_registry
         registry = get_scene_registry("camp", session.session_key)
-        assert registry.get_by_name("Grokk") is not None  # → flips: None
+        assert registry.get_by_name("Grokk") is None
 
-    async def test_preload_skips_world_only_npc(
+    async def test_preload_seeds_registry_from_world_only_npc(
         self, manager, fake_npc_repo, registry_cleanup, unique_channel_id, world
     ):
-        """PINNED-BROKEN → flips: snapshot-only NPCs seed the registry (F4).
+        """FLIPPED (was PINNED-BROKEN): snapshot-only NPCs seed the registry (F4).
 
-        An extractor-minted NPC lives in the recovered WorldState but not
-        the npc DB (per-turn DB sync is dead; the crash beat end_session).
-        Recovery's preload reads only the DB, so the narrator roster
-        forgets someone the world remembers.
+        An extractor-minted NPC lives only in the recovered WorldState (the
+        per-turn DB sync is dead; the crash beat end_session). Preload now
+        seeds the registry from those too, keyed on the same id — the
+        narrator roster remembers who the world remembers.
         """
         whisper = NPCState(id="ws-1", name="Whisper", alive=True)
         world.npcs[whisper.id] = whisper
@@ -443,7 +446,9 @@ class TestPreloadSeed:
 
         from dnd_bot.game.scene.registry import get_scene_registry
         registry = get_scene_registry("camp", session.session_key)
-        assert registry.get_by_name("Whisper") is None  # → flips: entity with npc_id == "ws-1"
+        entity = registry.get_by_name("Whisper")
+        assert entity is not None
+        assert entity.npc_id == "ws-1"
 
 
 # ─────────────────────────────────────────────────────────────────────────
