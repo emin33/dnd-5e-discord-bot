@@ -32,7 +32,7 @@ from dnd_bot.game.knowledge.bridge import DeltaBridge, NamePromotion
 from dnd_bot.game.knowledge.models import UpdateNode, slugify
 from dnd_bot.game.scene.registry import SceneEntityRegistry
 from dnd_bot.game.session import GameSession
-from dnd_bot.game.world_state import NPCState, StateDelta, WorldState
+from dnd_bot.game.world_state import NPCState, NPCUpdate, StateDelta, WorldState
 from dnd_bot.game.world_store import WorldStateStore
 from dnd_bot.llm.effects import EffectExecutor, EffectType, ProposedEffect
 from dnd_bot.models.npc import NPC, Disposition, EntityType, SceneEntity
@@ -207,6 +207,54 @@ class TestDeltaPathStamp:
         assert entity is not None
         assert entity.npc_id == npc_state.id
 
+    def test_sync_npcs_to_registry_marks_extractor_death(self, world, registry):
+        """Extractor-channel death (NPCUpdate.alive=False) marks the
+        SceneEntity dead so sync_to_npc_repo carries it to the DB (DF-4).
+
+        The extractor reports a kill as alive=False, not a status='dead'
+        tool call. That reached WorldState + the KG but not the SceneEntity,
+        so the DB row stayed alive and the NPC resurrected on the next fresh
+        session — the review's confirmed gap.
+        """
+        from dnd_bot.llm.orchestrator import DMOrchestrator
+
+        npc = _world_npc(world, "Old Bram")
+        registry.register_entity(SceneEntity(
+            name="Old Bram", entity_type=EntityType.NPC, npc_id=npc.id,
+        ))
+        delta = StateDelta(npc_updates=[NPCUpdate(name="Old Bram", alive=False)])
+        duck = SimpleNamespace(_scene_registry=registry)
+        DMOrchestrator._sync_npcs_to_registry(duck, delta, world)
+
+        assert registry.get_by_name("Old Bram").status == "dead"
+
+
+class TestSeedNpc:
+    def test_seed_npc_mints_under_given_id(self, store, world):
+        seeded = store.seed_npc(
+            "npc-7", "Mira", location="Docks", disposition="friendly",
+        )
+        assert world.npcs["npc-7"] is seeded
+        assert (seeded.name, seeded.location, seeded.disposition) == (
+            "Mira", "Docks", "friendly",
+        )
+
+    def test_seed_npc_is_idempotent_snapshot_wins(self, store, world):
+        """The snapshot-wins-over-DB invariant: seeding an id already present
+        returns the existing NPCState UNMODIFIED (a recovered live NPCState
+        must not be clobbered by a stale DB row). Un-pinned before the
+        review; the sole production caller pre-filters, so a guard regression
+        would otherwise slip through green."""
+        original = store.seed_npc("id-1", "Mira", location="Docks", disposition="friendly")
+        again = store.seed_npc(
+            "id-1", "Mira the Traitor", location="Dungeon", disposition="hostile",
+        )
+        assert again is original
+        assert (again.name, again.location, again.disposition) == (
+            "Mira", "Docks", "friendly",
+        )
+        assert len(world.npcs) == 1
+
 
 class TestToolPathStamp:
     async def test_execute_add_npc_stamps_canonical_id(self, registry, world):
@@ -243,8 +291,17 @@ class TestToolPathStamp:
             npc_description="a gruff porter", npc_disposition="neutral",
         )
         await executor.execute(effect)
-        store.apply_effect(effect)  # the orchestrator's next step
+        # Discriminating (was passing pre-fix for the wrong reason): the
+        # executor ALONE now mints the NPCState. Pre-fix it minted nothing,
+        # so this would be 0 — this line catches a regression to the old
+        # "executor mints nothing, apply_effect mints once" behavior.
         assert len(world.npcs) == 1
+        minted = next(iter(world.npcs.values()))
+
+        store.apply_effect(effect)  # the orchestrator's next step
+        # apply_effect resolved the SAME object, never a twin.
+        assert len(world.npcs) == 1
+        assert next(iter(world.npcs.values())) is minted
 
 
 # ─────────────────────────────────────────────────────────────────────────
