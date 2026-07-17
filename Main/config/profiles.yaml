@@ -659,6 +659,24 @@ deepseek_v4_flash:
     condensed_size: 10
     compaction_threshold: 6
 
+# DeepSeek V4 Flash narrator + Groq qwen3-32b brain, no immersion.
+# Plain benchmarking twin of deepseek_pro_voice: cheap cloud long-form
+# testing and measuring DeepSeek prompt-caching benefits.
+deepseek_groq:
+  narrator:
+    provider: deepseek
+    model: deepseek-v4-flash
+    tools: full
+  brain:
+    provider: groq
+    model: qwen/qwen3-32b
+    fallback_to_ollama: false
+  memory:
+    buffer_size: 24
+    verbatim_size: 8
+    condensed_size: 10
+    compaction_threshold: 6
+
 # Cloud immersion: Haiku narrator, Groq brain, Inworld narrator TTS, ElevenLabs characters, FAL images
 # Zero GPU needed. Best quality voice + image combo.
 haiku_immersive_cloud:
