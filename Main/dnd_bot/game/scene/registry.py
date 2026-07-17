@@ -1,7 +1,7 @@
 """Scene Entity Registry - tracks who/what is in the current scene."""
 
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 import structlog
 
 from ...models.npc import (
@@ -13,6 +13,9 @@ from ...models.npc import (
 )
 from ...data.repositories.npc_repo import get_npc_repo
 from ..knowledge.models import slugify
+
+if TYPE_CHECKING:
+    from ..world_state import WorldState
 
 logger = structlog.get_logger()
 
@@ -204,6 +207,62 @@ class SceneEntityRegistry:
         self._hostility_log.clear()
         self._scene_description = ""
         logger.info("scene_cleared", entities_removed=count)
+
+    def rescope_to_scene(self, world_state: "WorldState") -> int:
+        """Drop entities that don't belong to the world's current scene (DF-18).
+
+        Called after a location change. The registry is scene-scoped, but
+        it was only ever cleared at session end, so the old room's NPCs
+        stayed roster-visible and combat-targetable in the new room.
+        Keep rules:
+
+        - ``status == 'dead'`` entities stay — they carry an unpersisted
+          death that must reach the DB at ``sync_to_npc_repo`` (DF-4).
+        - Objects/environmental features stay only while their name (or
+          roster slug) still matches a ``world_state.scene_items`` key —
+          the world cleared those on the same transition, so surviving
+          keys are the new scene's spawns.
+        - NPCs/creatures stay only when their world-state twin (by
+          ``npc_id``, else by name) is recorded at the new location.
+
+        Scene scope only: nothing here writes the DB or the KG. Returns
+        the number of entities removed.
+        """
+        loc = (world_state.current_location or "").lower()
+        removed = 0
+        for entity in self.get_all():
+            if entity.status and entity.status.lower() == "dead":
+                continue
+            if entity.entity_type in (EntityType.OBJECT, EntityType.ENVIRONMENTAL):
+                entity_slug = slugify(entity.name)
+                if any(
+                    key == entity.name
+                    or (entity_slug and slugify(key) == entity_slug)
+                    for key in world_state.scene_items
+                ):
+                    continue
+            else:
+                npc_state = (
+                    world_state.npcs.get(entity.npc_id) if entity.npc_id else None
+                )
+                if npc_state is None:
+                    npc_state = world_state._find_npc(entity.name)
+                if (
+                    npc_state is not None
+                    and npc_state.location
+                    and npc_state.location.lower() == loc
+                ):
+                    continue
+            self.remove_entity(entity.id)
+            removed += 1
+        if removed:
+            logger.info(
+                "scene_registry_rescoped",
+                location=world_state.current_location,
+                removed=removed,
+                remaining=len(self._entities),
+            )
+        return removed
 
     # ==================== Hostility Management ====================
 

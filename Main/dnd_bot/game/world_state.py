@@ -260,11 +260,22 @@ class WorldState(BaseModel):
             else:
                 rejections.append(f"Invalid time: {delta.time_change}")
 
-        # Location change
+        # Location change. current_location is written immediately (new
+        # NPCs later in this same delta default to it), but the scene
+        # rescope (DF-18) is deferred to the end of the delta so same-delta
+        # npc_updates still resolve against the pre-move roster (an NPC the
+        # extractor moves WITH the party gets its location update before
+        # the rescope decides who stays).
+        scene_changed = False
         if delta.location_change:
+            previous_location = self.current_location
             self.current_location = delta.location_change
             if delta.location_description:
                 self.location_description = delta.location_description
+            scene_changed = bool(
+                previous_location
+                and previous_location.lower() != delta.location_change.lower()
+            )
 
         # New connections
         for conn in delta.new_connections:
@@ -393,6 +404,14 @@ class WorldState(BaseModel):
         for key, value in delta.flag_changes.items():
             self.global_flags[key] = value
 
+        # DF-18: a real move clears the old scene's transient contents so
+        # they can't leak into the new scene (stale scene_items in the
+        # narrator YAML; departed NPCs still resolvable by name). Runs
+        # after every other change in this delta, so same-delta additions
+        # and updates have already landed.
+        if scene_changed:
+            self.rescope_scene()
+
         if rejections:
             logger.info(
                 "state_delta_rejections",
@@ -401,6 +420,39 @@ class WorldState(BaseModel):
             )
 
         return rejections
+
+    def rescope_scene(self) -> list[NPCState]:
+        """Drop the previous scene's transient contents after a location
+        change (DF-18).
+
+        Scene items always clear — they belong to the room the party just
+        left. Non-important NPCs whose recorded location doesn't match the
+        new ``current_location`` leave the scene-scoped roster (``npcs``
+        means "NPCs in the current scene" — the Stage-C invariant), which
+        also drops departed NPCs (``location == ""``). Important NPCs stay
+        so ``key_npcs_elsewhere`` keeps surfacing them.
+
+        Scene scope only: nothing is killed here — DB rows and KG nodes
+        are untouched. Returns the dropped NPCStates so callers can mirror
+        the rescope onto registry-side state.
+        """
+        self.scene_items.clear()
+        loc = (self.current_location or "").lower()
+        dropped: list[NPCState] = []
+        for npc_id in list(self.npcs):
+            npc = self.npcs[npc_id]
+            if npc.important:
+                continue
+            if npc.location and npc.location.lower() == loc:
+                continue
+            dropped.append(self.npcs.pop(npc_id))
+        if dropped:
+            logger.info(
+                "scene_rescoped",
+                location=self.current_location,
+                dropped=[npc.name for npc in dropped],
+            )
+        return dropped
 
     def _find_npc(self, name_or_id: str) -> Optional[NPCState]:
         """Find an NPC by id, name, or alias.

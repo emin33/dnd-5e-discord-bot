@@ -257,6 +257,97 @@ class TestStateDelta:
         assert ws.npcs["Grimjaw"].disposition == "hostile"
 
 
+class TestSceneRescopeOnLocationChange:
+    """DF-18: a real location change drops the old scene's transients.
+
+    ``scene_items`` always clear; non-important NPCs not recorded at the
+    new location leave the scene-scoped roster (never killed — DB/KG
+    untouched); important NPCs stay for ``key_npcs_elsewhere``. The
+    rescope is deferred to the END of the delta so same-delta updates and
+    additions resolve against the pre-move roster first.
+    """
+
+    def _world_with_scene(self) -> tuple:
+        ws = WorldState(current_location="tavern")
+        barkeep = NPCState(name="Barkeep", location="tavern")
+        guard = NPCState(name="Cellar Guard", location="cellar")
+        king = NPCState(name="King", location="castle", important=True)
+        for npc in (barkeep, guard, king):
+            ws.npcs[npc.id] = npc
+        ws.spawn_item("Rusty Key", "an old iron key")
+        return ws, barkeep, guard, king
+
+    def test_location_change_clears_scene_items(self):
+        ws, *_ = self._world_with_scene()
+        rejections = ws.apply_delta(StateDelta(location_change="cellar"))
+        assert rejections == []
+        assert ws.scene_items == {}
+
+    def test_location_change_rescopes_roster(self):
+        ws, barkeep, guard, king = self._world_with_scene()
+        ws.apply_delta(StateDelta(location_change="cellar"))
+        assert barkeep.id not in ws.npcs   # old room -> left scene scope
+        assert guard.id in ws.npcs         # recorded at the new location
+        assert king.id in ws.npcs          # important stays (key_npcs_elsewhere)
+        assert barkeep.alive is True       # scene scope only, never killed
+
+    def test_departed_npc_not_name_resolvable_after_move(self):
+        ws, barkeep, _, _ = self._world_with_scene()
+        ws.apply_delta(StateDelta(removed_npcs=["Barkeep"]))  # departs: location=""
+        assert ws._find_npc("Barkeep") is not None  # pre-move: unchanged behavior
+        ws.apply_delta(StateDelta(location_change="cellar"))
+        assert ws._find_npc("Barkeep") is None
+
+    def test_same_delta_npc_update_moves_npc_with_party(self):
+        ws, barkeep, _, _ = self._world_with_scene()
+        delta = StateDelta(
+            location_change="cellar",
+            npc_updates=[NPCUpdate(name="Barkeep", location="cellar")],
+        )
+        rejections = ws.apply_delta(delta)
+        assert rejections == []
+        assert barkeep.id in ws.npcs  # followed the party, survived the rescope
+
+    def test_same_delta_new_npcs_land_in_new_scene(self):
+        ws, *_ = self._world_with_scene()
+        new_npc = NPCState(name="Rat Catcher")  # location defaults to the new one
+        ws.apply_delta(StateDelta(location_change="cellar", new_npcs=[new_npc]))
+        assert new_npc.id in ws.npcs
+        assert ws.npcs[new_npc.id].location == "cellar"
+
+    def test_restated_location_does_not_rescope(self):
+        ws, barkeep, _, _ = self._world_with_scene()
+        ws.apply_delta(StateDelta(location_change="Tavern"))  # case-only restatement
+        assert ws.scene_items == {"Rusty Key": "an old iron key"}
+        assert barkeep.id in ws.npcs
+
+    def test_first_location_set_does_not_rescope(self):
+        ws = WorldState()  # scene establishment, not a move
+        npc = NPCState(name="Barkeep")  # minted before any location was known
+        ws.npcs[npc.id] = npc
+        ws.spawn_item("Rusty Key", "an old iron key")
+        ws.apply_delta(StateDelta(location_change="tavern"))
+        assert npc.id in ws.npcs
+        assert "Rusty Key" in ws.scene_items
+
+    def test_extractor_update_for_out_of_scene_npc_is_safe_noop(self):
+        ws, barkeep, _, _ = self._world_with_scene()
+        ws.apply_delta(StateDelta(location_change="cellar"))
+        rejections = ws.apply_delta(StateDelta(
+            npc_updates=[NPCUpdate(name="Barkeep", notes="waves goodbye")]
+        ))
+        assert len(rejections) == 1
+        assert "not found" in rejections[0]
+        assert ws._find_npc("Barkeep") is None  # not resurrected into the cellar
+
+    def test_yaml_after_move_has_no_stale_scene(self):
+        ws, *_ = self._world_with_scene()
+        ws.apply_delta(StateDelta(location_change="cellar"))
+        data = yaml.safe_load(ws.to_yaml())
+        assert "scene_items" not in data
+        assert [n["name"] for n in data.get("npcs_here", [])] == ["Cellar Guard"]
+
+
 class TestWorldStateYAML:
     """Test YAML serialization for narrator injection."""
 
