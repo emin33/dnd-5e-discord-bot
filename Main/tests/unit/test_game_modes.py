@@ -142,3 +142,22 @@ class TestEndCombatPopsPhase:
 
         assert session.state == SessionState.ACTIVE
         assert session.world_state.phase == "exploration"
+
+
+class TestSessionLookupKeying:
+    """``_sessions`` is keyed by ``f"discord:{channel_id}"`` strings, never by
+    the raw int channel id. Callers (incl. the test_harness / test_eval combat
+    auto-resolvers) MUST go through ``get_session(int)`` — a bare
+    ``_sessions.get(int)`` always returns None and silently no-ops, which used
+    to leave the session stuck in COMBAT for the rest of an automated run.
+    """
+
+    def test_raw_int_lookup_misses_but_accessor_hits(self, unique_channel_id):
+        session = _session(unique_channel_id, state=SessionState.ACTIVE)
+        sessions = GameSessionManager()
+        sessions._sessions[session.session_key] = session
+
+        # The exact shape of the old bug: an int key never matches.
+        assert sessions._sessions.get(unique_channel_id) is None
+        # The public accessor does the f-string lookup and finds it.
+        assert sessions.get_session(unique_channel_id) is session
