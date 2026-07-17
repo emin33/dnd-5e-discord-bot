@@ -1,7 +1,31 @@
 """Tests for the dice rolling mechanics."""
 
+import random
+
 import pytest
+import structlog.testing
+
 from dnd_bot.game.mechanics.dice import DiceRoller
+
+
+class ScriptedRNG(random.Random):
+    """Deterministic RNG returning a scripted sequence from randint().
+
+    Determinism pattern for dice tests: DiceRoller accepts an ``rng``
+    (random.Random) in its constructor, so inject one of these with the
+    exact die faces you want, e.g. ``DiceRoller(rng=ScriptedRNG([20]))``.
+    """
+
+    def __new__(cls, values: list[int]) -> "ScriptedRNG":
+        # random.Random.__new__ tries to seed with the first arg; bypass it.
+        return super().__new__(cls)
+
+    def __init__(self, values: list[int]):
+        super().__init__()
+        self._values = list(values)
+
+    def randint(self, a: int, b: int) -> int:  # noqa: ARG002
+        return self._values.pop(0)
 
 
 class TestDiceRoller:
@@ -77,34 +101,64 @@ class TestDiceRoller:
         # Result should be the lower of the two rolls
         assert result.kept_dice[0] == min(result.disadvantage_rolls)
 
-    def test_natural_20_detection(self, roller):
-        """Test that natural 20s are detected (statistically)."""
-        # Roll many times to increase chance of hitting nat 20
-        nat_20_found = False
-        for _ in range(1000):
-            result = roller.roll("1d20")
-            if result.natural_20:
-                nat_20_found = True
-                assert result.kept_dice[0] == 20
-                break
+    def test_natural_20_detection(self):
+        """A rolled 20 on 1d20 sets natural_20 (deterministic via scripted RNG)."""
+        roller = DiceRoller(rng=ScriptedRNG([20]))
+        result = roller.roll("1d20")
+        assert result.kept_dice[0] == 20
+        assert result.natural_20 is True
+        assert result.natural_1 is False
 
-        # With 1000 rolls, we have a 99.97% chance of getting at least one nat 20
-        # But don't fail the test if we're extremely unlucky
-        if nat_20_found:
-            assert True
+    def test_natural_20_not_set_on_other_rolls(self):
+        """A rolled 19 must not set natural_20."""
+        roller = DiceRoller(rng=ScriptedRNG([19]))
+        result = roller.roll("1d20")
+        assert result.natural_20 is False
+        assert result.natural_1 is False
 
-    def test_natural_1_detection(self, roller):
-        """Test that natural 1s are detected (statistically)."""
-        nat_1_found = False
-        for _ in range(1000):
-            result = roller.roll("1d20")
-            if result.natural_1:
-                nat_1_found = True
-                assert result.kept_dice[0] == 1
-                break
+    def test_natural_1_detection(self):
+        """A rolled 1 on 1d20 sets natural_1 (deterministic via scripted RNG)."""
+        roller = DiceRoller(rng=ScriptedRNG([1]))
+        result = roller.roll("1d20")
+        assert result.kept_dice[0] == 1
+        assert result.natural_1 is True
+        assert result.natural_20 is False
 
-        if nat_1_found:
-            assert True
+    def test_natural_1_not_set_on_other_rolls(self):
+        """A rolled 2 must not set natural_1."""
+        roller = DiceRoller(rng=ScriptedRNG([2]))
+        result = roller.roll("1d20")
+        assert result.natural_1 is False
+        assert result.natural_20 is False
+
+    def test_advantage_crit_detection_deterministic(self):
+        """Advantage keeps the higher die; a kept 20 sets natural_20."""
+        roller = DiceRoller(rng=ScriptedRNG([7, 20]))
+        result = roller.roll("1d20", advantage=True)
+        assert result.kept_dice == [20]
+        assert result.natural_20 is True
+
+    def test_disadvantage_fumble_detection_deterministic(self):
+        """Disadvantage keeps the lower die; a kept 1 sets natural_1."""
+        roller = DiceRoller(rng=ScriptedRNG([1, 15]))
+        result = roller.roll("1d20", disadvantage=True)
+        assert result.kept_dice == [1]
+        assert result.natural_1 is True
+
+    def test_advantage_ignored_for_non_1d20_warns(self):
+        """Adv/dis on non-1d20 notation is ignored but must warn, not be silent."""
+        roller = DiceRoller(rng=ScriptedRNG([3, 4]))
+        with structlog.testing.capture_logs() as logs:
+            result = roller.roll("2d6", advantage=True)
+        assert result.roll_type == "normal"
+        assert len(result.kept_dice) == 2
+        warnings = [
+            log for log in logs
+            if log["event"] == "advantage_flag_ignored_non_1d20"
+        ]
+        assert len(warnings) == 1
+        assert warnings[0]["notation"] == "2d6"
+        assert warnings[0]["log_level"] == "warning"
 
     def test_critical_damage(self, roller):
         """Test that critical damage doubles dice."""

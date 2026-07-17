@@ -9,6 +9,10 @@ import re
 from dataclasses import dataclass, field
 from typing import Optional
 
+import structlog
+
+logger = structlog.get_logger()
+
 
 @dataclass
 class DiceRoll:
@@ -112,9 +116,19 @@ class DiceRoller:
         modifier = mod_value if mod_sign != "-" else -mod_value
 
         # Handle advantage/disadvantage for d20 rolls
-        if (advantage or disadvantage) and num_dice == 1 and die_size == 20:
-            return self._roll_with_advantage_disadvantage(
-                notation, modifier, advantage, reason
+        if advantage or disadvantage:
+            if num_dice == 1 and die_size == 20:
+                return self._roll_with_advantage_disadvantage(
+                    notation, modifier, advantage, reason
+                )
+            # Advantage/disadvantage is a 1d20-only mechanic in 5e; never
+            # drop the flag silently for other notations.
+            logger.warning(
+                "advantage_flag_ignored_non_1d20",
+                notation=notation,
+                advantage=advantage,
+                disadvantage=disadvantage,
+                reason=reason,
             )
 
         # Roll the dice

@@ -85,34 +85,26 @@ class ImmersionRepository:
     async def _ensure_catalog_seeded(self) -> None:
         """Seed the voice catalog from JSON on first access.
 
-        Uses INSERT OR IGNORE so new voices added to the JSON (e.g. a new
-        provider like Kokoro) are picked up on existing databases without
-        duplicating existing entries.
+        Uses an upsert (INSERT ... ON CONFLICT(voice_id) DO UPDATE) so both
+        new voices and edits to existing entries in the JSON propagate to
+        existing databases. Rows are never deleted here.
         """
         if ImmersionRepository._catalog_seeded:
             return
-        ImmersionRepository._catalog_seeded = True
 
         catalog_path = Path(__file__).parent.parent / "voice_catalog.json"
         if not catalog_path.exists():
+            ImmersionRepository._catalog_seeded = True
             return
 
-        # Compare DB count vs JSON count — reseed if JSON has more entries
-        db = await self._get_db()
-        row = await db.fetch_one("SELECT COUNT(*) FROM voice_catalog")
-        db_count = row[0] if row else 0
-        json_data = json.loads(catalog_path.read_text())
-        json_count = len(json_data)
-
-        if db_count >= json_count:
-            return  # DB already has all entries
-
-        count = await self.seed_voice_catalog(catalog_path)
-        if count > 0:
+        changed = await self.seed_voice_catalog(catalog_path)
+        # Only mark seeded after the seed pass succeeded, so a mid-seed
+        # failure retries on the next access instead of being disabled
+        # for the process lifetime.
+        ImmersionRepository._catalog_seeded = True
+        if changed > 0:
             import structlog
-            structlog.get_logger().info(
-                "voice_catalog_seeded", total=count, new=json_count - db_count
-            )
+            structlog.get_logger().info("voice_catalog_seeded", changed=changed)
 
     async def get_all_voices(self) -> list[VoiceCatalogEntry]:
         """Get all voices in the catalog."""
@@ -158,17 +150,32 @@ class ImmersionRepository:
         return self._row_to_voice(row) if row else None
 
     async def seed_voice_catalog(self, catalog_path: Path) -> int:
-        """Seed the voice catalog from a JSON file. Returns count of voices added."""
+        """Upsert the voice catalog from a JSON file.
+
+        Returns the number of rows actually inserted or updated (no-op
+        rows that already match the JSON are not counted).
+        """
         db = await self._get_db()
 
         data = json.loads(catalog_path.read_text())
-        count = 0
+        changed = 0
 
         for entry in data:
-            await db.execute(
+            cursor = await db.execute(
                 """
-                INSERT OR IGNORE INTO voice_catalog (voice_id, name, provider, gender, age, style_tags)
+                INSERT INTO voice_catalog (voice_id, name, provider, gender, age, style_tags)
                 VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(voice_id) DO UPDATE SET
+                    name = excluded.name,
+                    provider = excluded.provider,
+                    gender = excluded.gender,
+                    age = excluded.age,
+                    style_tags = excluded.style_tags
+                WHERE name IS NOT excluded.name
+                   OR provider IS NOT excluded.provider
+                   OR gender IS NOT excluded.gender
+                   OR age IS NOT excluded.age
+                   OR style_tags IS NOT excluded.style_tags
                 """,
                 (
                     entry["voice_id"],
@@ -179,10 +186,10 @@ class ImmersionRepository:
                     json.dumps(entry.get("style_tags", [])),
                 ),
             )
-            count += 1
+            changed += cursor.rowcount if cursor.rowcount > 0 else 0
 
         await db.commit()
-        return count
+        return changed
 
     def _row_to_voice(self, row: aiosqlite.Row) -> VoiceCatalogEntry:
         """Convert database row to VoiceCatalogEntry."""

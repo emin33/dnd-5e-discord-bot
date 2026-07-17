@@ -514,8 +514,8 @@ class CharacterCog(commands.Cog):
                 character_id=character.id,
                 user_id=user_id,
                 name=character.name,
-                race=character.race,
-                class_name=character.class_name,
+                race=character.race_index,
+                class_name=character.class_index,
             )
 
         except Exception as e:

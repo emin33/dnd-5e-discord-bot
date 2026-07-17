@@ -610,6 +610,10 @@ class DMOrchestrator:
         self._scratchpad: list[dict] = []  # [{category, note, turn}]
         self._scratchpad_turn = 0
         self._scratchpad_max_entries = 20  # Rolling window
+        # DF-22: which session the scratchpad belongs to. The orchestrator
+        # is a process-wide singleton, so without this a new session would
+        # inherit the previous session's tensions/moods.
+        self._scratchpad_session_key: Optional[str] = None
 
         # Step 2 (REFACTOR_PLAN): the single narration path. The three
         # _narrate_* methods only build NarrationSpecs now; this strategy
@@ -628,6 +632,21 @@ class DMOrchestrator:
 
     def set_session(self, session: Optional["GameSession"]) -> None:
         """Set the current session context for tool execution."""
+        # DF-22: clear the narrator scratchpad when a DIFFERENT session
+        # takes over — a same-session re-set keeps narrative continuity.
+        if session is not None:
+            new_key = session.session_key
+            if (
+                self._scratchpad_session_key is not None
+                and new_key != self._scratchpad_session_key
+            ):
+                logger.info(
+                    "scratchpad_cleared_on_session_change",
+                    previous_session=self._scratchpad_session_key,
+                    new_session=new_key,
+                )
+                self.scratchpad_clear()
+            self._scratchpad_session_key = new_key
         self._current_session = session
         self._update_effect_processors()
 
@@ -1981,14 +2000,45 @@ class DMOrchestrator:
                 }
 
         elif is_drop:
-            # Remove item from inventory
-            # TODO: Need to look up item_id first
+            # Resolve the item against the character's real inventory before
+            # claiming a drop (mirrors the commerce fix: this used to return
+            # narrative-only success while the inventory row was untouched).
+            inventory_repo = await get_inventory_repo()
+            items = await inventory_repo.get_all_items(character.id)
+            item_lower = item_name.lower()
+            matching = [i for i in items if item_lower in i.item_name.lower()]
+
+            if not matching:
+                return {
+                    "action_type": "inventory",
+                    "operation": "drop",
+                    "success": False,
+                    "item": item_name,
+                    "error": f"'{item_name}' not found in inventory",
+                    "narrative_hint": (
+                        f"{player_name} reaches for the {item_name}, "
+                        "but doesn't have it."
+                    ),
+                }
+
+            item = matching[0]
+            drop_qty = min(quantity, item.quantity)
+            await inventory_repo.remove_item(item.id, drop_qty)
+            result = {
+                "character": character.name,
+                "item": item.item_name,
+                "item_id": item.id,
+                "quantity": drop_qty,
+                "removed": True,
+            }
             return {
                 "action_type": "inventory",
                 "operation": "drop",
-                "success": True,  # Narrative success - they dropped it
-                "item": item_name,
-                "narrative_hint": f"{player_name} drops the {item_name}.",
+                "success": True,
+                "item": item.item_name,
+                "quantity": drop_qty,
+                "narrative_hint": f"{player_name} drops the {item.item_name}.",
+                "tool_calls": [{"name": "remove_item", "result": result}],
             }
 
         elif is_equip:
@@ -2944,15 +2994,17 @@ Write your narration directly."""
             # rewritten ref_entity.
             idem_key = build_effect_idempotency_key(campaign_id, msg_id, i)
 
-            # Skip effects requiring confirmation (handled separately via UI)
+            # No confirmation UI exists (the flag is an INTENTS-only knob;
+            # the tool path never sets it). Skipping here silently discarded
+            # the effect while the narration claimed it happened — so parity
+            # with the tool path: execute like any other effect, warning that
+            # confirmation was requested but auto-approved.
             if effect.requires_confirmation:
-                logger.info(
-                    "effect_requires_confirmation",
+                logger.warning(
+                    "effect_confirmation_auto_approved",
                     effect_type=effect.effect_type.value,
                     prompt=effect.confirmation_prompt,
                 )
-                # TODO: Queue for player confirmation via Discord UI
-                continue
 
             # Dedup judge — a store-owned write-pipeline step (Step 5):
             # ADD_NPC effects that look like a paraphrase of a roster
@@ -2986,33 +3038,37 @@ Write your narration directly."""
                     was_duplicate=result.was_duplicate,
                 )
 
-                # Sync effect to WorldState (so narrator sees it next turn)
-                if world_store is not None:
-                    world_store.apply_effect(effect)
-                self._last_executed_effects.append(effect)
+                # DF-12: an idempotency hit means this exact effect already
+                # applied once (retry within the same turn). Re-running the
+                # side-effects would double-apply to WorldState/KG.
+                if not result.was_duplicate:
+                    # Sync effect to WorldState (so narrator sees it next turn)
+                    if world_store is not None:
+                        world_store.apply_effect(effect)
+                    self._last_executed_effects.append(effect)
 
-                # Combat-entry signal: route through the single decision
-                # point (Step 3). Previously this only set the flag — no
-                # encounter, no participants — so the session flipped to
-                # COMBAT with no CombatManager (audit: "three live
-                # combat-entry deciders"). Now the narrator's signal drafts
-                # the scene hostiles like the extractor path does, and an
-                # empty scene refuses to trigger at all.
-                if effect.effect_type == EffectType.START_COMBAT:
-                    hostiles = (
-                        gather_scene_hostiles(self._scene_registry)
-                        if self._scene_registry else []
-                    )
-                    if hostiles:
-                        combat_triggered = (
-                            start_encounter(self._current_session, hostiles)
-                            or combat_triggered
+                    # Combat-entry signal: route through the single decision
+                    # point (Step 3). Previously this only set the flag — no
+                    # encounter, no participants — so the session flipped to
+                    # COMBAT with no CombatManager (audit: "three live
+                    # combat-entry deciders"). Now the narrator's signal drafts
+                    # the scene hostiles like the extractor path does, and an
+                    # empty scene refuses to trigger at all.
+                    if effect.effect_type == EffectType.START_COMBAT:
+                        hostiles = (
+                            gather_scene_hostiles(self._scene_registry)
+                            if self._scene_registry else []
                         )
-                    else:
-                        logger.warning(
-                            "start_combat_signal_without_hostiles",
-                            reason=effect.reason,
-                        )
+                        if hostiles:
+                            combat_triggered = (
+                                start_encounter(self._current_session, hostiles)
+                                or combat_triggered
+                            )
+                        else:
+                            logger.warning(
+                                "start_combat_signal_without_hostiles",
+                                reason=effect.reason,
+                            )
             else:
                 logger.warning(
                     "effect_execution_failed",

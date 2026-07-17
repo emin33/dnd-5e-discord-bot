@@ -64,15 +64,34 @@ _GOBLIN = {
     ],
 }
 
+_HOLD_PERSON = {
+    "index": "hold-person",
+    "name": "Hold Person",
+    "level": 2,
+    "school": {"index": "enchantment"},
+    "casting_time": "1 action",
+    "range": "60 feet",
+    "components": ["V", "S", "M"],
+    "material": "A small, straight piece of iron.",
+    "duration": "Up to 1 minute",
+    "concentration": True,
+    "ritual": False,
+    "desc": ["Choose a humanoid... paralyzed for the duration."],
+    "dc": {"dc_type": {"index": "wis"}},
+}
+
 
 class _StubSRD:
-    """Serves exactly the two canned entries the tests reference."""
+    """Serves exactly the canned entries the tests reference."""
 
     def get_equipment(self, index):
         return _LONGSWORD if index == "longsword" else None
 
     def get_monster(self, index):
         return _GOBLIN if index == "goblin" else None
+
+    def get_spell(self, index):
+        return _HOLD_PERSON if index == "hold-person" else None
 
 
 class _ScriptedRoller:
@@ -82,11 +101,13 @@ class _ScriptedRoller:
     coordinator computed, so modifier math stays real and pinnable.
     ``damage_sums`` are the dice-only sums — the coordinator adds the
     ability modifier on top, so damage math stays real and pinnable.
+    ``save_faces`` are raw d20 faces for saving throws (default face 10).
     """
 
-    def __init__(self, attack_faces=(), damage_sums=()):
+    def __init__(self, attack_faces=(), damage_sums=(), save_faces=()):
         self.attack_faces = list(attack_faces)
         self.damage_sums = list(damage_sums)
+        self.save_faces = list(save_faces)
         self.calls: list[tuple] = []
 
     def roll_attack(self, modifier=0, advantage=False, disadvantage=False):
@@ -118,9 +139,10 @@ class _ScriptedRoller:
 
     def roll_save(self, modifier=0, advantage=False, disadvantage=False):
         self.calls.append(("save", modifier, advantage, disadvantage))
+        face = self.save_faces.pop(0) if self.save_faces else 10
         return DiceRoll(
-            notation="1d20", dice_results=[10], kept_dice=[10],
-            modifier=modifier, total=10 + modifier,
+            notation="1d20", dice_results=[face], kept_dice=[face],
+            modifier=modifier, total=face + modifier,
         )
 
     def roll(self, notation, advantage=False, disadvantage=False, reason=""):
@@ -162,6 +184,22 @@ class _FakeInventoryRepo:
 
     async def get_equipped_items(self, character_id):
         return list(self._equipped)
+
+
+class _FakeCharacterRepo:
+    """Records the targeted concentration/slot writes the coordinator issues."""
+
+    def __init__(self):
+        self.concentration_calls: list[tuple] = []
+        self.slot_calls: list[tuple] = []
+
+    async def update_concentration(self, character_id, spell_id):
+        self.concentration_calls.append((character_id, spell_id))
+        return True
+
+    async def update_spell_slot(self, character_id, slot_level, current):
+        self.slot_calls.append((character_id, slot_level, current))
+        return True
 
 
 # ── Fixtures / helpers ────────────────────────────────────────────────────────
@@ -369,17 +407,16 @@ class TestActionEdges:
         assert player.turn_resources.action is False
         assert roller.calls == [("attack", 6, False, False)]
 
-    async def test_unarmed_hit_is_broken_by_its_damage_notation(
+    async def test_unarmed_hit_deals_flat_one_plus_str(
         self, mock_character, unique_channel_id, monkeypatch
     ):
-        """PINNED BROKEN: the unarmed-strike fallback declares damage_dice
-        '1', which DiceRoller rejects ('1' is not dice notation), so every
-        unarmed HIT dies in _execute_action_locked's except and comes back
-        as a failed action WITH the action already consumed. Flips when the
-        fallback gets a rollable notation (or flat damage handling):
-        success True + 1 bludgeoning damage -> hp 11. NOTE: the fallback
-        exists in TWO places — _get_weapon_for_attack (pinned here) and
-        _get_equipped_weapons — fix both.
+        """FLIPPED (was PINNED BROKEN): the unarmed-strike fallback used to
+        declare damage_dice '1', which DiceRoller rejects ('1' is not dice
+        notation), so every unarmed HIT died in _execute_action_locked's
+        except and came back failed with the action already consumed. The
+        fallback (in BOTH _get_weapon_for_attack and _get_equipped_weapons)
+        now says '1d1' — a real roll that always totals 1 — and the melee
+        damage math adds STR on top: 1 + STR 3 = 4 bludgeoning -> hp 8.
         """
         # No equipped items -> WeaponStats fallback "Unarmed Strike".
         repo = _FakeInventoryRepo([])
@@ -398,13 +435,24 @@ class TestActionEdges:
         roller = _RealDamageRoller(attack_faces=[12])  # 12 + 6 = 18: a HIT
         coordinator = _coordinator(manager, session, roller)
 
-        await coordinator.start_turn(player)
+        ctx = await coordinator.start_turn(player)
+        # Pin the SECOND fallback site too: _get_equipped_weapons feeds
+        # TurnContext.equipped_weapons, and its unarmed fallback must also
+        # say '1d1' (a partial revert to '1' would only break this seam).
+        assert [w.damage_dice for w in ctx.equipped_weapons] == ["1d1"]
         result = await coordinator.execute_action(_attack(player.id, goblin.id))
 
-        assert result.success is False                      # -> True when fixed
-        assert "Invalid dice notation: 1" in (result.error or "")  # -> None
-        assert goblin.hp_current == 12                      # -> 11 when fixed
-        assert player.turn_resources.action is False  # spent, then it crashed
+        assert result.success is True
+        assert result.error is None
+        assert result.damage_type == "bludgeoning"
+        # Flat 1 (the REAL roller resolved "1d1") + STR mod 3.
+        assert result.damage_dealt == {goblin.id: 4}
+        assert goblin.hp_current == 8
+        assert player.turn_resources.action is False
+        assert roller.calls == [
+            ("attack", 6, False, False),  # unarmed is melee: STR 3 + prof 3
+            ("damage", "1d1", False),
+        ]
 
     async def test_blocking_condition_rejects_action_before_resources(
         self, mock_character, unique_channel_id, equipped_longsword
@@ -463,3 +511,189 @@ class TestNpcTurnEdges:
         assert goblin.is_surprised is False
         assert manager.combat.get_current_combatant() is player
         assert manager.combat.current_round == 2
+
+
+class TestConcentrationBreak:
+    """DF-8 surviving leg: breaking concentration must reach ALL THREE stores.
+
+    ``manager.break_concentration`` only strips concentration CombatEffects;
+    before the fix a failed CON save never cleared
+    ``Character.concentration_spell_id`` nor the DB row, so the spell came
+    back on resume/reload. These pin the coordinator's full break: manager
+    effects stripped + Character cleared + ``repo.update_concentration(id,
+    None)`` issued (mirroring the set-path used on cast).
+    """
+
+    def _rig(self, mock_character, unique_channel_id, monkeypatch, roller):
+        """Goblin about to attack a player who is concentrating on Bless."""
+        mock_character.concentration_spell_id = "bless"
+        manager = _make_combat(unique_channel_id, mock_character)
+        player = next(c for c in manager.combat.combatants if c.is_player)
+        goblin = next(c for c in manager.combat.combatants if not c.is_player)
+        # The manager-side footprint of that concentration, as
+        # _execute_spell would have attached it.
+        player.effects.append(
+            CombatEffect(
+                name="Bless",
+                effect_type="buff",
+                source_combatant_id=player.id,
+                is_concentration=True,
+            )
+        )
+        manager.combat.current_turn_index = 1  # goblin is acting
+        session = _make_session(unique_channel_id, mock_character)
+        coordinator = _coordinator(manager, session, roller)
+
+        char_repo = _FakeCharacterRepo()
+
+        async def _get_repo():
+            return char_repo
+
+        monkeypatch.setattr(
+            "dnd_bot.game.combat.coordinator.get_character_repo", _get_repo
+        )
+        return player, goblin, coordinator, char_repo
+
+    async def test_failed_con_save_clears_character_and_persists(
+        self, mock_character, unique_channel_id, monkeypatch
+    ):
+        # Scimitar face 19 + 4 = 23 vs AC 18: hit for 3. CON save face 2
+        # + CON mod 2 = 4 vs DC 10: FAILED -> full break.
+        roller = _ScriptedRoller(
+            attack_faces=[19], damage_sums=[3], save_faces=[2]
+        )
+        player, goblin, coordinator, char_repo = self._rig(
+            mock_character, unique_channel_id, monkeypatch, roller
+        )
+
+        result = await coordinator.execute_action(_attack(goblin.id, player.id))
+
+        assert result.success is True
+        assert player.hp_current == 41
+        assert ("save", 2, False, False) in roller.calls
+        assert result.concentration_broken is True
+        # Manager leg: the concentration effect is stripped...
+        assert all(e.name != "Bless" for e in player.effects)
+        # ...AND the Character + DB row are cleared (the DF-8 gap).
+        assert mock_character.concentration_spell_id is None
+        assert char_repo.concentration_calls == [(mock_character.id, None)]
+
+    async def test_dropping_to_zero_hp_breaks_concentration_without_a_save(
+        self, mock_character, unique_channel_id, monkeypatch
+    ):
+        # Overwhelming hit: 44 HP -> 0 (no instant death, overflow < max).
+        # 0 HP ends concentration outright (PHB p.203) — no save is rolled.
+        roller = _ScriptedRoller(attack_faces=[19], damage_sums=[50])
+        player, goblin, coordinator, char_repo = self._rig(
+            mock_character, unique_channel_id, monkeypatch, roller
+        )
+
+        result = await coordinator.execute_action(_attack(goblin.id, player.id))
+
+        assert result.success is True
+        assert player.hp_current == 0
+        assert not any(call[0] == "save" for call in roller.calls)
+        assert result.concentration_broken is True
+        assert all(e.name != "Bless" for e in player.effects)
+        assert mock_character.concentration_spell_id is None
+        assert char_repo.concentration_calls == [(mock_character.id, None)]
+
+
+class TestConcentrationRecast:
+    """Casting a NEW concentration spell while already concentrating.
+
+    Regression pin: ``manager.break_concentration`` strips ALL concentration
+    CombatEffects sourced by the caster, so the old-spell break must run
+    BEFORE the new spell's mechanical execution. When it ran after, the
+    save-branch's just-applied effect (Hold Person -> Paralyzed) was
+    silently deleted while the slot stayed spent and ``conditions_applied``
+    still reported PARALYZED.
+    """
+
+    async def test_recast_keeps_new_effect_and_strips_old(
+        self, mock_character, unique_channel_id, monkeypatch, equipped_longsword
+    ):
+        from dnd_bot.models import AbilityScore, SpellSlots
+
+        # A WIS caster (DC 8 + prof 3 + WIS 1 = 12) concentrating on Bless.
+        mock_character.spellcasting_ability = AbilityScore.WISDOM
+        mock_character.spell_slots = SpellSlots(level_2=(3, 3))
+        mock_character.prepared_spells = ["hold-person"]
+        mock_character.concentration_spell_id = "bless"
+
+        manager = _make_combat(unique_channel_id, mock_character)
+        player = next(c for c in manager.combat.combatants if c.is_player)
+        goblin = next(c for c in manager.combat.combatants if not c.is_player)
+        # Manager-side footprint of the OLD concentration (self-Bless).
+        player.effects.append(
+            CombatEffect(
+                name="Bless",
+                effect_type="buff",
+                source_combatant_id=player.id,
+                is_concentration=True,
+            )
+        )
+        session = _make_session(unique_channel_id, mock_character)
+        # Goblin's WIS save: roll_check face 10 + mod 0 = 10 < DC 12: FAILED.
+        roller = _ScriptedRoller()
+        coordinator = _coordinator(manager, session, roller)
+
+        # SpellcastingManager reads the SRD through its own seam.
+        monkeypatch.setattr(
+            "dnd_bot.game.magic.spellcasting.get_srd", lambda: _StubSRD()
+        )
+        char_repo = _FakeCharacterRepo()
+
+        async def _get_repo():
+            return char_repo
+
+        monkeypatch.setattr(
+            "dnd_bot.game.combat.coordinator.get_character_repo", _get_repo
+        )
+
+        await coordinator.start_turn(player)
+        result = await coordinator.execute_action(
+            CombatAction(
+                action_type=CombatActionType.CAST_SPELL,
+                combatant_id=player.id,
+                target_ids=[goblin.id],
+                spell_index="hold-person",
+                slot_level=2,
+            )
+        )
+
+        assert result.success is True
+        # Old concentration (Bless) is broken end-to-end...
+        assert result.concentration_broken is True
+        assert all(e.name != "Bless" for e in player.effects)
+        # ...and the NEW spell's just-applied effect SURVIVES. (The
+        # regression: breaking AFTER the save branch deleted it, leaving
+        # the slot spent and the goblin un-paralyzed.)
+        assert any(
+            e.source_spell_index == "hold-person"
+            and e.condition == Condition.PARALYZED
+            for e in goblin.effects
+        )
+        assert result.conditions_applied == {goblin.id: [Condition.PARALYZED]}
+        # New concentration is set + persisted; the slot stayed spent.
+        assert mock_character.concentration_spell_id == "hold-person"
+        assert char_repo.concentration_calls[-1] == (
+            mock_character.id,
+            "hold-person",
+        )
+        assert mock_character.spell_slots.get_slots(2)[0] == 2
+        assert char_repo.slot_calls == [(mock_character.id, 2, 2)]
+
+
+class TestSpellConditionMap:
+    def test_command_applies_no_automatic_condition(self):
+        """C11: 'command' must NOT auto-apply Prone on a failed save — only
+        the Grovel variant knocks prone (1 of 6 SRD variants), and
+        CombatAction carries no variant argument to gate on. The outcome is
+        the narrator's to describe. The map is consulted generically in
+        _execute_cast_spell, so its contents ARE the behavior."""
+        from dnd_bot.game.combat.coordinator import SPELL_CONDITION_MAP
+
+        assert "command" not in SPELL_CONDITION_MAP
+        # Canary: unambiguous entries are untouched.
+        assert SPELL_CONDITION_MAP["hold-person"][0] == Condition.PARALYZED

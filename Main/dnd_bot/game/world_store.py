@@ -409,17 +409,26 @@ class WorldStateStore:
             # this sync runs AFTER the extractor's apply_delta.
             new_loc = (effect.location_name or "").strip()
             if new_loc:
-                if world_state.current_location != new_loc:
+                previous_location = world_state.current_location
+                if previous_location != new_loc:
                     # Track previous location as a connected one (it's reachable)
                     if (
-                        world_state.current_location
-                        and world_state.current_location not in world_state.connected_locations
+                        previous_location
+                        and previous_location not in world_state.connected_locations
                     ):
-                        world_state.connected_locations.append(world_state.current_location)
+                        world_state.connected_locations.append(previous_location)
                 world_state.current_location = new_loc
                 if effect.location_description:
                     world_state.location_description = effect.location_description
                 world_state.record_transfer(f"party arrived at {new_loc}")
+                # DF-18: a real move drops the old scene's transient
+                # contents (scene_items + non-important roster NPCs not at
+                # the new location). Effects later in the same batch land
+                # AFTER this, so a spawn_object/add_npc for the new scene
+                # survives; a restated same location (the extractor already
+                # applied this move earlier in the turn) never re-rescopes.
+                if previous_location and previous_location.lower() != new_loc.lower():
+                    world_state.rescope_scene()
 
         elif etype == EffectType.REF_ENTITY:
             # Narrator referenced an existing roster entity — bump recency

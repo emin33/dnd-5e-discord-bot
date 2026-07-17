@@ -135,6 +135,54 @@ class TestLocationBranch:
         assert world.recent_transfers == ["party arrived at Tavern"]
 
 
+class TestSceneRescopeBranch:
+    """DF-18: a narrator-declared move drops the old scene's transient
+    contents (scene_items + non-important roster NPCs not at the new
+    location); effects later in the SAME batch land in the new scene."""
+
+    def test_change_location_clears_stale_items_and_roster(self, store, world):
+        world.spawn_item("Old Rope", "a coil of rope")
+        npc = _npc(world, "Barkeep")
+        important = _npc(world, "Quest Giver", important=True)
+        store.apply_effect(ProposedEffect(
+            effect_type=EffectType.CHANGE_LOCATION, location_name="Cellar",
+        ))
+        assert world.scene_items == {}
+        assert world._find_npc("Barkeep") is None
+        assert npc.alive is True                  # scene scope only, never killed
+        assert important.id in world.npcs         # important stays visible
+
+    def test_change_location_to_same_place_keeps_scene(self, store, world):
+        world.spawn_item("Old Rope", "a coil of rope")
+        npc = _npc(world, "Barkeep")
+        store.apply_effect(ProposedEffect(
+            effect_type=EffectType.CHANGE_LOCATION, location_name="Tavern",
+        ))
+        assert world.scene_items == {"Old Rope": "a coil of rope"}
+        assert npc.id in world.npcs
+
+    def test_same_batch_effects_after_move_land_in_new_scene(self, store, world):
+        world.spawn_item("Old Rope", "a coil of rope")
+        _npc(world, "Barkeep")
+        # Narrator batch: move first, then furnish the new scene.
+        store.apply_effect(ProposedEffect(
+            effect_type=EffectType.CHANGE_LOCATION, location_name="Cellar",
+        ))
+        store.apply_effect(ProposedEffect(
+            effect_type=EffectType.SPAWN_OBJECT,
+            object_name="Wine Cask", object_description="a dusty cask",
+        ))
+        store.apply_effect(ProposedEffect(
+            effect_type=EffectType.ADD_NPC, npc_name="Cellar Rat",
+        ))
+        # Old item cleared by the move; the new scene's spawn survives.
+        assert world.scene_items == {"Wine Cask": "a dusty cask"}
+        rat = world._find_npc("Cellar Rat")
+        assert rat is not None
+        assert rat.location == "Cellar"
+        assert rat.id in world.npcs
+
+
 class TestNpcBranches:
     def test_add_npc_mints_npc_state_at_current_location(self, store, world):
         store.apply_effect(ProposedEffect(

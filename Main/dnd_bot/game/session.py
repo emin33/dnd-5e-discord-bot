@@ -23,7 +23,7 @@ from ..data.repositories.npc_repo import get_npc_repo
 from ..models.npc import EntityType, Disposition, SceneEntity
 from .combat.manager import CombatManager, get_combat_by_key, clear_combat_by_key
 from .modes import GameMode, ModeMachine
-from .scene.registry import get_scene_registry, clear_scene_registry
+from .scene.registry import SceneEntityRegistry, get_scene_registry, clear_scene_registry
 from .world_state import WorldState
 from .world_store import WorldStateStore
 
@@ -522,6 +522,42 @@ class GameSessionManager:
                 exc_info=True,
             )
 
+    async def _rescope_scene_registry_after_move(
+        self,
+        session: GameSession,
+        scene_registry: SceneEntityRegistry,
+        previous_location: str,
+    ) -> None:
+        """Registry half of the DF-18 scene rescope.
+
+        WorldState clears its own scene items and roster inside the two
+        location-change apply paths (extractor delta, narrator effect);
+        the registry can't be reached from there, so this turn seam
+        compares the location before/after the orchestrator ran. On a real
+        move, old-scene entities leave the registry (no longer roster-
+        visible or combat-targetable) and NPCs the DB records at the new
+        location are loaded back in, so a returning NPC keeps its
+        canonical row id instead of being re-minted (Stage C). A first
+        location set (previous empty) is scene establishment, not a move.
+        Failure never breaks the turn.
+        """
+        world = session.world_state
+        if world is None or not previous_location:
+            return
+        if (world.current_location or "").lower() == previous_location.lower():
+            return
+        try:
+            scene_registry.rescope_to_scene(world)
+            if world.current_location:
+                await scene_registry.load_npcs_at_location(world.current_location)
+        except Exception as e:
+            logger.warning(
+                "scene_registry_rescope_failed",
+                session_id=session.id,
+                error=str(e),
+                exc_info=True,
+            )
+
     async def recover_sessions(self) -> list[GameSession]:
         """Rebuild live sessions from persisted snapshots at startup (ROOT-3).
 
@@ -976,6 +1012,14 @@ class GameSessionManager:
                     eff_mechanics_cb = _fe_mechanics
                     eff_narrative_cb = _fe_narrative
 
+                # DF-18: capture the pre-turn location so a move during
+                # this turn (narrator change_location tool or extractor
+                # delta) can rescope the scene registry afterwards.
+                pre_turn_location = (
+                    session.world_state.current_location
+                    if session.world_state else ""
+                )
+
                 response = await self.orchestrator.process_action(
                     action=content,
                     player_name=player.character.name if player.character else user_name,
@@ -1002,6 +1046,17 @@ class GameSessionManager:
                             player_characters=_player_chars,
                         )
                     )
+
+                # DF-18: if this turn's narration moved the party,
+                # WorldState already rescoped itself inside the two apply
+                # paths; mirror it onto the scene registry here (the apply
+                # paths can't reach it). Placed after the frontend event —
+                # this turn's TTS may still voice departing NPCs — and
+                # before the scene memory update, which must see the new
+                # scene.
+                await self._rescope_scene_registry_after_move(
+                    session, scene_registry, pre_turn_location
+                )
 
                 # Add response to memory
                 await memory.add_dm_response(

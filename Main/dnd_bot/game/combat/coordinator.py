@@ -75,7 +75,10 @@ SPELL_CONDITION_MAP: dict[str, tuple[Condition, int, bool]] = {
     "web": (Condition.RESTRAINED, 10, True),
     "entangle": (Condition.RESTRAINED, 10, True),
     "tashas-hideous-laughter": (Condition.PRONE, 10, True),
-    "command": (Condition.PRONE, 1, False),  # "grovel" variant
+    # NOTE: "command" is deliberately absent (C11). Its effect depends on the
+    # one-word order chosen (only the Grovel variant knocks prone), and
+    # CombatAction carries no variant argument — auto-Prone was wrong for
+    # 5 of 6 variants. The narrator describes the outcome instead.
     "hideous-laughter": (Condition.PRONE, 10, True),  # Alternate index
     "ray-of-enfeeblement": (Condition.EXHAUSTION, 10, True),
     "contagion": (Condition.POISONED, 70, False),  # 7 days
@@ -587,11 +590,16 @@ class CombatTurnCoordinator:
                 # Remove from zone tracking
                 self.zone_tracker.remove_combatant(target_id)
 
-            # Check concentration for target
+            # Check concentration for target. Dropping to 0 HP ends
+            # concentration outright (PHB p.203) — no save.
             if actual > 0 and self._is_concentrating(target):
-                conc_result = await self._check_concentration(target, actual)
-                if not conc_result:
+                if unconscious or instant_death:
+                    await self._break_concentration(target)
                     result.concentration_broken = True
+                else:
+                    conc_result = await self._check_concentration(target, actual)
+                    if not conc_result:
+                        result.concentration_broken = True
 
         logger.info(
             "attack_executed",
@@ -676,10 +684,13 @@ class CombatTurnCoordinator:
                     if "attack_bonus" in action_data:
                         return self._parse_monster_attack(action_data)
 
-        # Default unarmed strike
+        # Default unarmed strike: flat 1 bludgeoning (+STR added by the
+        # damage math, per 5e). The roller only speaks NdM, so flat 1 is
+        # spelled "1d1" — the literal "1" it had before raised
+        # "Invalid dice notation" on every unarmed hit.
         return WeaponStats(
             name="Unarmed Strike",
-            damage_dice="1",
+            damage_dice="1d1",
             damage_type="bludgeoning",
             is_melee=True,
         )
@@ -1030,6 +1041,19 @@ class CombatTurnCoordinator:
             spell_effect=spell.name,
         )
 
+        # Break existing concentration BEFORE the spell's mechanical
+        # execution. Also strips the old spell's lingering CombatEffects
+        # from targets — the Character and DB row are handled by the
+        # set-path below, but the manager-side effects were never removed
+        # (DF-8). This must run before the save-branch attaches the NEW
+        # spell's concentration effect: manager.break_concentration removes
+        # ALL concentration effects sourced by this caster, so running it
+        # after would strip the effect the current cast just applied.
+        if spell.concentration and character.is_concentrating:
+            self.manager.break_concentration(caster.id)
+            character.concentration_spell_id = None
+            result.concentration_broken = True
+
         # Determine spell type and execute
         if spell.attack_type:
             # Attack spell
@@ -1074,11 +1098,16 @@ class CombatTurnCoordinator:
                 elif unconscious:
                     result.unconscious_targets.append(target.id)
 
-                # Check concentration
+                # Check concentration. Dropping to 0 HP ends concentration
+                # outright (PHB p.203) — no save.
                 if self._is_concentrating(target):
-                    maintained = await self._check_concentration(target, actual)
-                    if not maintained:
+                    if unconscious or dead:
+                        await self._break_concentration(target)
                         result.concentration_broken = True
+                    else:
+                        maintained = await self._check_concentration(target, actual)
+                        if not maintained:
+                            result.concentration_broken = True
 
         elif spell.save_dc_ability:
             # Save-based spell
@@ -1171,13 +1200,9 @@ class CombatTurnCoordinator:
             # Utility spell
             result.spell_effect = f"{spell.name} takes effect"
 
-        # Handle concentration
+        # Handle concentration (old concentration was already broken above,
+        # before the spell's mechanical execution)
         if spell.concentration:
-            # Break existing concentration if any
-            if character.is_concentrating:
-                character.concentration_spell_id = None
-                result.concentration_broken = True
-
             # Start new concentration
             character.concentration_spell_id = spell_index
             result.zone_changes.append(f"Concentrating on {spell.name}")
@@ -1285,10 +1310,36 @@ class CombatTurnCoordinator:
         )
 
         if not success:
-            # Break concentration
-            self.manager.break_concentration(combatant.id)
+            await self._break_concentration(combatant)
 
         return success
+
+    async def _break_concentration(self, combatant: Combatant) -> None:
+        """Break concentration end-to-end (DF-8 surviving leg).
+
+        ``manager.break_concentration`` only strips the caster's concentration
+        CombatEffects from targets — it never touches the Character. Mirror
+        the set-path (``repo.update_concentration`` on cast): clear the
+        session-resolved Character's ``concentration_spell_id`` and persist
+        the cleared row, so the break survives resume/reload.
+        """
+        self.manager.break_concentration(combatant.id)
+
+        if combatant.is_player and combatant.character_id:
+            character = self._resolve_player_character(combatant.character_id)
+            if character and character.is_concentrating:
+                character.concentration_spell_id = None
+                try:
+                    repo = await get_character_repo()
+                    await repo.update_concentration(character.id, None)
+                except Exception as e:
+                    logger.error(
+                        "persist_failed",
+                        entity="concentration",
+                        character_id=character.id,
+                        error=str(e),
+                        exc_info=True,
+                    )
 
     # ==================== Helper Methods ====================
 
@@ -1373,11 +1424,12 @@ class CombatTurnCoordinator:
             if weapon_data and weapon_data.get("equipment_category", {}).get("index") == "weapon":
                 weapons.append(self._parse_srd_weapon(weapon_data))
 
-        # Always have unarmed as fallback
+        # Always have unarmed as fallback: flat 1 bludgeoning (+STR added by
+        # the damage math, per 5e); "1d1" because the roller rejects a bare "1".
         if not weapons:
             weapons.append(WeaponStats(
                 name="Unarmed Strike",
-                damage_dice="1",
+                damage_dice="1d1",
                 damage_type="bludgeoning",
                 is_melee=True,
             ))
