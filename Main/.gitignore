@@ -49,3 +49,5 @@ data/test_run.log
 data/test_combat_flow.txt
 data/test_tavern.txt
 data/llm_debug.log
+data/long_horizon/
+longhorizon_*.log

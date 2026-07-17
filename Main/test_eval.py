@@ -767,7 +767,7 @@ class EvalSession:
                 # can't interact with those.  Reset to ACTIVE so the
                 # narrator continues in exploration mode next turn.
                 if response.combat_triggered:
-                    game_session = session.manager._sessions.get(session.channel_id)
+                    game_session = session.manager.get_session(session.channel_id)
                     if game_session:
                         # Route through the mode machine's pop (Step 3/4):
                         # the hand-rolled state/phase writes bypassed the

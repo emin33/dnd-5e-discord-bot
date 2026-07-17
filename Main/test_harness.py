@@ -411,7 +411,7 @@ class TestSession:
             # Auto-resolve combat for automated tests — real combat uses
             # Discord buttons/panels that the LLM player can't interact with.
             if response.combat_triggered:
-                game_session = self.manager._sessions.get(self.channel_id)
+                game_session = self.manager.get_session(self.channel_id)
                 if game_session:
                     # Route through the mode machine's pop (Step 3/4): the
                     # hand-rolled state/phase writes bypassed the
