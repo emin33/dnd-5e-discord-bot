@@ -18,6 +18,9 @@ logger = structlog.get_logger()
 
 # Discord limits
 EMBED_DESCRIPTION_LIMIT = 4096
+# Plain messages cap at 2000 chars; leave headroom for the italics markup
+# and the leading ellipsis on the streamed preview.
+_STREAM_PREVIEW_LIMIT = 1900
 _EDIT_INTERVAL = 0.8  # Seconds between Discord edits (rate limit safe)
 
 
@@ -207,14 +210,20 @@ class DiscordTextFrontend:
         if not text:
             return
 
-        display = text[:4000] + "..." if len(text) > 4000 else text
+        # Show the trailing window so the newest prose stays visible while
+        # staying under Discord's 2000-char plain-message cap.
+        if len(text) > _STREAM_PREVIEW_LIMIT:
+            display = "..." + text[-_STREAM_PREVIEW_LIMIT:]
+        else:
+            display = text
         try:
             if self._stream_msg is None:
                 self._stream_msg = await self._channel.send(f"*{display}*")
             else:
                 await self._stream_msg.edit(content=f"*{display}*")
-        except Exception:
-            pass  # Best effort streaming
+        except discord.HTTPException as e:
+            # Best-effort streaming: log and keep going, never crash the turn.
+            logger.warning("narrative_stream_edit_failed", error=str(e), exc_info=True)
 
     async def _get_immersion_settings(self):
         """Load immersion settings. Profile is the source of truth.
