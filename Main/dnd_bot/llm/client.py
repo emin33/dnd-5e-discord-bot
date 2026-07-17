@@ -1,7 +1,9 @@
 """LLM client wrappers — Ollama (local) and Groq (cloud API)."""
 
 import asyncio
+import functools
 import re
+import time
 import weakref
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -14,6 +16,7 @@ import ollama
 import structlog
 
 from ..config import get_settings, get_profile
+from . import usage_recorder
 
 logger = structlog.get_logger()
 
@@ -84,6 +87,13 @@ class LLMResponse:
     # creation (more expensive than non-cached the first time). DeepSeek
     # reports cache_hit_tokens as cache_read_tokens; misses are just regular
     # prompt_tokens. OpenAI's auto-cache also fills cache_read_tokens.
+    #
+    # SEMANTICS by provider — do not "fix" cache_hit_ratio, consumers compute
+    # provider-aware ratios themselves:
+    #   deepseek/gemini/groq/openrouter: prompt_tokens INCLUDES
+    #     cache_read_tokens (hit ratio = cache_read / prompt_tokens).
+    #   anthropic: input_tokens EXCLUDES cached tokens
+    #     (ratio = cache_read / (prompt + cache_read + cache_write)).
     cache_read_tokens: int = 0   # input tokens served from cache (savings)
     cache_write_tokens: int = 0  # input tokens written to cache (this turn)
 
@@ -1032,6 +1042,11 @@ class GroqClient:
                     })
 
             usage = response.usage
+            # OpenAI usage shape: prompt_tokens_details.cached_tokens (0 for
+            # qwen3-32b today; future-proofs a GPT-OSS brain). Note
+            # prompt_tokens INCLUDES the cached tokens.
+            details = getattr(usage, "prompt_tokens_details", None) if usage else None
+            cached = (getattr(details, "cached_tokens", 0) or 0) if details else 0
             return LLMResponse(
                 content=content,
                 tool_calls=tool_calls,
@@ -1039,6 +1054,7 @@ class GroqClient:
                 finish_reason=choice.finish_reason if choice else "",
                 prompt_tokens=usage.prompt_tokens if usage else 0,
                 completion_tokens=usage.completion_tokens if usage else 0,
+                cache_read_tokens=cached,
             )
 
         except asyncio.TimeoutError:
@@ -1675,6 +1691,9 @@ class GeminiClient:
                 finish_reason=finish,
                 prompt_tokens=getattr(usage, "prompt_token_count", 0) if usage else 0,
                 completion_tokens=getattr(usage, "candidates_token_count", 0) if usage else 0,
+                # Gemini's prompt_token_count INCLUDES cached tokens; the
+                # cached slice is reported separately here.
+                cache_read_tokens=(getattr(usage, "cached_content_token_count", 0) or 0) if usage else 0,
             )
 
         except asyncio.TimeoutError:
@@ -1804,6 +1823,10 @@ class OpenRouterClient:
                     })
 
             usage = response.usage
+            # OpenAI-compat cached_tokens passthrough (upstream providers that
+            # auto-cache report it here). prompt_tokens INCLUDES cached.
+            details = getattr(usage, "prompt_tokens_details", None) if usage else None
+            cached = (getattr(details, "cached_tokens", 0) or 0) if details else 0
             return LLMResponse(
                 content=raw_content or "",
                 tool_calls=tool_calls,
@@ -1811,6 +1834,7 @@ class OpenRouterClient:
                 finish_reason=choice.finish_reason if choice else "",
                 prompt_tokens=usage.prompt_tokens if usage else 0,
                 completion_tokens=usage.completion_tokens if usage else 0,
+                cache_read_tokens=cached,
             )
 
         except asyncio.TimeoutError:
@@ -2054,6 +2078,36 @@ def _reset_clients() -> None:
     _clients_by_provider_model = {}
 
 
+def _instrument(client: Any, provider: str) -> Any:
+    """Wrap a client's ``chat`` so each call feeds the usage recorder.
+
+    Single seam for ALL provider instances (brain, narrator tiers, KG/
+    summarizer/immersion helpers route through _create_client). Per-instance
+    wrapper — no double-instrumentation, and errors propagate unchanged.
+    No-op overhead when the recorder is disabled (one bool check per call).
+    """
+    orig = client.chat
+
+    @functools.wraps(orig)
+    async def chat(*args: Any, **kwargs: Any) -> LLMResponse:
+        t0 = time.perf_counter()
+        resp = await orig(*args, **kwargs)
+        if usage_recorder.is_enabled():
+            usage_recorder.record(
+                provider=provider,
+                model=getattr(client, "model", "") or "",
+                prompt_tokens=resp.prompt_tokens,
+                completion_tokens=resp.completion_tokens,
+                cache_read_tokens=resp.cache_read_tokens,
+                cache_write_tokens=resp.cache_write_tokens,
+                elapsed_ms=(time.perf_counter() - t0) * 1000.0,
+            )
+        return resp
+
+    client.chat = chat  # type: ignore[method-assign]
+    return client
+
+
 def _create_client(provider: str, model: str, fallback_to_ollama: bool = False, context_size: int = 0):
     """Create an LLM client for a given provider and model."""
     settings = get_settings()
@@ -2061,17 +2115,18 @@ def _create_client(provider: str, model: str, fallback_to_ollama: bool = False, 
     if provider == "groq":
         client = GroqClient(model=model)
         client._fallback_enabled = fallback_to_ollama
-        return client
     elif provider == "anthropic":
-        return AnthropicClient(model=model)
+        client = AnthropicClient(model=model)
     elif provider == "openrouter":
-        return OpenRouterClient(model=model)
+        client = OpenRouterClient(model=model)
     elif provider == "deepseek":
-        return DeepSeekClient(model=model)
+        client = DeepSeekClient(model=model)
     elif provider == "gemini":
-        return GeminiClient(model=model)
+        client = GeminiClient(model=model)
     else:  # ollama
-        return OllamaClient(model=model, num_ctx=context_size or None)
+        client = OllamaClient(model=model, num_ctx=context_size or None)
+
+    return _instrument(client, provider)
 
 
 def get_llm_client() -> "LLMClient":

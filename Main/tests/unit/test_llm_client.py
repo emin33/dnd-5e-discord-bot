@@ -607,3 +607,142 @@ class TestExecutorHygiene:
         assert "still alive" in (result.content or "")
         assert client._executor is not old_executor
         client.close()  # the replacement pool is closeable too
+
+
+# ── Cache-read telemetry fills (usage-ledger sweep) ──────────────────────────
+
+
+class TestProviderCacheTokens:
+    """Groq/OpenRouter surface OpenAI-shape ``prompt_tokens_details.cached_tokens``;
+    Gemini surfaces ``cached_content_token_count``. For all three,
+    ``prompt_tokens`` INCLUDES the cached slice (see LLMResponse comment).
+    Absent/None fields must default to 0."""
+
+    @staticmethod
+    def _openai_response(usage):
+        message = SimpleNamespace(content="hi", tool_calls=None)
+        choice = SimpleNamespace(message=message, finish_reason="stop")
+        return SimpleNamespace(choices=[choice], model="test-model", usage=usage)
+
+    @staticmethod
+    def _fake_openai_client(response):
+        class _FakeCompletions:
+            async def create(self, **kwargs):
+                return response
+
+        return SimpleNamespace(chat=SimpleNamespace(completions=_FakeCompletions()))
+
+    async def test_groq_cached_tokens_surfaced(self):
+        from dnd_bot.llm.client import GroqClient
+
+        usage = SimpleNamespace(
+            prompt_tokens=100,
+            completion_tokens=5,
+            prompt_tokens_details=SimpleNamespace(cached_tokens=64),
+        )
+        client = GroqClient(model="groq-test", api_key="test-key")
+        client._client = self._fake_openai_client(self._openai_response(usage))
+
+        resp = await client.chat(messages=[{"role": "user", "content": "hi"}])
+        assert resp.prompt_tokens == 100  # includes the cached slice
+        assert resp.cache_read_tokens == 64
+
+    async def test_groq_missing_details_defaults_to_zero(self):
+        from dnd_bot.llm.client import GroqClient
+
+        usage = SimpleNamespace(prompt_tokens=10, completion_tokens=2)
+        client = GroqClient(model="groq-test", api_key="test-key")
+        client._client = self._fake_openai_client(self._openai_response(usage))
+
+        resp = await client.chat(messages=[{"role": "user", "content": "hi"}])
+        assert resp.cache_read_tokens == 0
+
+    async def test_openrouter_cached_tokens_surfaced(self):
+        from dnd_bot.llm.client import OpenRouterClient
+
+        usage = SimpleNamespace(
+            prompt_tokens=50,
+            completion_tokens=5,
+            prompt_tokens_details=SimpleNamespace(cached_tokens=32),
+        )
+        client = OpenRouterClient(model="or-test", api_key="test-key")
+        client._client = self._fake_openai_client(self._openai_response(usage))
+
+        resp = await client.chat(messages=[{"role": "user", "content": "hi"}])
+        assert resp.cache_read_tokens == 32
+
+    async def test_openrouter_none_cached_tokens_defaults_to_zero(self):
+        from dnd_bot.llm.client import OpenRouterClient
+
+        usage = SimpleNamespace(
+            prompt_tokens=50,
+            completion_tokens=5,
+            prompt_tokens_details=SimpleNamespace(cached_tokens=None),
+        )
+        client = OpenRouterClient(model="or-test", api_key="test-key")
+        client._client = self._fake_openai_client(self._openai_response(usage))
+
+        resp = await client.chat(messages=[{"role": "user", "content": "hi"}])
+        assert resp.cache_read_tokens == 0
+
+    @staticmethod
+    def _fake_gemini_model_cls(usage_metadata):
+        class _FakeGenerativeModel:
+            def __init__(self, **model_kwargs):
+                pass
+
+            async def generate_content_async(self, **call_kwargs):
+                part = SimpleNamespace(text="hi", function_call=None)
+                candidate = SimpleNamespace(
+                    content=SimpleNamespace(parts=[part]),
+                    finish_reason=SimpleNamespace(name="STOP"),
+                )
+                return SimpleNamespace(
+                    candidates=[candidate], usage_metadata=usage_metadata,
+                )
+
+        return _FakeGenerativeModel
+
+    async def test_gemini_cached_content_tokens_surfaced(self, monkeypatch):
+        import google.generativeai as genai
+
+        from dnd_bot.llm.client import GeminiClient
+
+        client = GeminiClient(model="gemini-test", api_key="test-key")
+        monkeypatch.setattr(
+            genai,
+            "GenerativeModel",
+            self._fake_gemini_model_cls(
+                SimpleNamespace(
+                    prompt_token_count=100,
+                    candidates_token_count=5,
+                    cached_content_token_count=37,
+                )
+            ),
+        )
+
+        resp = await client.chat(messages=[{"role": "user", "content": "hi"}])
+        assert resp.prompt_tokens == 100  # includes the cached slice
+        assert resp.cache_read_tokens == 37
+
+    async def test_gemini_none_cached_count_defaults_to_zero(self, monkeypatch):
+        """The SDK reports None (not 0) when no cached content applies."""
+        import google.generativeai as genai
+
+        from dnd_bot.llm.client import GeminiClient
+
+        client = GeminiClient(model="gemini-test", api_key="test-key")
+        monkeypatch.setattr(
+            genai,
+            "GenerativeModel",
+            self._fake_gemini_model_cls(
+                SimpleNamespace(
+                    prompt_token_count=10,
+                    candidates_token_count=2,
+                    cached_content_token_count=None,
+                )
+            ),
+        )
+
+        resp = await client.chat(messages=[{"role": "user", "content": "hi"}])
+        assert resp.cache_read_tokens == 0
