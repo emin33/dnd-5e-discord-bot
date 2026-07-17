@@ -2,11 +2,12 @@
 
 import asyncio
 import re
+import weakref
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional, Protocol, runtime_checkable
+from typing import Any, Callable, Optional, Protocol, runtime_checkable
 import json
 
 import ollama
@@ -150,7 +151,9 @@ class OllamaClient:
     definitions are rendered as Go-struct strings rather than valid JSON,
     causing models to silently ignore the tools. The compat endpoint uses
     OpenAI's serializer and works correctly. Non-tool requests continue
-    to use the native client (json_schema / json_mode / think).
+    to use the native client. json_schema / json_mode / think are honored
+    on both paths — the compat path forwards them via OpenAI-style
+    ``response_format`` and ``extra_body`` (R4).
     """
 
     def __init__(
@@ -165,8 +168,15 @@ class OllamaClient:
         self.host = host or settings.ollama_host
         self.timeout = settings.llm_timeout
         self.num_ctx = num_ctx  # Cap context window to control VRAM
+        self._max_workers = max_workers
         self._executor = ThreadPoolExecutor(max_workers=max_workers)
-        self._client = ollama.Client(host=self.host)
+        # HTTP timeout slightly above the asyncio.wait_for deadline
+        # (AQ-ASYNC-08): when wait_for times out, its cancel abandons the
+        # executor thread INSIDE the blocking HTTP call. Without an httpx
+        # timeout that thread can block forever — four stuck calls wedge the
+        # max_workers=4 pool. With it, the abandoned thread errors out
+        # shortly after the deadline and returns to the pool.
+        self._client = ollama.Client(host=self.host, timeout=self.timeout + 10)
         # Lazy-init OpenAI-compat client for tool-bearing requests.
         # Uses Ollama's /v1/chat/completions endpoint to bypass the
         # broken native tool serializer.
@@ -225,6 +235,9 @@ class OllamaClient:
                 tools=tools,
                 tool_choice=tool_choice,
                 max_tokens=max_tokens,
+                json_mode=json_mode,
+                json_schema=json_schema,
+                think=think,
                 frequency_penalty=frequency_penalty,
                 presence_penalty=presence_penalty,
                 top_p=top_p,
@@ -289,7 +302,7 @@ class OllamaClient:
 
         try:
             response = await asyncio.wait_for(
-                loop.run_in_executor(self._executor, _sync_chat),
+                self._run_blocking(loop, _sync_chat),
                 timeout=self.timeout,
             )
 
@@ -499,8 +512,11 @@ class OllamaClient:
         tools: list[dict],
         tool_choice: Optional[str],
         max_tokens: Optional[int],
-        frequency_penalty: Optional[float],
-        presence_penalty: Optional[float],
+        json_mode: bool = False,
+        json_schema: Optional[dict] = None,
+        think: Optional[bool] = None,
+        frequency_penalty: Optional[float] = None,
+        presence_penalty: Optional[float] = None,
         top_p: Optional[float] = None,
         top_k: Optional[int] = None,
         min_p: Optional[float] = None,
@@ -557,13 +573,25 @@ class OllamaClient:
                     "function": {"name": tool_choice},
                 }
 
+        # Structured output (R4): previously json_mode/json_schema were
+        # silently dropped on this path. Forward them via OpenAI-style
+        # response_format; ollama's compat layer maps it onto its native
+        # ``format`` field.
+        if json_schema:
+            kwargs["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {"name": "response", "schema": json_schema},
+            }
+        elif json_mode:
+            kwargs["response_format"] = {"type": "json_object"}
+
         # Thread Ollama's num_ctx through extra_body — the OpenAI SDK
         # doesn't have a native field for this. Without it, ollama
         # silently truncates at 2048 tokens, which drops prose alongside
         # tool calls. top_k and min_p are also Ollama-specific and live
         # under options.
         ctx_size = self.num_ctx or 32768
-        extra_body = {
+        extra_body: dict[str, Any] = {
             "options": {
                 "num_ctx": ctx_size,
             }
@@ -574,6 +602,11 @@ class OllamaClient:
             extra_body["options"]["top_k"] = top_k
         if min_p is not None:
             extra_body["options"]["min_p"] = min_p
+        # think is Ollama-native (not an OpenAI param); forward it as a
+        # top-level extra field like ``options`` — previously it was
+        # silently dropped on the tool-bearing path (R4).
+        if think is not None:
+            extra_body["think"] = think
         kwargs["extra_body"] = extra_body
 
         try:
@@ -718,7 +751,7 @@ class OllamaClient:
 
         try:
             stream = await asyncio.wait_for(
-                loop.run_in_executor(self._executor, _sync_stream),
+                self._run_blocking(loop, _sync_stream),
                 timeout=self.timeout,
             )
 
@@ -733,7 +766,7 @@ class OllamaClient:
                     chunks.append(chunk)
                 return chunks
 
-            chunks = await loop.run_in_executor(self._executor, _collect_chunks)
+            chunks = await self._run_blocking(loop, _collect_chunks)
 
             for chunk in chunks:
                 if hasattr(chunk, "message"):
@@ -802,7 +835,7 @@ class OllamaClient:
 
         try:
             response = await asyncio.wait_for(
-                loop.run_in_executor(self._executor, _sync_generate),
+                self._run_blocking(loop, _sync_generate),
                 timeout=self.timeout,
             )
             return response.get("response", "")
@@ -827,10 +860,41 @@ class OllamaClient:
             except Exception:
                 return False
 
-        return await loop.run_in_executor(self._executor, _sync_check)
+        return await self._run_blocking(loop, _sync_check)
+
+    def _run_blocking(
+        self, loop: asyncio.AbstractEventLoop, fn: Callable[[], Any]
+    ) -> "asyncio.Future[Any]":
+        """run_in_executor that survives a concurrent close().
+
+        A /profile switch closes cached clients immediately, but an
+        in-flight turn still holds this instance and makes several more
+        calls (triage -> narrator -> extractors -> summary) before it
+        finishes — switch_profile's contract is that in-progress turns
+        finish with their existing clients. If close() already shut the
+        pool down, submitting raises RuntimeError; recreate the pool and
+        retry. The instance is no longer cached after the switch, so the
+        replacement pool becomes garbage with it — the weakref finalizer
+        shuts it down then.
+        """
+        try:
+            return loop.run_in_executor(self._executor, fn)
+        except RuntimeError:
+            if not getattr(self._executor, "_shutdown", True):
+                raise  # not ours (e.g. closed event loop)
+            logger.info(
+                "ollama_executor_recreated_after_close", model=self.model
+            )
+            self._executor = ThreadPoolExecutor(max_workers=self._max_workers)
+            weakref.finalize(self, self._executor.shutdown, wait=False)
+            return loop.run_in_executor(self._executor, fn)
 
     def close(self):
-        """Shutdown the executor."""
+        """Shutdown the executor.
+
+        Safe to call while a turn is in flight: subsequent calls on this
+        instance lazily recreate the pool (see _run_blocking).
+        """
         self._executor.shutdown(wait=False)
 
 
@@ -1043,12 +1107,22 @@ class GroqClient:
             return False
 
     def close(self):
-        """No-op — async client cleans up automatically."""
-        pass
+        """Close the Ollama fallback's executor if one was created.
+
+        The async Groq client itself cleans up automatically, but the
+        lazily-built OllamaClient fallback owns a ThreadPoolExecutor
+        (AQ-ASYNC-08).
+        """
+        fallback = getattr(self, "_ollama_fallback", None)
+        if fallback is not None:
+            fallback.close()
 
 
 class AnthropicClient:
     """Async client for Anthropic Claude API (narrator-only)."""
+
+    # Name of the synthetic tool used to enforce json_schema output (R4).
+    _STRUCTURED_OUTPUT_TOOL = "emit_structured_json"
 
     def __init__(
         self,
@@ -1123,9 +1197,35 @@ class AnthropicClient:
             "temperature": temperature,
         }
 
-        # Enforce JSON output when json_schema or json_mode is requested.
-        # Claude doesn't have native json_mode, so we inject a system hint.
-        if json_schema or json_mode:
+        # Enforce JSON output when json_schema is requested (R4): a single
+        # forced tool whose input_schema IS the caller's schema. With
+        # tool_choice {"type": "tool"} the API guarantees a tool_use block
+        # matching the schema, which we serialize back into content below.
+        # (The native output_config.format path requires
+        # additionalProperties:false on every object, which caller schemas
+        # don't guarantee; the forced tool works with loose schemas on all
+        # tool-capable Claude models.) Schema-less json_mode — or json_schema
+        # alongside caller-supplied tools, where forcing a second tool would
+        # break tool calling — keeps the system-hint fallback.
+        force_json_tool = (
+            json_schema is not None
+            and not tools
+            and json_schema.get("type", "object") == "object"
+        )
+        if force_json_tool:
+            kwargs["tools"] = [{
+                "name": self._STRUCTURED_OUTPUT_TOOL,
+                "description": (
+                    "Record the response as a JSON object matching the "
+                    "schema. Always call this tool exactly once."
+                ),
+                "input_schema": json_schema,
+            }]
+            kwargs["tool_choice"] = {
+                "type": "tool",
+                "name": self._STRUCTURED_OUTPUT_TOOL,
+            }
+        elif json_schema or json_mode:
             system_parts.append(
                 "IMPORTANT: Respond with ONLY a valid JSON object. "
                 "No prose, no markdown fences, no explanation."
@@ -1192,6 +1292,20 @@ class AnthropicClient:
                             "name": block.name,
                             "arguments": block.input,
                         })
+
+            # Structured-output enforcement (R4): unwrap the forced tool's
+            # input back into JSON text — callers parse response.content.
+            if force_json_tool:
+                structured = [
+                    tc for tc in tool_calls
+                    if tc["name"] == self._STRUCTURED_OUTPUT_TOOL
+                ]
+                if structured:
+                    content = json.dumps(structured[0]["arguments"])
+                tool_calls = [
+                    tc for tc in tool_calls
+                    if tc["name"] != self._STRUCTURED_OUTPUT_TOOL
+                ]
 
             _write_debug_log(
                 f"ANTHROPIC_RESPONSE (api={_elapsed:.1f}s)",
@@ -1311,6 +1425,8 @@ class GeminiClient:
             kwargs["description"] = schema["description"]
         if "enum" in schema:
             kwargs["enum"] = schema["enum"]
+        if schema.get("nullable"):
+            kwargs["nullable"] = True
         if "properties" in schema:
             kwargs["properties"] = {
                 k: self._convert_schema(v)
@@ -1321,6 +1437,87 @@ class GeminiClient:
         if "items" in schema:
             kwargs["items"] = self._convert_schema(schema["items"])
         return protos.Schema(**kwargs)
+
+    @staticmethod
+    def _normalize_response_schema(schema: dict[str, Any]) -> Optional[dict[str, Any]]:
+        """Normalize a JSON schema so _convert_schema can express it.
+
+        Pydantic's ``model_json_schema()`` output uses constructs the naive
+        conversion silently destroyed — ``$ref``/``$defs`` (nested models)
+        and ``anyOf: [X, null]`` (Optional fields) each collapsed to a bare
+        OBJECT proto with empty properties, which the Gemini API rejects
+        (400 INVALID_ARGUMENT). Inline the refs and fold Optional into
+        ``nullable`` instead. Returns None when constructs remain that
+        ``protos.Schema`` cannot express (multi-branch anyOf, free-form
+        objects like ``dict[str, bool]``, recursive refs) — callers then
+        fall back to response_mime_type-only, the pre-R4 behavior.
+        """
+        defs = schema.get("$defs", {})
+
+        def _walk(node: dict[str, Any], seen: frozenset[str]) -> Optional[dict[str, Any]]:
+            ref = node.get("$ref")
+            if ref is not None:
+                name = ref.rsplit("/", 1)[-1]
+                if not ref.startswith("#/$defs/") or name not in defs or name in seen:
+                    return None
+                return _walk(defs[name], seen | {name})
+
+            all_of = node.get("allOf")
+            if all_of is not None:
+                if len(all_of) != 1:
+                    return None
+                resolved = _walk(all_of[0], seen)
+                if resolved is not None and "description" in node:
+                    resolved = {**resolved, "description": node["description"]}
+                return resolved
+
+            any_of = node.get("anyOf")
+            if any_of is not None:
+                non_null = [b for b in any_of if b.get("type") != "null"]
+                if len(non_null) != 1 or len(non_null) == len(any_of):
+                    return None
+                branch = _walk(non_null[0], seen)
+                if branch is None:
+                    return None
+                out = {**branch, "nullable": True}
+                if "description" in node:
+                    out.setdefault("description", node["description"])
+                return out
+
+            node_type = node.get("type")
+            out = {}
+            if node_type == "object":
+                props = node.get("properties")
+                if not props:
+                    return None  # free-form object: inexpressible
+                converted = {}
+                for key, sub in props.items():
+                    sub_norm = _walk(sub, seen)
+                    if sub_norm is None:
+                        return None
+                    converted[key] = sub_norm
+                out = {"type": "object", "properties": converted}
+                if "required" in node:
+                    out["required"] = node["required"]
+            elif node_type == "array":
+                items = node.get("items")
+                if not isinstance(items, dict):
+                    return None
+                items_norm = _walk(items, seen)
+                if items_norm is None:
+                    return None
+                out = {"type": "array", "items": items_norm}
+            elif node_type in ("string", "number", "integer", "boolean"):
+                out = {"type": node_type}
+                if "enum" in node:
+                    out["enum"] = node["enum"]
+            else:
+                return None
+            if "description" in node:
+                out["description"] = node["description"]
+            return out
+
+        return _walk(schema, frozenset())
 
     async def chat(
         self,
@@ -1385,9 +1582,25 @@ class GeminiClient:
             "max_output_tokens": max_tokens or 2000,
         }
 
-        # Enforce JSON output when json_schema or json_mode is requested
+        # Enforce JSON output when json_schema or json_mode is requested.
+        # response_schema constrains decoding to the caller's schema (real
+        # enforcement, R4); the mime type alone only asks for JSON-shaped
+        # text. Normalize first ($ref inlining, Optional -> nullable) —
+        # schemas that survive are converted to a protos.Schema; ones that
+        # don't fall back to mime-type-only rather than sending a schema
+        # the API would reject.
         if json_schema or json_mode:
             gen_kwargs["response_mime_type"] = "application/json"
+            if json_schema:
+                normalized = self._normalize_response_schema(json_schema)
+                if normalized is not None:
+                    gen_kwargs["response_schema"] = self._convert_schema(normalized)
+                else:
+                    logger.debug(
+                        "gemini_response_schema_unsupported",
+                        model=self.model,
+                        detail="falling back to response_mime_type only",
+                    )
 
         gen_config = self._genai.GenerationConfig(**gen_kwargs)
 
@@ -1804,8 +2017,37 @@ _clients_by_provider_model: dict = {}  # (provider, model) -> shared client inst
 
 
 def _reset_clients() -> None:
-    """Clear cached client instances so they recreate from the active profile."""
+    """Clear cached client instances so they recreate from the active profile.
+
+    Closes each old client first (AQ-ASYNC-08): OllamaClient owns a
+    ThreadPoolExecutor, so merely nulling the references — as every
+    /profile switch used to do — leaked an executor per switch.
+    """
     global _client, _narrator_client, _narrator_clients_by_tier, _clients_by_provider_model
+
+    seen_ids: set[int] = set()
+    for client in (
+        _client,
+        _narrator_client,
+        *_narrator_clients_by_tier.values(),
+        *_clients_by_provider_model.values(),
+    ):
+        if client is None or id(client) in seen_ids:
+            continue
+        seen_ids.add(id(client))
+        close = getattr(client, "close", None)
+        if close is None:
+            continue
+        try:
+            close()
+        except Exception as e:
+            logger.warning(
+                "llm_client_close_failed",
+                client=type(client).__name__,
+                error=str(e),
+                exc_info=True,
+            )
+
     _client = None
     _narrator_client = None
     _narrator_clients_by_tier = {}
