@@ -52,6 +52,9 @@ You will be given:
 - The narrator's prose for this turn (what was actually written)
 - The proposed new NPC: name + description from the add_npc call
 - A slice of the current registry (recently-active entities only)
+- Sometimes: the scene layer's identity merges — an alias map of entities
+  whose generic label and revealed proper name were already CONFIRMED to
+  be the same person
 
 Decide ONE of:
 - **rewrite**: HIGH CONFIDENCE this is an existing entity. The narrator just
@@ -66,6 +69,10 @@ How to decide:
   with grey wool clothing) → rewrite.
 - Adjective-shifted name on the same character ("Old Bram" when the
   registry has "Bram" who was last seen 1 turn ago) → rewrite.
+- The proposed name appears in the scene-layer identity merges as a name
+  or alias of an existing entity → rewrite to that entity (its
+  ``world_npc_id`` is the target_id). Those merges are authoritative: a
+  generic label and a proper name listed together ARE the same person.
 - Two distinct characters that happen to share a label ("the merchant"
   could be different merchants in different scenes) → accept.
 - New scene, no overlap with registry, no recent connection → accept.
@@ -149,6 +156,7 @@ class EntityDedupJudge:
         existing_npcs: list,
         current_turn: int = 0,
         recency_window: int = 15,
+        scene_alias_map: Optional[list[dict]] = None,
     ) -> DedupDecision:
         """Decide whether ``add_npc`` should be rewritten to ``ref_entity``.
 
@@ -160,6 +168,12 @@ class EntityDedupJudge:
                 ``world_state.npcs.values()`` or a pre-filtered slice)
             current_turn: WorldState.turn — used for recency filtering
             recency_window: how many turns back to include in registry slice
+            scene_alias_map: scene-registry identity merges, each
+                ``{"name": ..., "aliases": [...], "world_npc_id": ...}`` —
+                authoritative evidence that a generic label and a proper
+                name are the same person (the cross-store naming-promotion
+                seam; without it the judge sees only raw roster names and
+                accepts the freshly-revealed proper name as a new NPC)
         """
         if not existing_npcs:
             # Nothing to dedup against — fast path
@@ -168,6 +182,14 @@ class EntityDedupJudge:
         registry_block = _format_registry_slice(
             list(existing_npcs), current_turn, recency_window
         )
+
+        alias_section = ""
+        if scene_alias_map:
+            alias_section = (
+                "\n## Scene-layer identity merges (authoritative alias map)\n"
+                "Each entry's name and aliases are CONFIRMED to be the same person:\n"
+                f"{json.dumps(scene_alias_map, indent=2)}\n"
+            )
 
         user_prompt = f"""## Narrator's prose this turn
 {narrator_prose[:1500]}
@@ -178,7 +200,7 @@ class EntityDedupJudge:
 
 ## Current registry (recency-windowed slice)
 {registry_block}
-
+{alias_section}
 Decide. Output one JSON object."""
 
         try:

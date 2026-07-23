@@ -81,6 +81,7 @@ _GENERIC_NPC_TERMS = {
     "observer",
     "officer",
     "old",
+    "older",
     "patron",
     "priest",
     "priestess",
@@ -104,6 +105,7 @@ _GENERIC_NPC_TERMS = {
     "woman",
     "worker",
     "young",
+    "younger",
 }
 
 

@@ -3795,7 +3795,9 @@ Write your narration directly."""
             rejections = governance_rejections + await WorldStateStore(
                 world_state
             ).apply_delta(
-                delta, narrator_prose=narrative
+                delta,
+                narrator_prose=narrative,
+                scene_registry=self._scene_registry,
             )
             self._last_state_rejections = list(rejections)
 
@@ -4043,7 +4045,9 @@ Write your narration directly."""
             # and are not). Idempotency keys are indexed by tool-call
             # position, so retry safety survives the rewrite.
             if world_store is not None:
-                effect = await world_store.dedup_effect(effect, narrator_prose)
+                effect = await world_store.dedup_effect(
+                    effect, narrator_prose, scene_registry=self._scene_registry,
+                )
 
             # Validate
             validation = self._effect_validator.validate(effect)
