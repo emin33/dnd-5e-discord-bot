@@ -6,14 +6,18 @@ Usage:
     python test_harness.py --auto scenario1   # Run a predefined scenario
     python test_harness.py --action "I attack the goblin"  # Single action
 
-Connects to the real database, real Ollama, real memory system.
-Only thing skipped is Discord message transport.
+Uses the real orchestration and memory stack with run-unique temporary SQLite
+and Chroma storage. Only Discord message transport is skipped.
 """
 
 import asyncio
+import gc
 import json
+import re
+import shutil
 import sys
 import os
+import tempfile
 import time
 from pathlib import Path
 from typing import Optional
@@ -32,7 +36,7 @@ import uuid
 from dnd_bot.config import get_settings, get_profile
 from dnd_bot.game.session import get_session_manager, GameSessionManager
 from dnd_bot.data.repositories import get_character_repo, get_campaign_repo
-from dnd_bot.data.database import get_database
+from dnd_bot.data.database import close_database, get_database
 from dnd_bot.models.character import Character, HitPoints, HitDice, DeathSaves, SpellSlots, Skill
 from dnd_bot.models.common import AbilityScore
 from dnd_bot.models.character import AbilityScores
@@ -122,6 +126,17 @@ class Issue:
     context: dict = field(default_factory=dict)
 
 
+_ATTACK_ACTION_RE = re.compile(
+    r"\b(?:attack|strike|hit|stab|slash|shoot|fight|kill)\b",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_attack_action(action: str) -> bool:
+    """Return whether an action contains a standalone attack verb."""
+    return bool(_ATTACK_ACTION_RE.search(action))
+
+
 def detect_issues(
     action: str,
     response: DMResponse,
@@ -132,7 +147,6 @@ def detect_issues(
 
     # Check for CJK characters in narration
     if response.narrative:
-        import re
         cjk = re.findall(r'[\u4e00-\u9fff]+', response.narrative)
         if cjk:
             issues.append(Issue(
@@ -184,8 +198,7 @@ def detect_issues(
             ))
 
     # Check for attack actions that didn't trigger combat
-    attack_words = ["attack", "strike", "hit", "stab", "slash", "shoot", "fight", "kill"]
-    if any(w in action.lower() for w in attack_words):
+    if _looks_like_attack_action(action):
         if not response.combat_triggered and not (response.mechanical_result and response.mechanical_result.get("action_type") == "attack"):
             issues.append(Issue(
                 severity="ERROR",
@@ -228,7 +241,17 @@ def print_issues(issues: list[Issue]):
 class TestSession:
     """Manages a test game session with fresh disposable test data."""
 
-    def __init__(self):
+    COMBAT_POLICIES = {"simulate_victory", "fail"}
+
+    def __init__(
+        self,
+        combat_policy: str = "simulate_victory",
+        world_setting: Optional[str] = None,
+        isolated_storage: bool = True,
+    ):
+        if combat_policy not in self.COMBAT_POLICIES:
+            choices = ", ".join(sorted(self.COMBAT_POLICIES))
+            raise ValueError(f"Unknown combat policy '{combat_policy}'; choose {choices}")
         self.manager: Optional[GameSessionManager] = None
         self.channel_id = 999999  # Fake channel
         self.guild_id = 999999    # Fake guild
@@ -240,9 +263,26 @@ class TestSession:
         self.all_issues: list[Issue] = []
         self.action_log: list[dict] = []
         self._owns_data = False  # True if we created the campaign/character
+        self.combat_policy = combat_policy
+        self.world_setting = world_setting
+        self.combat_interventions: list[dict] = []
+        self.continuity_interventions: list[dict] = []
+        self.last_combat_intervention: Optional[dict] = None
+        self.isolated_storage = isolated_storage
+        self.storage_root: Optional[Path] = None
+        self._storage_temp = None
+        self._original_storage_paths: Optional[tuple[str, str]] = None
+        self._cleaned_up = False
 
     async def setup(self, campaign_id: Optional[str] = None, character_id: Optional[str] = None):
         """Initialize the test session with fresh test data."""
+        if self.isolated_storage:
+            if campaign_id or character_id:
+                raise ValueError(
+                    "Existing campaign/character IDs require isolated_storage=False"
+                )
+            await self._configure_isolated_storage()
+
         await get_database()
         self.manager = get_session_manager()
 
@@ -275,6 +315,20 @@ class TestSession:
         )
         print_section("SESSION", f"Started: {session.id}")
 
+        # The Discord campaign flow puts its setting into the opening scene,
+        # but this transport-free harness does not generate that opening. Seed
+        # the same always-on memory block so scenario-specific test campaigns
+        # reach the production narrator context instead of silently falling
+        # back to CoreMemory's generic fantasy world.
+        setting = self.world_setting
+        if not setting:
+            campaign = await camp_repo.get_by_id(self.campaign_id)
+            setting = campaign.world_setting if campaign else None
+        if setting:
+            from dnd_bot.memory import get_memory_manager
+            memory = await get_memory_manager(self.campaign_id)
+            memory.set_world_setting(setting)
+
         # Join player
         await self.manager.join_session(
             channel_id=self.channel_id,
@@ -285,6 +339,26 @@ class TestSession:
         print_section("PLAYER", f"Joined as {self.character.name}")
         return True
 
+    async def _configure_isolated_storage(self) -> None:
+        """Point SQLite and Chroma at a run-unique temporary namespace."""
+        if self._storage_temp is not None:
+            return
+
+        await close_database()
+        from dnd_bot.memory import reset_vector_store
+        reset_vector_store()
+
+        self._storage_temp = tempfile.TemporaryDirectory(prefix="dnd-longform-")
+        self.storage_root = Path(self._storage_temp.name).resolve()
+        settings = get_settings()
+        self._original_storage_paths = (
+            settings.database_path,
+            settings.chroma_persist_path,
+        )
+        settings.database_path = str(self.storage_root / "dnd_bot.db")
+        settings.chroma_persist_path = str(self.storage_root / "chroma")
+        print_section("STORAGE", f"isolated: {self.storage_root}", Colors.DIM)
+
     async def _create_test_data(self, camp_repo, char_repo) -> tuple:
         """Create a fresh campaign and character for testing."""
         # Create campaign
@@ -294,7 +368,10 @@ class TestSession:
             name="test_harness",
             description="Automated test session - safe to delete",
             dm_user_id=self.user_id,
-            world_setting="A bustling medieval city with taverns, markets, dark alleys, and a looming threat from goblins in the nearby forest.",
+            world_setting=self.world_setting or (
+                "A bustling medieval city with taverns, markets, dark alleys, "
+                "and a looming threat from goblins in the nearby forest."
+            ),
         )
         await camp_repo.create(campaign)
 
@@ -340,6 +417,7 @@ class TestSession:
     async def send_action(self, action: str) -> Optional[DMResponse]:
         """Send a player action and get the response."""
         self.turn_number += 1
+        self.last_combat_intervention = None
         print(f"\n{Colors.BOLD}{'-'*60}{Colors.RESET}")
         print(f"{Colors.BOLD}  Turn {self.turn_number}: {Colors.CYAN}\"{action}\"{Colors.RESET}")
         print(f"{Colors.BOLD}{'-'*60}{Colors.RESET}")
@@ -411,13 +489,18 @@ class TestSession:
             # Auto-resolve combat for automated tests — real combat uses
             # Discord buttons/panels that the LLM player can't interact with.
             if response.combat_triggered:
-                game_session = self.manager.get_session(self.channel_id)
-                if game_session:
-                    # Route through the mode machine's pop (Step 3/4): the
-                    # hand-rolled state/phase writes bypassed the
-                    # single-writer store and never cleared the session's
-                    # combat_manager reference.
-                    game_session.exit_combat_mode()
+                self.last_combat_intervention = await self._resolve_test_combat()
+                self.combat_interventions.append(self.last_combat_intervention)
+
+            # A narrative soak is not a death-save simulator. Noncombat tool
+            # damage can also reduce the synthetic player to 0 HP and make PGI
+            # block every remaining creative/memory turn. Under the same
+            # simulate_victory policy, restore agency after recording the
+            # consequence so the test can continue stressing the intended
+            # systems. The fail policy remains untouched and exposes the stop.
+            continuity_intervention = await self._restore_test_player_agency()
+            if continuity_intervention:
+                self.continuity_interventions.append(continuity_intervention)
 
             self.action_log.append({
                 "turn": self.turn_number,
@@ -425,6 +508,8 @@ class TestSession:
                 "narrative_len": len(response.narrative) if response.narrative else 0,
                 "mechanics": response.mechanical_result,
                 "combat": response.combat_triggered,
+                "combat_intervention": self.last_combat_intervention,
+                "continuity_intervention": continuity_intervention,
                 "memory": memory_state,
                 "issues": [{"severity": i.severity, "category": i.category, "desc": i.description} for i in issues],
                 "elapsed": elapsed,
@@ -441,6 +526,86 @@ class TestSession:
         self._save_log()
 
         return response
+
+    async def _restore_test_player_agency(self) -> Optional[dict]:
+        """Heal a 0-HP synthetic player so a longform soak can keep running."""
+        if self.combat_policy != "simulate_victory" or self.manager is None:
+            return None
+        game_session = self.manager.get_session(self.channel_id)
+        if game_session is None:
+            return None
+        character = game_session.get_player_character(self.user_id)
+        if character is None or character.hp.current > 0:
+            return None
+
+        hp_before = character.hp.current
+        character.hp.current = character.hp.maximum
+        character.hp.temporary = 0
+        character.death_saves.reset()
+        self.character = character
+
+        repo = await get_character_repo()
+        await repo.update_hp(character.id, character.hp.current, character.hp.temporary)
+        await repo.update_death_saves(
+            character.id,
+            character.death_saves.successes,
+            character.death_saves.failures,
+        )
+
+        intervention = {
+            "turn": self.turn_number,
+            "policy": self.combat_policy,
+            "outcome": "player_agency_restored",
+            "reason": "synthetic player reached 0 HP during narrative soak",
+            "hp_before": hp_before,
+            "hp_after": character.hp.current,
+        }
+        print_section(
+            "CONTINUITY",
+            f"restored synthetic player from {hp_before} to {character.hp.current} HP",
+            Colors.YELLOW,
+        )
+        return intervention
+
+    async def _resolve_test_combat(self) -> dict:
+        """Apply the harness combat policy without exercising combat UI.
+
+        Both policies use the production teardown owner. ``simulate_victory``
+        lets a narrative/memory scenario continue; ``fail`` also records a
+        hard issue for suites that prohibit any combat trigger.
+        """
+        teardown_complete = await self.manager.end_combat(self.channel_id)
+        intervention = {
+            "turn": self.turn_number,
+            "policy": self.combat_policy,
+            "outcome": (
+                "player_victory"
+                if self.combat_policy == "simulate_victory"
+                else "failed"
+            ),
+            "teardown_complete": teardown_complete,
+        }
+
+        if self.combat_policy == "fail" or not teardown_complete:
+            description = (
+                "Combat triggered while combat_policy=fail"
+                if self.combat_policy == "fail"
+                else "Combat triggered but canonical teardown found no encounter"
+            )
+            self.all_issues.append(Issue(
+                severity="ERROR",
+                category="combat_policy",
+                description=description,
+                context=intervention,
+            ))
+
+        print_section(
+            "COMBAT",
+            f"policy={self.combat_policy}, outcome={intervention['outcome']}, "
+            f"teardown={'ok' if teardown_complete else 'missing'}",
+            Colors.YELLOW,
+        )
+        return intervention
 
     def _get_memory_diagnostics(self) -> dict:
         """Get memory subsystem state for diagnostics."""
@@ -487,29 +652,46 @@ class TestSession:
 
     async def cleanup(self):
         """End session, print summary, and delete test data."""
+        if self._cleaned_up:
+            return
+        self._cleaned_up = True
+
         if self.manager:
             try:
                 await self.manager.end_session(self.channel_id)
-            except Exception:
-                pass  # DB constraint on 'ended' state - cleanup handles deletion below
+            except Exception as e:
+                print_section("CLEANUP", f"Session end warning: {e}", Colors.YELLOW)
 
         # Delete test data if we created it
         if self._owns_data and self.campaign_id:
             try:
                 db = await get_database()
-                # Delete in order: inventory → character → sessions → campaign
-                if self.character:
-                    await db.execute("DELETE FROM character_inventory WHERE character_id = ?", (self.character.id,))
-                    await db.execute("DELETE FROM character_spell WHERE character_id = ?", (self.character.id,))
-                    await db.execute("DELETE FROM character_spell_slots WHERE character_id = ?", (self.character.id,))
-                    await db.execute("DELETE FROM character_skill_proficiency WHERE character_id = ?", (self.character.id,))
-                    await db.execute("DELETE FROM character_currency WHERE character_id = ?", (self.character.id,))
-                    await db.execute("DELETE FROM character_condition WHERE character_id = ?", (self.character.id,))
-                    await db.execute("DELETE FROM character WHERE id = ?", (self.character.id,))
-                await db.execute("DELETE FROM game_session WHERE campaign_id = ?", (self.campaign_id,))
+                # Campaign is the ownership root. Foreign-key cascades remove
+                # sessions, characters, memory, and knowledge-graph rows.
                 await db.execute("DELETE FROM campaign WHERE id = ?", (self.campaign_id,))
                 await db.commit()
-                print_section("CLEANUP", "Test data deleted", Colors.DIM)
+
+                residue_queries = {
+                    "campaign": "SELECT COUNT(*) FROM campaign WHERE id = ?",
+                    "sessions": "SELECT COUNT(*) FROM game_session WHERE campaign_id = ?",
+                    "characters": "SELECT COUNT(*) FROM character WHERE campaign_id = ?",
+                    "memory": "SELECT COUNT(*) FROM campaign_memory WHERE campaign_id = ?",
+                    "kg_nodes": "SELECT COUNT(*) FROM kg_node WHERE campaign_id = ?",
+                    "kg_edges": "SELECT COUNT(*) FROM kg_edge WHERE campaign_id = ?",
+                }
+                residue = {}
+                for label, query in residue_queries.items():
+                    row = await db.fetch_one(query, (self.campaign_id,))
+                    count = int(row[0]) if row else 0
+                    if count:
+                        residue[label] = count
+                if residue:
+                    raise RuntimeError(f"SQLite cleanup residue: {residue}")
+
+                from dnd_bot.memory import get_vector_store
+                if not get_vector_store().delete_campaign(self.campaign_id):
+                    raise RuntimeError("Chroma campaign collection cleanup failed")
+                print_section("CLEANUP", "SQLite and vector data deleted", Colors.DIM)
             except Exception as e:
                 print_section("CLEANUP", f"Warning: {e}", Colors.YELLOW)
 
@@ -552,6 +734,55 @@ class TestSession:
         with open(log_file, "w") as f:
             json.dump(self.action_log, f, indent=2, default=str)
         print(f"\n  Log saved: {log_file}")
+
+        # Release process caches before removing the run-unique namespace.
+        if self.campaign_id:
+            from dnd_bot.memory import discard_memory_manager
+            discard_memory_manager(self.campaign_id)
+        await close_database()
+
+        if self._storage_temp is not None:
+            from dnd_bot.memory import reset_vector_store
+            reset_vector_store()
+            if self._original_storage_paths is not None:
+                settings = get_settings()
+                settings.database_path, settings.chroma_persist_path = (
+                    self._original_storage_paths
+                )
+            try:
+                self._storage_temp.cleanup()
+            except Exception as e:
+                # Chroma's embedded SQLite handle can finish releasing a beat
+                # after system.stop() on Windows. Force collection and retry
+                # only this run-owned temp namespace before reporting residue.
+                storage_error = e
+                storage_root = self.storage_root
+                if storage_root is not None:
+                    temp_root = Path(tempfile.gettempdir()).resolve()
+                    resolved = storage_root.resolve()
+                    is_owned_temp = (
+                        resolved.parent == temp_root
+                        and resolved.name.startswith("dnd-longform-")
+                    )
+                    if is_owned_temp:
+                        for delay in (0.0, 0.05, 0.2):
+                            gc.collect()
+                            if delay:
+                                await asyncio.sleep(delay)
+                            try:
+                                if resolved.exists():
+                                    shutil.rmtree(resolved)
+                                storage_error = None
+                                break
+                            except Exception as retry_error:
+                                storage_error = retry_error
+                if storage_error is not None:
+                    print_section(
+                        "CLEANUP",
+                        f"Temporary storage warning: {storage_error}",
+                        Colors.YELLOW,
+                    )
+            self._storage_temp = None
 
 
 # -------------------- Predefined Scenarios --------------------
@@ -715,12 +946,12 @@ async def main():
     settings = get_settings()
     profile = get_profile()
     print_section("PROFILE", f"{profile.name}: narrator={profile.narrator.provider}/{profile.narrator.model}, brain={profile.brain.provider}/{profile.brain.model}")
-    print_section("DB", settings.database_path)
 
     session = TestSession()
     success = await session.setup()
     if not success:
         return
+    print_section("DB", str(settings.db_path))
 
     if args.auto:
         await run_scenario(session, args.auto)

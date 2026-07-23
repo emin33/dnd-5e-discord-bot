@@ -8,6 +8,7 @@ no narrator tokens spent.
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
+import re
 
 import structlog
 
@@ -380,6 +381,7 @@ async def validate_action(
     resources_consumed: Optional[list[dict]] = None,
     item_name: Optional[str] = None,
     cost_gold: float = 0,
+    scene_item_names: Optional[list[str]] = None,
 ) -> ValidationResult:
     """Run all applicable PGI validators for an action.
 
@@ -413,13 +415,27 @@ async def validate_action(
 
     # ── Action-specific validators ──
 
+    def _is_scene_item(name: str) -> bool:
+        def _key(value: str) -> str:
+            return "-".join(re.findall(r"[a-z0-9]+", (value or "").casefold()))
+
+        target = _key(name)
+        return bool(target) and any(
+            target == _key(candidate) for candidate in (scene_item_names or [])
+        )
+
     if action_type == "cast_spell":
         result.failures.extend(validate_spell_cast(
             character=character,
             action_text=action_text,
         ))
 
-    elif action_type == "inventory" and item_name and items is not None:
+    elif (
+        action_type == "inventory"
+        and item_name
+        and items is not None
+        and not _is_scene_item(item_name)
+    ):
         result.failures.extend(validate_item_exists(items, item_name))
 
     elif action_type == "purchase" and currency is not None and cost_gold > 0:
@@ -438,6 +454,13 @@ async def validate_action(
             # Skip spell slot references (handled by P6 spell validation)
             if "spell slot" in r_item.lower() or "spell_slot" in r_item.lower():
                 logger.debug("pgi_skip_spell_slot_resource", item=r_item)
+                continue
+            if _is_scene_item(r_item):
+                # Triage can label a manipulated/destroyed scene object as a
+                # consumed resource. It is not required to exist in the
+                # player's inventory; the narrator effect pipeline owns the
+                # scene mutation (remove_entity/update_entity).
+                logger.debug("pgi_skip_scene_resource", item=r_item)
                 continue
             result.failures.extend(validate_item_exists(items, r_item, r_qty))
 

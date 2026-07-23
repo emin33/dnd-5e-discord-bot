@@ -112,7 +112,7 @@ class InventoryRepository:
         """Update an inventory item."""
         db = await self._get_db()
 
-        await db.execute(
+        cursor = await db.execute(
             """
             UPDATE character_inventory
             SET quantity = ?, equipped = ?, attuned = ?, notes = ?
@@ -127,7 +127,7 @@ class InventoryRepository:
             ),
         )
         await db.commit()
-        return True
+        return cursor.rowcount > 0
 
     async def remove_item(self, item_id: str, quantity: int = 1) -> bool:
         """Remove an item or reduce its quantity."""
@@ -157,45 +157,45 @@ class InventoryRepository:
         """Equip an item."""
         db = await self._get_db()
 
-        await db.execute(
+        cursor = await db.execute(
             "UPDATE character_inventory SET equipped = 1 WHERE id = ?",
             (item_id,),
         )
         await db.commit()
-        return True
+        return cursor.rowcount > 0
 
     async def unequip_item(self, item_id: str) -> bool:
         """Unequip an item."""
         db = await self._get_db()
 
-        await db.execute(
+        cursor = await db.execute(
             "UPDATE character_inventory SET equipped = 0 WHERE id = ?",
             (item_id,),
         )
         await db.commit()
-        return True
+        return cursor.rowcount > 0
 
     async def attune_item(self, item_id: str) -> bool:
         """Attune to a magic item."""
         db = await self._get_db()
 
-        await db.execute(
+        cursor = await db.execute(
             "UPDATE character_inventory SET attuned = 1 WHERE id = ?",
             (item_id,),
         )
         await db.commit()
-        return True
+        return cursor.rowcount > 0
 
     async def unattune_item(self, item_id: str) -> bool:
         """End attunement to a magic item."""
         db = await self._get_db()
 
-        await db.execute(
+        cursor = await db.execute(
             "UPDATE character_inventory SET attuned = 0 WHERE id = ?",
             (item_id,),
         )
         await db.commit()
-        return True
+        return cursor.rowcount > 0
 
     async def get_attuned_count(self, character_id: str) -> int:
         """Get the number of attuned items (max 3 normally)."""

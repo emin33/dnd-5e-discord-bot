@@ -7,6 +7,7 @@ Tier 3: Vector similarity (fallback for fuzzy/descriptive references)
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 
 import structlog
@@ -18,6 +19,32 @@ if TYPE_CHECKING:
     from ...memory.vector_store import VectorStore
 
 logger = structlog.get_logger()
+
+
+# Semantic entity retrieval is a high-recall fallback, but a bare embedding
+# match is not enough authority to put an off-screen campaign entity into the
+# narrator prompt.  Require one distinctive lexical anchor from the entity's
+# name, aliases, or description.  This still supports references such as
+# "the scarred dwarf" while preventing generic phrases such as "the man" from
+# recalling every male NPC with a vaguely similar description.
+_GENERIC_ENTITY_WORDS = {
+    "a", "an", "and", "are", "as", "at", "be", "been", "being", "by",
+    "for", "from", "he", "her", "hers", "him", "his", "i", "in", "into",
+    "is", "it", "its", "item", "location", "male", "female", "man", "my",
+    "named", "npc", "object", "of", "old", "on", "or", "our", "person",
+    "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
+    "place", "she", "someone", "that", "the", "their", "them", "these",
+    "they", "this", "those", "to", "unknown", "was", "we", "were",
+    "with", "woman", "you", "young", "your",
+}
+
+
+def _distinctive_words(text: str) -> set[str]:
+    return {
+        word
+        for word in re.findall(r"[a-z0-9]+", (text or "").casefold())
+        if len(word) >= 3 and word not in _GENERIC_ENTITY_WORDS
+    }
 
 
 class EntityNameMatcher:
@@ -68,12 +95,15 @@ class EntityNameMatcher:
     def scene_seeds(self, world_state) -> list[str]:
         """Return node_ids for the full scene context.
 
-        Seeds ALL entity types present in the WorldState: location, NPCs,
-        quests, connected locations, and scene items. BFS from these seeds
-        traverses the graph web and pulls in related entities automatically
-        (e.g. quest → giver NPC → giver's location).
+        WorldState is a durable campaign record, not a scene-membership list:
+        it can retain important off-screen NPCs and historical connections.
+        Treating that catalog as presence caused old entities to enter every
+        narrator prompt and contaminate future narrative memories.
 
-        The max_entities cap in get_context_subgraph prevents over-injection.
+        Active quests and known map connections remain available through
+        structured state and explicit mention retrieval; they are not ambient
+        graph seeds. Scene items are cleared when the party moves, so they are
+        safe to treat as current presence.
         """
         seeds: list[str] = []
         seen: set[str] = set()
@@ -89,22 +119,10 @@ class EntityNameMatcher:
         if world_state.current_location:
             _try_add(slugify(world_state.current_location))
 
-        # All alive NPCs in the graph. NPCState.id IS the KG node_id
-        # (cross-layer identity anchor — see bridge._handle_new_npc).
-        # No slugify needed; pass the UUID through directly.
-        for npc_state in world_state.npcs.values():
-            if npc_state.alive:
-                _try_add(npc_state.id)
-
-        # Active quests
-        for quest_name, quest_state in world_state.quests.items():
-            if quest_state.status == "active":
-                _try_add(slugify(quest_name))
-
-        # Connected locations (exits) — lower priority but ensures
-        # the graph web stays reachable for navigation context
-        for conn in world_state.connected_locations:
-            _try_add(slugify(conn))
+        # NPCState.id is the KG identity anchor. Only NPCs whose canonical
+        # location equals the party's current location are scene members.
+        for npc_state in world_state.get_npcs_at_location():
+            _try_add(npc_state.id)
 
         # Scene items (objects present in current location)
         for item_id in world_state.scene_items:
@@ -136,11 +154,29 @@ class EntityNameMatcher:
                 query=text,
                 n_results=3,
             )
-            # Only return node_ids that actually exist in the graph
-            return [
-                r["node_id"] for r in results
-                if self._graph.has_node(r["node_id"])
-            ]
+            query_words = _distinctive_words(text)
+            grounded: list[str] = []
+            for result in results:
+                node_id = result["node_id"]
+                entity = self._graph.get_entity(node_id)
+                if entity is None or not self._graph.has_node(node_id):
+                    continue
+                # A name/alias token is a strong identity anchor. Descriptive
+                # prose is much noisier, so require two independent words
+                # there. A single accidental overlap (the production failure
+                # was the word "one") must not recall an off-screen entity.
+                identity_words = _distinctive_words(
+                    " ".join([entity.name, *entity.aliases])
+                )
+                description_words = _distinctive_words(
+                    entity.properties.get("description", "")
+                )
+                if (
+                    query_words.intersection(identity_words)
+                    or len(query_words.intersection(description_words)) >= 2
+                ):
+                    grounded.append(node_id)
+            return grounded
         except Exception as e:
             logger.warning("vector_match_failed", error=str(e), exc_info=True)
             return []

@@ -143,10 +143,34 @@ class KnowledgeGraph:
         await self._repo.upsert_node(entity)
 
     async def _apply_remove_edge(self, op: RemoveEdge) -> None:
-        if self._graph.has_edge(op.source_id, op.target_id):
-            self._graph.remove_edge(op.source_id, op.target_id)
+        if op.target_id:
+            if self._graph.has_edge(op.source_id, op.target_id):
+                edge = self._graph.get_edge_data(op.source_id, op.target_id) or {}
+                if edge.get("relationship") == op.relation_type.value:
+                    self._graph.remove_edge(op.source_id, op.target_id)
+            await self._repo.delete_edge(
+                self._campaign_id,
+                op.source_id,
+                op.target_id,
+                op.relation_type.value,
+            )
+            return
+
+        # Empty target is the bridge's explicit "remove every relationship of
+        # this type from this source" operation. Apply identical wildcard
+        # semantics to the in-memory and persisted projections.
+        matching_targets = [
+            target
+            for _, target, data in self._graph.out_edges(op.source_id, data=True)
+            if data.get("relationship") == op.relation_type.value
+        ]
+        self._graph.remove_edges_from(
+            (op.source_id, target) for target in matching_targets
+        )
         await self._repo.delete_edges_by_source(
-            self._campaign_id, op.source_id, op.relation_type.value,
+            self._campaign_id,
+            op.source_id,
+            op.relation_type.value,
         )
 
     async def _apply_remove_node(self, op: RemoveNode) -> None:
@@ -161,6 +185,18 @@ class KnowledgeGraph:
 
     def get_entity(self, node_id: str) -> Optional[Entity]:
         return self._entities.get(node_id)
+
+    def resolve_entity_reference(self, reference: str) -> Optional[Entity]:
+        """Resolve a unique graph entity by ID, display name, or alias.
+
+        Narrator tools naturally emit human-readable slugs such as
+        ``tomas-kell`` even when a state extractor assigned the canonical graph
+        node a UUID.  Resolution remains conservative: ambiguous names or
+        aliases abstain instead of guessing into durable state.
+        """
+        from ..identity import resolve_unique_identity
+
+        return resolve_unique_identity(reference, self._entities.values())
 
     def node_count(self) -> int:
         return self._graph.number_of_nodes()
@@ -248,12 +284,17 @@ class KnowledgeGraph:
         if not combined_nodes:
             return []
 
-        # Prioritize: seeds first, then by hop distance (approximated by degree)
-        seed_set = set(seed_ids)
-        ordered = sorted(
-            combined_nodes,
-            key=lambda n: (0 if n in seed_set else 1, n),
-        )
+        # Preserve caller priority. ``seed_ids`` is deliberately ordered as
+        # explicit text matches first, then current-scene entities. Turning it
+        # into a set and sorting lexicographically allowed ambient UUIDs to
+        # displace an explicitly named entity under ``max_entities``.
+        ordered_seeds: list[str] = []
+        seen_seeds: set[str] = set()
+        for seed_id in seed_ids:
+            if seed_id in combined_nodes and seed_id not in seen_seeds:
+                ordered_seeds.append(seed_id)
+                seen_seeds.add(seed_id)
+        ordered = ordered_seeds + sorted(combined_nodes - seen_seeds)
 
         # Cap at max_entities
         ordered = ordered[:max_entities]
@@ -283,6 +324,7 @@ class KnowledgeGraph:
                     relationships.append(f"{source_name} {rel_type} this")
 
             entry: dict[str, Any] = {
+                "id": entity.node_id,
                 "name": entity.name,
                 "type": entity.entity_type.value,
             }

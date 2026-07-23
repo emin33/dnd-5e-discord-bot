@@ -492,6 +492,32 @@ class TestValidateAction:
         assert result.has_hard_fail
 
     @pytest.mark.asyncio
+    async def test_scene_resource_does_not_require_player_inventory(self, mock_character):
+        result = await validate_action(
+            "roleplay",
+            mock_character,
+            "I watch the sealed reliquary detonate",
+            items=[],
+            resources_consumed=[{"item": "sealed reliquary", "quantity": 1}],
+            scene_item_names=["sealed-reliquary"],
+        )
+
+        assert result.passed
+
+    @pytest.mark.asyncio
+    async def test_scene_object_misclassified_as_inventory_is_not_blocked(self, mock_character):
+        result = await validate_action(
+            "inventory",
+            mock_character,
+            "I inspect the reliquary on the table",
+            items=[],
+            item_name="sealed reliquary",
+            scene_item_names=["sealed-reliquary"],
+        )
+
+        assert result.passed
+
+    @pytest.mark.asyncio
     async def test_p0_blocks_before_p6(self, healthy_wizard):
         """Dead wizard shouldn't also get spell validation errors."""
         healthy_wizard.hp.current = 0

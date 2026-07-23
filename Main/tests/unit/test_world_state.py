@@ -166,7 +166,7 @@ class TestStateDelta:
         assert len(rejections) == 1
         assert "Dead NPC" in rejections[0]
 
-    def test_revive_dead_npc(self):
+    def test_generic_delta_cannot_revive_dead_npc(self):
         ws = WorldState()
         npc = NPCState(name="Grimjaw", alive=False)
         ws.npcs[npc.id] = npc
@@ -174,8 +174,26 @@ class TestStateDelta:
             npc_updates=[NPCUpdate(name="Grimjaw", alive=True, disposition="neutral")]
         )
         rejections = ws.apply_delta(delta)
-        assert rejections == []
-        assert ws._find_npc("Grimjaw").alive is True
+        assert len(rejections) == 1
+        assert "authoritative transition" in rejections[0]
+        assert ws._find_npc("Grimjaw").alive is False
+
+    def test_authoritative_transition_can_revive_dead_npc(self):
+        ws = WorldState()
+        npc = NPCState(name="Grimjaw", alive=False)
+        ws.npcs[npc.id] = npc
+
+        revived = ws.revive_npc(
+            npc.id,
+            authoritative_reason="raise dead spell resolved",
+        )
+
+        assert revived is True
+        assert npc.alive is True
+        assert "raise dead spell resolved" in npc.notes
+        assert ws.recent_events == [
+            "Grimjaw was revived: raise dead spell resolved"
+        ]
 
     def test_remove_npc_clears_location(self):
         ws = WorldState()
@@ -321,6 +339,34 @@ class TestSceneRescopeOnLocationChange:
         assert ws.scene_items == {"Rusty Key": "an old iron key"}
         assert barkeep.id in ws.npcs
 
+    def test_qualified_same_location_does_not_drop_new_npc(self):
+        ws = WorldState(current_location="Ash Gate")
+        courier = NPCState(name="Sable Quill", location="Ash Gate")
+        ws.npcs[courier.id] = courier
+        ws.spawn_item("Letter", "a sealed message")
+
+        ws.apply_delta(StateDelta(location_change="the Ash Gate clearing"))
+
+        assert courier.id in ws.npcs
+        assert ws.scene_items == {"Letter": "a sealed message"}
+        assert ws.get_npcs_at_location() == [courier]
+
+    def test_tool_location_qualifier_does_not_drop_same_scene_npc(self):
+        from dnd_bot.game.world_store import WorldStateStore
+        from dnd_bot.llm.effects import EffectType, ProposedEffect
+
+        ws = WorldState(current_location="Ash Gate")
+        courier = NPCState(name="Sable Quill", location="Ash Gate")
+        ws.npcs[courier.id] = courier
+
+        WorldStateStore(ws).apply_effect(ProposedEffect(
+            effect_type=EffectType.CHANGE_LOCATION,
+            location_name="Ash Gate clearing",
+        ))
+
+        assert courier.id in ws.npcs
+        assert ws.current_location == "Ash Gate clearing"
+
     def test_first_location_set_does_not_rescope(self):
         ws = WorldState()  # scene establishment, not a move
         npc = NPCState(name="Barkeep")  # minted before any location was known
@@ -370,7 +416,7 @@ class TestWorldStateYAML:
         assert data["location"] == "tavern"
         assert "party" in data
 
-    def test_tiered_npc_detail(self):
+    def test_yaml_contains_current_scene_npcs_only(self):
         ws = WorldState(current_location="tavern")
         ws.npcs["Barkeep"] = NPCState(
             name="Barkeep", location="tavern", disposition="friendly",
@@ -391,19 +437,25 @@ class TestWorldStateYAML:
         assert "npcs_here" in data
         assert any(n["name"] == "Barkeep" for n in data["npcs_here"])
 
-        # King should be in key_npcs_elsewhere (important, not at current location).
-        # The format changed from one-line strings to dicts so paraphrase
-        # resolution against id+description+aliases works regardless of
-        # whether the entity is in the current scene.
-        assert "key_npcs_elsewhere" in data
-        assert any(
-            isinstance(entry, dict) and entry.get("name") == "King Aldric"
-            for entry in data["key_npcs_elsewhere"]
-        )
+        # Important entities remain durable in ``ws.npcs`` but do not become
+        # ambient narrator context while they are off scene.
+        assert "King Aldric" in {npc.name for npc in ws.npcs.values()}
+        assert "key_npcs_elsewhere" not in data
 
         # Random Guard should NOT appear in YAML at all
         yml_str = yml
+        assert "King Aldric" not in yml_str
         assert "Random Guard" not in yml_str
+
+    def test_yaml_omits_historical_connections_from_current_exits(self):
+        ws = WorldState(
+            current_location="tavern",
+            connected_locations=["old square", "distant harbor"],
+        )
+
+        data = yaml.safe_load(ws.to_yaml())
+
+        assert "exits" not in data
 
     def test_empty_state_yaml(self):
         ws = WorldState()
@@ -413,14 +465,44 @@ class TestWorldStateYAML:
         assert "npcs_here" not in data
         assert "party" not in data
 
-    def test_facts_and_events_in_yaml(self):
+    def test_durable_facts_are_not_ambient_but_recent_events_are(self):
         ws = WorldState()
         ws.established_facts = ["The bridge is destroyed"]
         ws.recent_events = ["Party arrived at the village"]
         yml = ws.to_yaml()
         data = yaml.safe_load(yml)
-        assert "facts" in data
+        assert "facts" not in data
+        assert ws.established_facts == ["The bridge is destroyed"]
         assert "recent_events" in data
+
+    def test_yaml_includes_only_facts_anchored_to_current_scene(self):
+        ws = WorldState(current_location="Copper Finch")
+        mara = NPCState(
+            name="Mara Venn",
+            location="Copper Finch",
+            important=True,
+        )
+        sera = NPCState(
+            name="Sera Vellian",
+            location="Tallow Market",
+            important=True,
+        )
+        ws.npcs[mara.id] = mara
+        ws.npcs[sera.id] = sera
+        anonymous = NPCState(name="the woman", location="Copper Finch")
+        ws.npcs[anonymous.id] = anonymous
+        ws.spawn_item("sealed-reliquary", "An iron box with a bronze pin")
+        ws.established_facts = [
+            "Mara Venn promised to accept the brass compass.",
+            "The sealed reliquary detonates when Kael says now.",
+            "Sera Vellian waits at her distant market cart.",
+            "The woman called Sera Vellian still has the old letter.",
+        ]
+
+        data = yaml.safe_load(ws.to_yaml())
+
+        assert data["facts"] == ws.established_facts[:2]
+        assert "Sera Vellian" not in ws.to_yaml()
 
     def test_flags_only_true_in_yaml(self):
         ws = WorldState()

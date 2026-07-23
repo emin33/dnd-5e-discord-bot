@@ -24,7 +24,7 @@ from ..models.npc import EntityType, Disposition, SceneEntity
 from .combat.manager import CombatManager, get_combat_by_key, clear_combat_by_key
 from .modes import GameMode, ModeMachine
 from .scene.registry import SceneEntityRegistry, get_scene_registry, clear_scene_registry
-from .world_state import WorldState
+from .world_state import NPCState, WorldState
 from .world_store import WorldStateStore
 
 logger = structlog.get_logger()
@@ -103,6 +103,10 @@ class GameSession:
 
     # Authoritative world state (narrator reads, Python writes)
     world_state: Optional[WorldState] = None
+
+    # Durable, non-scene continuity facts. Dead DB rows stay out of the live
+    # roster but remain available to narration governance across sessions.
+    campaign_dead_npcs: dict[str, NPCState] = field(default_factory=dict)
 
     # Knowledge graph (persistent entity relationships)
     knowledge_graph: Optional[Any] = None  # KnowledgeGraph, Optional to avoid circular import
@@ -398,9 +402,10 @@ class GameSessionManager:
         two rosters, both stamping the canonical NPCState UUID onto the
         SceneEntity so every cross-store join resolves by it:
 
-        - The durable DB roster (``get_alive_by_campaign``): each alive row
+        - The durable DB roster (``get_all_by_campaign``): each alive row
           registers a SceneEntity under its id (== the KG node id post
-          Stage C). A row the recovered WorldState knows is DEAD is skipped:
+          Stage C), while dead rows become non-scene continuity facts. A row
+          the recovered WorldState knows is DEAD is also skipped:
           WorldState is authoritative for the live session, and the DB row
           is just stale (death that never reached it before a crash) —
           registering it would resurrect the corpse.
@@ -430,13 +435,37 @@ class GameSessionManager:
         world = session.world_state
         try:
             npc_repo = await get_npc_repo()
-            campaign_npcs = await npc_repo.get_alive_by_campaign(campaign_id)
+            campaign_npcs = await npc_repo.get_all_by_campaign(campaign_id)
+            session.campaign_dead_npcs.clear()
             seen_ids: set[str] = set()
 
             # 1. Durable DB roster — registry only, under the row id.
             for npc in campaign_npcs:
+                if not npc.is_alive:
+                    kg_entity = None
+                    if session.knowledge_graph is not None and hasattr(
+                        session.knowledge_graph, "get_entity"
+                    ):
+                        kg_entity = session.knowledge_graph.get_entity(npc.id)
+                    disposition_value = (
+                        npc.base_disposition.value
+                        if isinstance(npc.base_disposition, Disposition)
+                        else "neutral"
+                    )
+                    session.campaign_dead_npcs[npc.id] = NPCState(
+                        id=npc.id,
+                        name=npc.name,
+                        location=npc.location or "",
+                        disposition=disposition_value,
+                        description=npc.description or "",
+                        alive=False,
+                        notes=npc.voice_notes or "",
+                        aliases=list(kg_entity.aliases) if kg_entity else [],
+                    )
+                    continue
                 ws_state = world.npcs.get(npc.id) if world else None
                 if ws_state is not None and not ws_state.alive:
+                    session.campaign_dead_npcs[npc.id] = ws_state
                     continue  # world says dead; don't resurrect the corpse
                 disposition = (
                     npc.base_disposition
@@ -457,7 +486,10 @@ class GameSessionManager:
             # 2. WorldState-only NPCs (recovery, F4) — registry only.
             if world is not None:
                 for npc_state in list(world.npcs.values()):
-                    if not npc_state.alive or npc_state.id in seen_ids:
+                    if not npc_state.alive:
+                        session.campaign_dead_npcs[npc_state.id] = npc_state
+                        continue
+                    if npc_state.id in seen_ids:
                         continue
                     scene_registry.register_entity(SceneEntity(
                         name=npc_state.name,
@@ -475,6 +507,7 @@ class GameSessionManager:
                     "npcs_loaded",
                     count=len(seen_ids),
                     db_count=len(campaign_npcs),
+                    dead_fact_count=len(session.campaign_dead_npcs),
                     campaign_id=campaign_id,
                 )
         except Exception as e:

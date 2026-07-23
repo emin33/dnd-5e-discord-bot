@@ -75,6 +75,15 @@ class TestRegistryRescope:
         assert registry.rescope_to_scene(world) == 0
         assert registry.get_by_id(kept.id) is kept
 
+    def test_qualified_same_location_keeps_npc(self, registry, world):
+        world.current_location = "the Cellar landing"
+        guard = NPCState(name="Cellar Guard", location="Cellar landing")
+        world.npcs[guard.id] = guard
+        kept = _entity(registry, "Cellar Guard", npc_id=guard.id)
+
+        assert registry.rescope_to_scene(world) == 0
+        assert registry.get_by_id(kept.id) is kept
+
     def test_dead_entity_kept_for_db_persistence(self, registry, world):
         # An unpersisted death must survive until sync_to_npc_repo (DF-4);
         # rescoping it away would resurrect the NPC next session.

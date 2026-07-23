@@ -444,7 +444,7 @@ class TestWorldStateYamlIdFirst:
         assert bron["last_seen_turn"] == 10
         assert "desc" in bron  # description present
 
-    def test_key_npcs_elsewhere_includes_id_aliases_last_seen(self):
+    def test_important_offscene_npc_is_durable_but_not_in_prompt_view(self):
         ws = WorldState(turn=10, current_location="tavern")
         ws.npcs["king-uuid"] = NPCState(
             id="king-uuid", name="King Aldric",
@@ -454,14 +454,9 @@ class TestWorldStateYamlIdFirst:
             last_seen_turn=7,
         )
 
-        data = yaml.safe_load(ws.to_yaml())
-        entries = data["key_npcs_elsewhere"]
-        king = next(e for e in entries if e["name"] == "King Aldric")
-
-        assert king["id"] == "king-uuid"
-        assert king["aliases"] == ["His Majesty"]
-        assert king["last_seen_turn"] == 7
-        assert king["location"] == "castle"
+        elsewhere = ws.get_important_npcs_elsewhere()
+        assert elsewhere == [ws.npcs["king-uuid"]]
+        assert "King Aldric" not in ws.to_yaml()
 
     def test_zero_last_seen_omitted(self):
         """``last_seen_turn=0`` (default for freshly minted entities at

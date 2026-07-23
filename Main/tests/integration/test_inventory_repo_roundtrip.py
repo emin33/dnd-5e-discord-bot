@@ -53,6 +53,15 @@ def repo(db: Database) -> InventoryRepository:
 
 
 @pytest.mark.asyncio
+async def test_equipment_mutations_report_missing_rows(repo: InventoryRepository):
+    """Repository booleans reflect whether SQLite actually found an item."""
+    assert await repo.equip_item("missing") is False
+    assert await repo.unequip_item("missing") is False
+    assert await repo.attune_item("missing") is False
+    assert await repo.unattune_item("missing") is False
+
+
+@pytest.mark.asyncio
 async def test_full_stack_transfer_moves_item(repo: InventoryRepository):
     """Whole-stack transfer should change character_id without splitting."""
     item = InventoryItem(

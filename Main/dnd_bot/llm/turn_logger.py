@@ -123,6 +123,15 @@ class TurnRecord:
         if parse_warnings:
             self.data["state_delta"]["parse_warnings"] = parse_warnings
 
+    def record_state_followup(self, signals: list[str], recovered: int,
+                               structural_errors: list[str]) -> None:
+        """Record the extractor-coordinated targeted tool recovery leg."""
+        self.data["state_followup"] = {
+            "signals": signals,
+            "recovered_effects": recovered,
+            "structural_errors": structural_errors,
+        }
+
     def record_effects(self, proposed: list[dict], executed: list[dict],
                         rejected: list[dict]) -> None:
         """Record proposed, executed, and rejected effects."""
@@ -166,6 +175,7 @@ class TurnRecord:
         text_match_seeds: list[str] | None = None,
         scene_seeds: list[str] | None = None,
         vector_match_seeds: list[str] | None = None,
+        catalog_entities: list[dict] | None = None,
     ) -> None:
         """Record knowledge graph activity for this turn.
 
@@ -209,6 +219,8 @@ class TurnRecord:
             record["scene_seeds"] = scene_seeds
         if vector_match_seeds is not None:
             record["vector_match_seeds"] = vector_match_seeds
+        if catalog_entities is not None:
+            record["catalog_entities"] = catalog_entities
         self.data["knowledge_graph"] = record
 
     def record_narrator_routing(

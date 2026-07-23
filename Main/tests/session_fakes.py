@@ -66,7 +66,12 @@ class FakeNpcRepo:
     async def get_alive_by_campaign(self, campaign_id: str):
         if self.raises:
             raise self.raises
-        return self.npcs
+        return [npc for npc in self.npcs if npc.is_alive]
+
+    async def get_all_by_campaign(self, campaign_id: str):
+        if self.raises:
+            raise self.raises
+        return list(self.npcs)
 
     async def get_by_id(self, npc_id: str):
         return next((n for n in self.npcs if n.id == npc_id), None)

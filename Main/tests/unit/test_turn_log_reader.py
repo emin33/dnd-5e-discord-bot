@@ -50,6 +50,9 @@ def synthetic_log(tmp_path):
                 "text_match_seeds": [],
                 "scene_seeds": [],
                 "vector_match_seeds": [],
+                "catalog_entities": [
+                    {"id": "bron", "name": "Bron", "type": "npc", "aliases": []},
+                ],
             },
             "effects": {
                 "proposed": [{"effect_type": "ref_entity"}],
@@ -103,6 +106,10 @@ def synthetic_log(tmp_path):
                 "text_match_seeds": ["bron"],
                 "scene_seeds": ["bron"],
                 "vector_match_seeds": [],
+                "catalog_entities": [
+                    {"id": "bron", "name": "Bron", "type": "npc", "aliases": []},
+                    {"id": "ancient-relic", "name": "ancient relic", "type": "item", "aliases": []},
+                ],
             },
             "effects": {
                 "proposed": [
@@ -166,6 +173,10 @@ def synthetic_log(tmp_path):
                 "text_match_seeds": ["bron", "ancient_relic"],
                 "scene_seeds": ["bron"],
                 "vector_match_seeds": [],
+                "catalog_entities": [
+                    {"id": "bron", "name": "Bron", "type": "npc", "aliases": []},
+                    {"id": "ancient-relic", "name": "ancient relic", "type": "item", "aliases": []},
+                ],
             },
             "effects": {
                 "proposed": [{"effect_type": "ref_entity"}, {"effect_type": "update_player"}],
@@ -296,6 +307,15 @@ class TestKGContextSnapshot:
         assert len(chunks) == 1
         assert chunks[0]["turn"] == 3  # the seed turn
 
+    def test_catalog_entities_are_available_without_context_injection(self, synthetic_log):
+        from dnd_bot.llm.turn_log_reader import TurnLogReader
+        session_id, log_dir = synthetic_log
+        log = TurnLogReader.load(session_id, log_dir=log_dir)
+
+        ctx = log.kg_context_for(turn=3)
+
+        assert any(e["name"] == "ancient relic" for e in ctx.catalog_entities)
+
     def test_kg_context_empty_for_turn_with_no_kg(self, synthetic_log):
         from dnd_bot.llm.turn_log_reader import TurnLogReader
         session_id, log_dir = synthetic_log
@@ -401,3 +421,20 @@ class TestSeedAndCallbackPattern:
 
         # 5. The effects log shows the update_entity that handed it over
         assert log.effects_at(turn=3).has_executed("update_entity")
+
+
+def test_narration_diagnostics_are_exposed():
+    from dnd_bot.llm.turn_log_reader import TurnLogReader
+
+    log = TurnLogReader("session", [{
+        "turn": 1,
+        "narration_diagnostics": {
+            "tool_followup_attempted": True,
+            "tool_repair_attempted": False,
+        },
+    }])
+
+    assert log.narration_diagnostics(1) == {
+        "tool_followup_attempted": True,
+        "tool_repair_attempted": False,
+    }

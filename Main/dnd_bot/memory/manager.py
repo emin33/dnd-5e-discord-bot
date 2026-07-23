@@ -669,14 +669,10 @@ class MemoryManager:
         parts.append(self.core.to_context_string())
         parts.append("")
 
-        # Pinned facts from compaction (typed, never re-summarized)
-        # NOTE (context budget): these facts ALSO reach the narrator via
-        # world_state_yaml — session.py syncs pinned_facts into
-        # WorldState.established_facts, which WorldState.to_yaml renders as
-        # "facts:". End-game prompts pay for them twice; deduping is a
-        # design decision (which surface owns facts?), not a cap — left
-        # as-is deliberately (Step-2 review).
-        if self.buffer.pinned_facts:
+        # Pinned facts remain durable for compaction and contradiction checks.
+        # Live turns retrieve relevant history through RAG/KG instead of
+        # broadcasting every old fact; empty-input diagnostic views show all.
+        if self.buffer.pinned_facts and not current_input:
             parts.append("<established_facts>")
             for fact in self.buffer.pinned_facts:
                 parts.append(f"- {fact}")
@@ -895,6 +891,11 @@ def peek_memory_manager(campaign_id: str) -> Optional[MemoryManager]:
     want to update a manager that is already live (sync session paths).
     """
     return _managers.get(campaign_id)
+
+
+def discard_memory_manager(campaign_id: str) -> None:
+    """Forget a cached manager after its campaign/storage is deleted."""
+    _managers.pop(campaign_id, None)
 
 
 async def save_memory_state(

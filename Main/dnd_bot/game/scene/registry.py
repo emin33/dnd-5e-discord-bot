@@ -13,6 +13,7 @@ from ...models.npc import (
 )
 from ...data.repositories.npc_repo import get_npc_repo
 from ..knowledge.models import slugify
+from ..identity import locations_equivalent
 
 if TYPE_CHECKING:
     from ..world_state import WorldState
@@ -228,7 +229,6 @@ class SceneEntityRegistry:
         Scene scope only: nothing here writes the DB or the KG. Returns
         the number of entities removed.
         """
-        loc = (world_state.current_location or "").lower()
         removed = 0
         for entity in self.get_all():
             if entity.status and entity.status.lower() == "dead":
@@ -250,7 +250,9 @@ class SceneEntityRegistry:
                 if (
                     npc_state is not None
                     and npc_state.location
-                    and npc_state.location.lower() == loc
+                    and locations_equivalent(
+                        npc_state.location, world_state.current_location
+                    )
                 ):
                     continue
             self.remove_entity(entity.id)

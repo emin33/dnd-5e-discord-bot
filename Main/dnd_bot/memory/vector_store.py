@@ -152,6 +152,40 @@ class VectorStore:
             )
             return False
 
+    def delete_campaign(self, campaign_id: str) -> bool:
+        """Delete the complete vector projection for a campaign.
+
+        SQLite owns campaign lifetime, but Chroma collections are separate and
+        do not participate in foreign-key cascades. Keeping this operation on
+        the vector abstraction gives harnesses and campaign-deletion flows an
+        idempotent way to remove that derived projection.
+        """
+        self._ensure_initialized()
+        if not self._client:
+            return True
+
+        collection_name = f"campaign_{campaign_id}"
+        try:
+            collection_names = {
+                collection if isinstance(collection, str) else collection.name
+                for collection in self._client.list_collections()
+            }
+            if collection_name not in collection_names:
+                return True
+            self._client.delete_collection(name=collection_name)
+            if self._collection is not None and self._collection.name == collection_name:
+                self._collection = None
+            logger.info("campaign_vectors_deleted", campaign_id=campaign_id)
+            return True
+        except Exception as e:
+            logger.error(
+                "campaign_vectors_delete_failed",
+                campaign_id=campaign_id,
+                error=str(e),
+                exc_info=True,
+            )
+            return False
+
     def search(
         self,
         campaign_id: str,
@@ -301,6 +335,7 @@ class VectorStore:
         campaign_id: str,
         current_situation: str,
         max_results: int = 3,
+        max_distance: float = 1.25,
     ) -> str:
         """
         Recall relevant memories for the current context.
@@ -311,7 +346,18 @@ class VectorStore:
             campaign_id=campaign_id,
             query=current_situation,
             n_results=max_results,
+            where={"type": {"$in": ["session", "event"]}},
         )
+
+        # A nearest neighbor is not necessarily relevant, especially in a
+        # small mixed collection. Permit the retrieval layer to abstain rather
+        # than injecting top-k unconditionally. Entity and narrative records
+        # have dedicated retrieval paths and are excluded above.
+        memories = [
+            memory for memory in memories
+            if memory.get("distance") is not None
+            and memory["distance"] <= max_distance
+        ]
 
         if not memories:
             return ""
@@ -485,6 +531,39 @@ class VectorStore:
         """No-op: PersistentClient auto-persists."""
         pass
 
+    def close(self) -> None:
+        """Stop this persistent Chroma system and release file handles.
+
+        Chroma 1.4 has no public client ``close`` method. Its shared system
+        cache otherwise retains the SQLite handle for the life of the Python
+        process, which prevents isolated test directories from being removed
+        on Windows. Use feature detection so older supported Chroma versions
+        continue to degrade safely.
+        """
+        client = self._client
+        if client is None:
+            self._initialized = False
+            return
+
+        try:
+            system = getattr(client, "_system", None)
+            if system is not None and hasattr(system, "stop"):
+                system.stop()
+
+            identifier = getattr(client, "_identifier", None)
+            if identifier:
+                try:
+                    from chromadb.api.client import SharedSystemClient
+                    SharedSystemClient._identifier_to_system.pop(identifier, None)
+                except (ImportError, AttributeError):
+                    pass
+        except Exception as e:
+            logger.warning("chromadb_close_failed", error=str(e), exc_info=True)
+        finally:
+            self._collection = None
+            self._client = None
+            self._initialized = False
+
 
 # Singleton instance
 _store: Optional[VectorStore] = None
@@ -496,3 +575,15 @@ def get_vector_store() -> VectorStore:
     if _store is None:
         _store = VectorStore()
     return _store
+
+
+def reset_vector_store() -> None:
+    """Drop the process singleton so a new storage namespace can be used.
+
+    Intended for isolated test lifecycles after all campaign memory managers
+    using the old instance have been discarded.
+    """
+    global _store
+    if _store is not None:
+        _store.close()
+    _store = None
