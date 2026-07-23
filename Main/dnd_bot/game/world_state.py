@@ -204,6 +204,9 @@ class WorldState(BaseModel):
     active_effects: list[str] = Field(default_factory=list)
     recent_events: list[str] = Field(default_factory=list)
     established_facts: list[str] = Field(default_factory=list)
+    # Facts a later fact made untrue — retired from prompts, kept for
+    # provenance. Entries: {"fact", "superseded_by", "turn"}.
+    superseded_facts: list[dict] = Field(default_factory=list)
     global_flags: dict[str, bool] = Field(default_factory=dict)
 
     # Max recent events/transfers to keep (ring buffer)
@@ -213,6 +216,18 @@ class WorldState(BaseModel):
     def increment_turn(self) -> None:
         """Advance the turn counter."""
         self.turn += 1
+
+    def retire_fact(self, fact: str, superseded_by: str) -> bool:
+        """Move an established fact to the superseded archive."""
+        if fact not in self.established_facts:
+            return False
+        self.established_facts.remove(fact)
+        self.superseded_facts.append({
+            "fact": fact,
+            "superseded_by": superseded_by,
+            "turn": self.turn,
+        })
+        return True
 
     def revive_npc(self, name_or_id: str, *, authoritative_reason: str) -> bool:
         """Perform an explicit, code-authorized dead-to-alive transition.

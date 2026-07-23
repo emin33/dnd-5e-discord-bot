@@ -409,3 +409,17 @@ raised to 2600 chars. Soak #3 re-grades 4.77 with the phantom flags gone;
 remaining flags are legitimate editorial nits. NARRATOR_MAX_TOKENS is NOT
 implicated — retract that follow-up. The wax severe-contradiction FAIL
 stands (full narrations were within excerpt limits).
+
+## 2026-07-23: fact supersession landed
+
+The wax contradiction (grader severe, run 20260723_003823 T22) traced to
+the append-only fact ledger: state changes appended new facts while the
+contradicted ones stayed live. Fix at the single-writer seam
+(`WorldStateStore.apply_delta` -> `game/fact_supersession.py`): anchor-word
+overlap gates candidates (recent-first, cap 8), the brain judge decides
+supersession (think=False, temperature 0), default keep-both on any
+uncertainty. Retired facts move to `WorldState.superseded_facts` with
+{fact, superseded_by, turn} provenance — history preserved, prompts stop
+seeing both sides of a contradiction. Live qwen3.5:9b calibration: wax
+state change retires, movement retires the stale location, birth-history
+correctly survives a new residence. 14 unit tests pin the seam.

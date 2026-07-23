@@ -141,7 +141,54 @@ class WorldStateStore:
             delta = await self._dedup_delta(
                 delta, narrator_prose, scene_registry=scene_registry
             )
+        if delta.new_facts and self._state.established_facts:
+            await self._supersede_conflicting_facts(delta)
         return self._state.apply_delta(delta)
+
+    async def _supersede_conflicting_facts(self, delta: StateDelta) -> None:
+        """Retire established facts a new fact makes untrue (fail-open).
+
+        Anchor-word overlap gates candidates; the brain judge decides;
+        anything uncertain keeps both facts. Retired facts move to
+        ``superseded_facts`` with provenance so the ledger stays honest
+        without feeding the narrator both sides of a contradiction.
+        """
+        from .fact_supersession import (
+            FactSupersessionJudge,
+            candidate_indices,
+        )
+
+        judge: Optional[FactSupersessionJudge] = None
+        for new_fact in delta.new_facts:
+            new_fact = (new_fact or "").strip()
+            if not new_fact or new_fact in self._state.established_facts:
+                continue
+            indices = candidate_indices(
+                new_fact, self._state.established_facts
+            )
+            if not indices:
+                continue
+            candidates = [
+                self._state.established_facts[index] for index in indices
+            ]
+            if judge is None:
+                try:
+                    judge = FactSupersessionJudge()
+                except Exception as e:
+                    logger.warning(
+                        "fact_supersession_judge_init_failed",
+                        error=str(e), exc_info=True,
+                    )
+                    return
+            retired = await judge.judge(new_fact, candidates)
+            for fact in retired:
+                if self._state.retire_fact(fact, superseded_by=new_fact):
+                    logger.info(
+                        "fact_superseded",
+                        retired=fact[:120],
+                        superseded_by=new_fact[:120],
+                        turn=self._state.turn,
+                    )
 
     # ── Scene-registry identity consult (cross-store naming promotion) ────
 
