@@ -221,6 +221,9 @@ class NarrationStrategy:
                     "content": obligations.primary_instruction(spec.action),
                 }
             )
+        freshness_hint = self._prose_freshness_hint(enhanced_context)
+        if freshness_hint:
+            messages.append({"role": "system", "content": freshness_hint})
         messages.append({"role": spec.prompt_role, "content": spec.prompt})
         if spec.enable_tools:
             self._append_tool_reminder(messages)
@@ -1672,6 +1675,36 @@ class NarrationStrategy:
         """Return only effects safe to hand to the live-state validator."""
         validator = EffectValidator()
         return [effect for effect in effects if validator.validate(effect).valid]
+
+    @staticmethod
+    def _prose_freshness_hint(context: BrainContext) -> str:
+        """One line telling the narrator how its recent replies opened.
+
+        Frequency/presence penalties act within a single generation and
+        cannot see across turns; the narrative grader consistently scores
+        prose_freshness lowest, with recycled openers ("Elara's lips" x6
+        in one soak) as the measured symptom. Listing the recent openings
+        is deterministic, ~40 tokens, and sits at the prompt tail so the
+        cached prefix is untouched.
+        """
+        history = context.message_history or context.recent_messages or []
+        openings: list[str] = []
+        for message in reversed(history):
+            if len(openings) >= 3:
+                break
+            if str(message.get("role") or "") != "assistant":
+                continue
+            words = re.findall(r"\S+", str(message.get("content") or ""))
+            if words:
+                openings.append(" ".join(words[:5]))
+        if len(openings) < 2:
+            return ""
+        listed = " / ".join(f'"{opening}…"' for opening in openings)
+        return (
+            f"Prose freshness: your recent replies opened with {listed}. "
+            "Open this reply with a different subject and sentence shape, "
+            "and avoid reusing imagery or stock phrases from recent turns."
+        )
 
     @staticmethod
     def _normalized_phrase(value: str) -> str:

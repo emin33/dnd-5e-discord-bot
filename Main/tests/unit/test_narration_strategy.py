@@ -1620,3 +1620,40 @@ async def test_streaming_is_buffered_when_immutable_rules_are_active():
     assert prose == "The rain falls."
     assert streamed == []
     assert client.calls[0]["method"] == "chat"
+
+
+class TestProseFreshnessHint:
+    def _history_context(self, history):
+        from dnd_bot.llm.brains.base import BrainContext
+
+        return BrainContext(message_history=history)
+
+    def test_lists_recent_assistant_openings(self):
+        from dnd_bot.llm.narration import NarrationStrategy
+
+        hint = NarrationStrategy._prose_freshness_hint(self._history_context([
+            {"role": "user", "content": "I open the door."},
+            {"role": "assistant",
+             "content": "Elara's lips part in a slow smile as she watches."},
+            {"role": "user", "content": "I ask about the map."},
+            {"role": "assistant",
+             "content": "Elara's fingers drum the table twice before she speaks."},
+        ]))
+        assert "Elara's fingers drum the table" in hint
+        assert "Elara's lips part in" in hint
+        assert "different subject" in hint
+
+    def test_fewer_than_two_narrations_no_hint(self):
+        from dnd_bot.llm.narration import NarrationStrategy
+
+        hint = NarrationStrategy._prose_freshness_hint(self._history_context([
+            {"role": "assistant", "content": "Only one reply so far."},
+        ]))
+        assert hint == ""
+
+    def test_empty_history_no_hint(self):
+        from dnd_bot.llm.narration import NarrationStrategy
+
+        assert NarrationStrategy._prose_freshness_hint(
+            self._history_context([])
+        ) == ""

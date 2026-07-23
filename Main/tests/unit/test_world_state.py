@@ -146,6 +146,45 @@ class TestStateDelta:
         assert found.notes == "Helped the party"
         assert found.location == "tavern"
 
+    def test_update_resolves_name_placed_in_id_field(self):
+        """Extractor sloppiness class (run 20260722_154704 T29-style): the
+        NAME lands in the id field. The NPCUpdate contract promises
+        id -> name -> alias resolution; the id value must get the same
+        name/alias/slug fallback instead of a hard miss."""
+        ws = WorldState()
+        npc = NPCState(name="Vex Harlow", disposition="neutral")
+        ws.npcs[npc.id] = npc
+        delta = StateDelta(
+            npc_updates=[NPCUpdate(id="Vex Harlow", disposition="friendly")]
+        )
+        rejections = ws.apply_delta(delta)
+        assert rejections == []
+        assert ws.npcs[npc.id].disposition == "friendly"
+
+    def test_update_resolves_slug_placed_in_id_field(self):
+        ws = WorldState()
+        npc = NPCState(name="Vex Harlow")
+        ws.npcs[npc.id] = npc
+        delta = StateDelta(
+            npc_updates=[NPCUpdate(id="vex-harlow", notes="slug dialect")]
+        )
+        rejections = ws.apply_delta(delta)
+        assert rejections == []
+        assert ws.npcs[npc.id].notes == "slug dialect"
+
+    def test_update_with_item_slug_in_id_field_still_rejected(self):
+        """A non-NPC referent ('small-pouch-of-grey-ash') keeps failing
+        closed — the fallback is exact NPC resolution, not a rescue."""
+        ws = WorldState()
+        npc = NPCState(name="Vex Harlow")
+        ws.npcs[npc.id] = npc
+        delta = StateDelta(
+            npc_updates=[NPCUpdate(id="small-pouch-of-grey-ash", notes="x")]
+        )
+        rejections = ws.apply_delta(delta)
+        assert len(rejections) == 1
+        assert "not found" in rejections[0]
+
     def test_reject_update_nonexistent_npc(self):
         ws = WorldState()
         delta = StateDelta(

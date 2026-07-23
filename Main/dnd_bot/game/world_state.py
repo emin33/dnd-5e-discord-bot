@@ -562,6 +562,14 @@ class WorldState(BaseModel):
             npc = self.npcs.get(npc_id)
             if npc:
                 return npc
+            # The extractor sometimes puts a NAME or slug in the id field
+            # ("id='Vex Harlow'"). The NPCUpdate contract promises
+            # id -> name -> aliases resolution; honor it for the id value
+            # too (exact name/alias/slug equality only — same precision bar
+            # as name resolution).
+            npc = self._find_npc(npc_id)
+            if npc:
+                return npc
         if name:
             return self._find_npc(name)
         return None
