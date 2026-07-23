@@ -32,7 +32,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 WINDOW_SIZE = 6
-NARRATION_EXCERPT_CHARS = 1400
+NARRATION_EXCERPT_CHARS = 2600
 DIMENSIONS = (
     "continuity",
     "contradiction_free",
@@ -228,13 +228,26 @@ def opening_bigrams(rows: list[TurnRow]) -> dict[str, int]:
     return dict(counts.most_common(8))
 
 
+def _excerpt(text: str, limit: int) -> str:
+    """Trim at a sentence boundary and SAY SO, so the judge never grades
+    the grader's own cutoff as a narration defect (first live run flagged
+    excerpt boundaries as 'DM ends mid-sentence')."""
+    if len(text) <= limit:
+        return text
+    cut = text[:limit]
+    boundary = max(cut.rfind(". "), cut.rfind('."'), cut.rfind("!\n"), cut.rfind(".\n"))
+    if boundary > limit // 2:
+        cut = cut[:boundary + 1]
+    return cut + " [EXCERPT TRUNCATED BY GRADER — do not grade the cutoff]"
+
+
 def _window_block(rows: list[TurnRow]) -> str:
     parts = []
     for row in rows:
         parts.append(
             f"### Turn {row.turn}\n"
-            f"PLAYER: {row.action[:400]}\n"
-            f"DM: {row.narration[:NARRATION_EXCERPT_CHARS]}"
+            f"PLAYER: {_excerpt(row.action, 400)}\n"
+            f"DM: {_excerpt(row.narration, NARRATION_EXCERPT_CHARS)}"
         )
     return "\n\n".join(parts)
 

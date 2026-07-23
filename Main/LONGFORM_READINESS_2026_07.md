@@ -397,3 +397,15 @@ GeminiClient migration note: think=False now maps to
 ThinkingConfig(thinking_budget=0) — 2.5 models think by default and a
 small-budget JSON call otherwise returns truncated output (found live by
 the grader's first run).
+
+### Correction (same day): "narrator truncation" was a grader artifact
+
+Root-caused via turn logs: the flagged turns' completion tokens were
+356/282/505 — nowhere near the 1500 ceiling — and the real narration tails
+end cleanly. The judge was grading the grader's own 1400-char excerpt
+boundary. Fixed: excerpts now cut at sentence boundaries and carry an
+explicit "[EXCERPT TRUNCATED BY GRADER]" marker; window excerpt budget
+raised to 2600 chars. Soak #3 re-grades 4.77 with the phantom flags gone;
+remaining flags are legitimate editorial nits. NARRATOR_MAX_TOKENS is NOT
+implicated — retract that follow-up. The wax severe-contradiction FAIL
+stands (full narrations were within excerpt limits).

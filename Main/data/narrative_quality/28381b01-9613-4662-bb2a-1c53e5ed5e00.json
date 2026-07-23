@@ -2,12 +2,12 @@
   "turn_log": "data\\turn_logs\\28381b01-9613-4662-bb2a-1c53e5ed5e00.jsonl",
   "judge_model": "gemini-2.5-flash",
   "verdict": "PASS",
-  "overall_average": 4.7,
+  "overall_average": 4.77,
   "dimension_means": {
-    "continuity": 4.86,
+    "continuity": 4.93,
     "contradiction_free": 4.86,
-    "npc_voice": 4.79,
-    "prose_freshness": 4.0,
+    "npc_voice": 4.93,
+    "prose_freshness": 4.14,
     "player_agency": 5.0
   },
   "gates": [
@@ -19,12 +19,12 @@
     {
       "name": "overall_average",
       "passed": true,
-      "detail": "avg=4.7 (gate >= 4.0)"
+      "detail": "avg=4.77 (gate >= 4.0)"
     },
     {
       "name": "no_dimension_below_minimum",
       "passed": true,
-      "detail": "means={'continuity': 4.86, 'contradiction_free': 4.86, 'npc_voice': 4.79, 'prose_freshness': 4.0, 'player_agency': 5.0} (gate >= 3.0)"
+      "detail": "means={'continuity': 4.93, 'contradiction_free': 4.86, 'npc_voice': 4.93, 'prose_freshness': 4.14, 'player_agency': 5.0} (gate >= 3.0)"
     },
     {
       "name": "zero_severe_contradictions",
@@ -55,23 +55,21 @@
         6
       ],
       "scores": {
-        "continuity": 4,
+        "continuity": 5,
         "contradiction_free": 4,
-        "npc_voice": 4,
+        "npc_voice": 5,
         "prose_freshness": 4,
         "player_agency": 5
       },
       "contradictions": [
         {
-          "turn": 1,
+          "turn": 5,
           "severity": "minor",
-          "detail": "The DM states 'The courier arrived with something. You saw them fall. But now\u2014nothing.' This contradicts the player's initial action, which was to check for items, implying the player did not necessarily see the courier fall with something specific, but rather saw them fall and is now investigating."
+          "detail": "The DM states the mask's paint is 'cracked and faded in equal measure' and 'the weave is old and worn,' implying it's been like that for a while. However, in Turn 4, the NPC states the mask is 'Painted to look like leather from three paces, but up close? Cheap. Made for show.' This implies a more recent, deliberate attempt at disguise, which would likely show fresher paint or less uniform wear if it was 'made for show' for this specific purpose. The description in Turn 5 makes it sound like a genuinely old, worn item, not a cheap, recently applied disguise."
         }
       ],
-      "flags": [
-        "T1: The DM's statement 'The courier arrived with something. You saw them fall. But now\u2014nothing.' presumes player knowledge not explicitly stated in the player's action, which was to investigate a collapsed courier, not one they necessarily saw fall with an item."
-      ],
-      "summary": "The player investigates a dead courier in Saint Orra's Wake, finding no immediate clues on the body but learning from a local woman that the courier was likely a fake. The woman, an unnamed local, provides details about the courier's 'wrong' hands, mask, and boots before retreating. The player discovers a recently re-laced boot, suggesting a hurried alteration."
+      "flags": [],
+      "summary": "The player investigates a dead courier in Saint Orra's Wake, finding no immediate clues on the body but attracting the attention of a local woman. The woman provides observations about the courier's 'wrong' hands, boots, and mask, suggesting he was not a real courier or was disguised. Further investigation reveals recently re-laced boots and a patch, indicating recent alterations."
     },
     {
       "turns": [
@@ -82,18 +80,12 @@
         "continuity": 5,
         "contradiction_free": 5,
         "npc_voice": 5,
-        "prose_freshness": 4,
+        "prose_freshness": 5,
         "player_agency": 5
       },
       "contradictions": [],
-      "flags": [
-        "T7: The DM's description of the knot as a 'quick-release variant' and 'the kind of knot a person ties when they expect to need to run again, fast' feels a bit too specific and conclusive for a player's initial examination, potentially over-interpreting the player's action and providing too much information without further investigation.",
-        "T8: The DM's narration of the market square, while evocative, includes 'the hiss of upward rain' and 'people who've learned to dodge sudden gravity shifts,' which introduces fantastical elements without prior context, potentially jarring for a player who might not expect such physics in the setting.",
-        "T9: The DM's description of the four copper coins 'clink[ing] against nothing\u2014just loose change in an empty purse' is an unnecessary and slightly negative detail about the player's inventory, which wasn't requested and doesn't advance the plot.",
-        "T10: The DM's line 'But you said the stitches were rough, uneven\u2014that's not a man working on his own gear' is a direct reference to the player's earlier observation, but it's phrased as if the DM is reminding the player of their own words, which can feel a bit meta or didactic.",
-        "T11: The description of the bell-tower as 'its iron bell\u6c89\u9ed8 in the damp air' uses a Chinese character (\u6c89\u9ed8) instead of an English word, which is a clear editorial error."
-      ],
-      "summary": "The player investigates the courier's boot, finding evidence of a hurried, blood-stained repair and a 'thief's knot.' They then question Tomas Vex, a tinker, who directs them to Old Corvin for maps and Hessa, a cobbler, for boot repairs. The player proceeds to Hessa's haberdashery, where they find Hessa working and inquire about boot repairs."
+      "flags": [],
+      "summary": "The player investigates the courier's boots, discovering a blood-stained patch and a quick-release knot, suggesting injury and an intent to flee. They then question Tomas Vex, a tinker, who directs them to Old Corvin for maps and Hessa, a cobbler, for boot repairs. The player proceeds to Hessa's haberdashery, where they find her working and inquire about boot repairs."
     },
     {
       "turns": [
@@ -109,10 +101,10 @@
       },
       "contradictions": [],
       "flags": [
-        "T16: The description of the city changing as the player walks is good, but the phrase 'upward-raining moisture' feels a little clunky and could be rephrased for better flow.",
-        "T17: 'No footprints in the dust\u2014the constant wind sees to that.' This is a minor nit, but 'dust' and 'constant wind' don't quite align. If there's constant wind, there might not be much dust to begin with, or it would be swept clean, making the 'no footprints' observation less impactful. Perhaps 'no undisturbed dust' or 'the wind keeps the flags swept clean' would be more precise."
+        "T16: The description of the city changing as the player walks is good, but the phrase \"upward-raining moisture\" is a bit clunky and could be rephrased for better flow.",
+        "T17: The description of the lantern's flame as a \"steady tongue of orange-gold\" is a nice image, but the phrase \"seems to ignore the damp breeze\" is a slight personification that feels a little out of place for the otherwise grounded description."
       ],
-      "summary": "The player questions Hessa, the cobbler, who confirms she repaired the courier's boot and provides crucial details: the boy was young, scared, paid with a Ragpicker token, had a claw-mark scar, and asked for a place to disappear. Hessa directs the player to Old Corvin's boarding house on the underbelly, near the West Chain anchor, and gives them the Ragpicker token. The player travels to Corvin's, identified by a unique brass lantern, and attempts to gain entry."
+      "summary": "The player questions Hessa, the cobbler, who confirms she patched the courier's boot and provides crucial details: the boy was young, scared, had a claw-mark scar, paid with a Ragpicker token, and asked for a place to disappear. Hessa directs the player to Old Corvin's boarding house on the underbelly, near the West Chain anchor, and gives them the Ragpicker token. The player travels to Corvin's, identified by a glassless brass lantern, and attempts to gain entry by ringing the crow's-head knocker once."
     },
     {
       "turns": [
@@ -128,10 +120,10 @@
       },
       "contradictions": [],
       "flags": [
-        "T20: The description of the hallway as 'barely wide enough for two men to pass' feels slightly at odds with the earlier description of Corvin 'stepping aside, leaving the doorway open' in T19, which implies a bit more space. It's a minor nitpick, but the spatial awareness could be tighter.",
-        "T23: The DM's narration for this turn is a direct copy-paste of the player's previous turn (T22) for the player's action. This is a technical error in the provided text, not a DM narration issue, but it's worth noting for clarity. Assuming the player's intent was to re-ask the same question or clarify, the DM's response is still appropriate."
+        "T20: The description of the hallway as 'barely wide enough for two men to pass' feels slightly at odds with the earlier description of Corvin stepping aside to leave the doorway open, implying more space. It's a minor nitpick, but the imagery could be more consistent.",
+        "T22: The DM repeats the player's exact dialogue from T23, which is a minor formatting issue rather than a narrative one, but it's worth noting."
       ],
-      "summary": "The player, Kael Windrunner, gains entry to Corvin's boarding house using Hessa's Ragpicker token. Corvin, a wary but knowledgeable man, initially denies knowing the courier but eventually reveals details about the Ragpickers' routes, the 'Threader' (Elara Voss), and the significance of the stolen map and ill-fitting boots. Kael receives a map of the Ragpicker routes and is directed to Elara Voss on Cinder Row."
+      "summary": "The player gains entry to Corvin's boarding house using Hessa's token. Corvin, a lean, gray-haired man, initially expresses skepticism but eventually reveals information about the Ragpickers' routes and identifies Elara Voss, the Threader, as the person who sets courier schedules. He provides a map and directions to Voss's location beneath the old bell tower on Cinder Row."
     },
     {
       "turns": [
@@ -147,10 +139,16 @@
       },
       "contradictions": [],
       "flags": [
-        "T26: The description of the bell tower's damage is a bit clunky: 'its upper third jagged and broken\u2014a clean shear, as if something had bitten the top off.' The 'clean shear' and 'bitten the top off' feel slightly at odds, or at least an awkward pairing of imagery.",
-        "T26: The sentence 'rusted in pla' is cut off at the end."
+        "T25: The phrase \"the motion carrying the weight of a man who's seen too many walk through that door and too few walk back through it with answers\" is a bit clunky and long-winded.",
+        "T25: \"The hallway swallows you again\" is a slightly overused trope.",
+        "T26: \"The narrow arteries of the West Chain's underbelly\" is a slightly mixed metaphor.",
+        "T26: \"A crooked spine of a street\" is a somewhat common descriptive phrase.",
+        "T27: \"The sound is wrong. Dead.\" is a bit blunt and could be more evocative.",
+        "T28: \"The door is exactly what it appears to be: a slab of old, blackened oak, hung in an iron frame, sealed from the inside.\" This sentence is a bit dry and could be more descriptive.",
+        "T29: \"The woman with the bucket hasn't moved. Her rag drips a slow, steady rhythm into the bucket\u2014plink, plink, plink\u2014as she watches you weigh your choice.\" The repetition of her watching and the rag dripping feels a little drawn out.",
+        "T30: \"The woman gives a short, sharp nod\u2014not friendly, not hostile. Just acknowledgment.\" This is a bit tell-don't-show; the previous turn already established her neutral demeanor."
       ],
-      "summary": "Kael leaves Corvin's boarding house with a cryptic message for Elara Voss and heads to Cinder Row. He finds the bell tower, attempts to use the bell, but is unsuccessful. A local woman points him to an alley, where he discovers a small, token-activated door at the back of the tower."
+      "summary": "The player leaves Corvin's boarding house with a cryptic message for the Threader and directions to Cinder Row. They locate the bell tower and attempt to use the specified knocking pattern on the front door, but receive no answer. A local woman directs them to an alley, where they find a hidden back entrance marked with the Threader's symbol, requiring a token."
     },
     {
       "turns": [
@@ -166,13 +164,10 @@
       },
       "contradictions": [],
       "flags": [
-        "T31: The description of the indentation being 'stubbornly obscure' and the DM stating 'You can't tell' feels a little too definitive, potentially shutting down further player investigation or creative solutions before the player has fully explored their options. While the player does then try the token, the DM's strong declaration of unknowability could be softened.",
-        "T31: The phrase 'Metal on metal. Something jamming somewhere in the dark behind the wood.' is a bit clunky and repetitive.",
-        "T32: 'The silence stretches. You wait. Nothing moves\u2014not the door, not the shadows, not the faint dust motes drifting in the alley's dim light.' This is a good beat, but the 'not the door, not the shadows, not the faint dust motes' feels a little like a list rather than evocative prose.",
-        "T34: 'The silence that follows is thick enough to cut.' This is a common idiom and feels a little uninspired here, especially after the previous turn's silence description.",
-        "T35: 'You duck through the low doorway, and the door swings shut behind you with a soft, final thud.' The 'soft, final thud' is a minor nit, but 'thud' usually implies a heavier, duller sound than 'soft' suggests. Perhaps 'click' or 'snick' for a softer, more final sound."
+        "T31: The description of the indentation as 'stubbornly obscure' and the DM's inability to tell if it's 'smooth-bottomed' or 'keyed to a specific relief' feels a little too much like the DM is also trying to figure out the puzzle, rather than describing what the player sees. It's a minor nit, but it slightly pulls back the curtain.",
+        "T34: The phrase 'no warmth in it, but no threat either' for a chuckle is a bit of an oxymoron. A chuckle usually implies some warmth or amusement, even if dry. It's a minor stylistic point."
       ],
-      "summary": "Kael attempts to open Elara Voss's door with Hessa's token, jamming it. Elara, a blind Threader, confronts him from within, then lets him in after he provides Corvin's passphrase. Kael explains his mission to find a vanished courier and a map, and Elara asks to examine the map by touch."
+      "summary": "The player attempts to use Hessa's token on the Threader's door, but it jams. The Threader, Elara Voss, a blind woman, speaks from within, demanding a passphrase. The player provides it, and Elara lets them in, confirming she was sent by Corvin. Inside her cluttered workshop, Elara asks for more specifics about the vanished courier and the map, which she cannot see but wants to feel."
     },
     {
       "turns": [
@@ -188,12 +183,12 @@
       },
       "contradictions": [],
       "flags": [
-        "T37: The description of Elara's fingers as 'rough as sandstone' feels a little clich\u00e9.",
-        "T38: 'though you can't tell what it is from the smell alone' is a slightly clunky phrase.",
-        "T41: 'He knew before you told him. Which means he either had someone watching the boy's body, or\u2014' The ellipsis here feels a little forced, as the DM immediately provides the 'or' clause. It doesn't quite land as a dramatic pause.",
-        "T42: 'not quite a smile, but close' is a bit of a stock phrase."
+        "T37: The description of Elara's fingers as 'rough as sandstone' is a strong image, but 'calloused' already conveys the texture. It's a minor redundancy.",
+        "T38: 'though you can't tell what it is from the smell alone' is a slightly clunky phrasing. 'though its scent doesn't reveal its nature' or similar might flow better.",
+        "T39: 'tasting the words' is a common idiom, but feels a little out of place for a blind character who relies on other senses. It's a minor nitpick, but worth noting.",
+        "T41: 'He knew before you told him. Which means he either had someone watching the boy's body, or\u2014' She pauses. '\u2014he was the one who put the map there.' The 'or' here implies these are the only two options, which might be too restrictive. Corvin could have learned about the map through other means (e.g., from the person who planted it, or from another source entirely). It's a minor logical leap that could be softened."
       ],
-      "summary": "Kael discusses the map with Elara Voss, who deduces the map was planted on a decoy courier after death, and was intended for Kael. Elara suggests Corvin knew this and is testing Kael. She advises Kael to investigate a 'hesitation point' marked on the map."
+      "summary": "The player consults Elara Voss about the map and the vanished courier. Elara deduces the map was planted on a decoy, not carried by a real courier, and that Corvin likely knew this all along, using the situation to test the player. Elara then points the player towards a 'hesitation point' marked on the map for answers."
     },
     {
       "turns": [
@@ -209,13 +204,10 @@
       },
       "contradictions": [],
       "flags": [
-        "T44: The description of the map's features ('streets, under-passages, the jagged contour of the leviathan's ribs overhead') is good, but the 'leviathan's ribs' feels like a detail that should have been established earlier if it's a prominent feature of the city's overhead landscape. It's not a contradiction, but it's a sudden introduction of a significant environmental detail.",
-        "T45: 'guttering candlelight' is a bit clich\u00e9, but minor.",
-        "T46: 'The memory surfaces like a thread pulled from a tangled spool' is a slightly clunky simile.",
-        "T47: 'clear as a winter kitchen' is a slightly odd simile for a scent, though understandable in context.",
-        "T48: 'The candlelight catches the scars on her knuckles as she thinks' is a nice detail, but the DM has previously established Elara is blind. While she can still have scars, the visual emphasis on the candlelight catching them feels a little off for a blind character's description, as if the DM is momentarily forgetting her blindness."
+        "T44: The DM states the player hasn't taken the drink, but the player's previous turn (T43, not shown) explicitly stated 'I take a sip of the drink.' This is a minor continuity error, but not a contradiction within the provided window.",
+        "T49: The DM asks the player 'Did he seem grieved?' which is a good question, but the player's previous turn (T48, not shown) already established that Corvin 'didn't seem surprised' but the player didn't comment on grief. This is a minor point, but the DM is asking for information the player hasn't explicitly provided yet, rather than building on it."
       ],
-      "summary": "Kael and Elara investigate a 'hesitation point' on the map, discovering a unique herb oil residue used by High Forest cartographers, indicating the map originated from the south. Elara confirms the oil's scent and deduces the map was drawn by a trained cartographer, not a courier. The discussion shifts to who knew the courier's route, narrowing the suspects to Corvin, Elara, and the person who hired the boy, with Elara strongly implying Corvin's potential involvement."
+      "summary": "The player, with Elara's help, discovers a 'hesitation point' on the map, revealing a cartographer's mark made with High Forest preservation oils. This suggests the map originated from the south and was altered in Veyr. Elara confirms she set the courier's schedule but denies misleading him, shifting suspicion more firmly onto Corvin."
     },
     {
       "turns": [
@@ -231,9 +223,16 @@
       },
       "contradictions": [],
       "flags": [
-        "T53: The DM's narration ends abruptly mid-sentence, cutting off Elara's explanation of where the player would need to go looking."
+        "T50: The phrase \"tasting the word\" is a bit clich\u00e9.",
+        "T50: \"That's a thread being pulled, Kael Windrunner.\" and \"The question is whether you're the one pulling it, or whether you're being pulled along it.\" are a bit on-the-nose for exposition.",
+        "T51: \"Elara's fingers trace the rim of her cup in a slow, thoughtful circle.\" is a repeated gesture from previous windows.",
+        "T52: \"Elara's lips press into a thin line.\" is a repeated gesture from previous windows.",
+        "T52: \"Her blind eyes finding you with unsettling precision.\" is a repeated description of Elara's gaze.",
+        "T53: \"She uncorks the bottle, pours a thin stream of the dark liquid into her cup, then holds the bottle out toward you\u2014an offering.\" This action feels a bit sudden and unprompted, given the intensity of the conversation.",
+        "T54: The description of the drink is good, but the DM is narrating the player's experience of it rather than letting the player describe their own reaction.",
+        "T55: \"Elara's fingers stutter against her cup\u2014a brief, arrested motion, like a caught breath.\" is a repeated gesture/description."
       ],
-      "summary": "Kael and Elara continue to dissect Corvin's motives, concluding he used the courier as bait to move a valuable, small, and easily hidden item (possibly a memory vial) that he didn't want to handle directly. Elara reveals Corvin sent Kael to her, not by name, but by a general description, and that she doesn't know the exact cargo but can deduce what it wasn't. The conversation shifts to why a boy was chosen for such a sensitive delivery, with Elara explaining that a 'ghost' courier was untraceable, but someone still knew where to find him."
+      "summary": "The player and Elara continue to dissect Corvin's motives regarding the dead courier. Elara believes Corvin used the boy as bait, not to catch the killer, but to find out where a valuable, small, and easily hidden cargo (possibly a memory vial) went after it was stolen from the boy. Corvin intentionally used an untraceable boy, but someone still knew where to find him, which Elara finds unsettling."
     },
     {
       "turns": [
@@ -249,14 +248,14 @@
       },
       "contradictions": [],
       "flags": [
-        "T56: The DM's response to the player's question about who benefits from a ghost disappearing without a trace is quite long and detailed, potentially overwhelming the player with information. While the information is good, the delivery could be more concise or broken up.",
-        "T57: The phrase \"A fraction less open\" is a bit vague and could be more descriptive of Elara's shift in posture or demeanor.",
-        "T58: The description of the candle sputtering and casting shadows is a common atmospheric detail and could be varied.",
-        "T59: The repetition of \"She looks up\" and \"She leans forward\" could be varied with other descriptive actions.",
-        "T60: The description of Elara's hand finding the clay bottle's absence is a good detail, but the subsequent action of pulling a spool of thread feels a little disconnected from the previous action and the immediate conversation.",
-        "T61: The phrase \"The candle flame steadies, as if the room itself is holding its breath\" is a bit clich\u00e9 and could be replaced with a fresher image."
+        "T56: The DM's response to the player's question about who benefits from a ghost disappearing without a trace is quite long and detailed, potentially overwhelming the player with information. While all the information is relevant, the delivery could be more concise or broken up.",
+        "T57: The phrase 'Elara's lips press together as you slide the clay bottle into your pocket. She doesn't stop you\u2014doesn't reach for it\u2014but something in her posture shifts. A fraction less open.' is a bit clunky. 'A fraction less open' feels slightly awkward.",
+        "T58: The description 'The tallow candle sputters, casting a slow dance of shadows across the clutter of thread and parchment.' is a nice atmospheric detail, but the phrase 'slow dance of shadows' is a common trope.",
+        "T59: The description of Elara's fingers tracing a seam in the wood is good, but the phrase 'a nervous rhythm' feels a little generic.",
+        "T60: The description 'Elara's hand finds the clay bottle's absence on the workbench\u2014a brief, searching gesture\u2014before she settles back.' is a good character beat, but the phrasing 'clay bottle's absence' is a bit formal.",
+        "T61: The phrase 'The candle flame steadies, as if the room itself is holding its breath.' is a strong image, but 'holding its breath' is a common personification."
       ],
-      "summary": "Kael and Elara delve into who might benefit from the ghost courier's disappearance, identifying four potential parties. Elara reveals the specific patrol gap the boy used and the limited number of people who knew about it. The conversation then shifts to the possibility of a 'watcher' who knew Corvin's methods and the boy's identity, leading Elara to suggest Corvin's former mentor, Mira Vex, as a prime suspect, potentially testing Corvin."
+      "summary": "The player and Elara continue to investigate the dead courier. Elara outlines four potential beneficiaries of the ghost's disappearance, then narrows the focus to someone who knew Corvin's methods or was watching his 'hunting ground.' The window concludes with Elara suggesting the killer might be Mira Vex, Corvin's long-lost mentor, who could be testing him."
     },
     {
       "turns": [
@@ -267,15 +266,12 @@
         "continuity": 5,
         "contradiction_free": 5,
         "npc_voice": 5,
-        "prose_freshness": 4,
+        "prose_freshness": 5,
         "player_agency": 5
       },
       "contradictions": [],
-      "flags": [
-        "T66: The description of the ladder and the top room feels a little rushed, especially the transition from climbing the ladder to the room 'emerging around you'. It could benefit from a slightly more deliberate pacing to build atmosphere.",
-        "T66: The sentence 'And there, acro' is cut off, which is a minor formatting error."
-      ],
-      "summary": "Kael decides to use the bell tower to contact the Cartographers about Mira Vex. Elara provides a brass token for signaling and warns Kael about the dangers of the tower, including a figure in the window. Kael ascends the tower, finds a cryptic note, and observes a fresh, angled scratch on the windowsill, suggesting something heavy was pulled downward from the window."
+      "flags": [],
+      "summary": "Elara provides two methods to contact the Cartographers: a slow, safe method via a bell tower, or a faster, riskier one. The player chooses the bell tower, receiving a brass token and warnings about the climb and a potential figure in the window. Upon reaching the top, the player finds no figure but discovers a fresh scratch and a cryptic note left in the mortar crack of the shattered east window, suggesting a recent, non-human presence."
     },
     {
       "turns": [
@@ -289,12 +285,20 @@
         "prose_freshness": 4,
         "player_agency": 5
       },
-      "contradictions": [],
-      "flags": [
-        "T69: The DM states 'No' at the end of the turn, which seems like an incomplete thought or a stray word.",
-        "T69: The DM states 'Somewhere above, a fl' at the end of the turn, which seems like an incomplete thought or a stray word."
+      "contradictions": [
+        {
+          "turn": 69,
+          "severity": "minor",
+          "detail": "The narration states 'The second bell hasn't tolled yet' then immediately after 'The bell fades into silence. Two.' This is a minor timing inconsistency regarding the second bell."
+        }
       ],
-      "summary": "Kael descends the bell tower after examining the scratch and parchment, then seeks out the Cartographers' meeting point. Finding it inaccessible, Kael instead tracks down Tomas Vex, the tinker, to question him about Hessa and the bell tower. Two bells have tolled, indicating time is running out."
+      "flags": [
+        "T68: The DM's internal monologue for the player is quite extensive, bordering on telling the player what their character is thinking and connecting rather than describing the scene and letting the player make the connection.",
+        "T69: The DM states 'The second bell hasn't tolled yet' then immediately after 'The bell fades into silence. Two.' This is a minor timing inconsistency.",
+        "T70: The description of the observatory as 'clinging to the city's underbelly like a barnacle on a whale' feels a bit out of place given the previous descriptions of the city's architecture and the bell tower's height. It's a strong image but might not fit the established aesthetic.",
+        "T70: The DM introduces a 'footstep. Light. Deliberate.' behind the player, which is a strong narrative hook, but then the player immediately leaves the scene without acknowledging it. This creates a dangling plot thread that feels a bit abrupt given the immediate threat implied."
+      ],
+      "summary": "The player deciphers the bell tower clues, connecting the scratch to a vantage point and the parchment to a timing. They descend the tower, hearing the first and second bells, and head towards the Cartographers' known meeting point, finding a door with their motto but no entry. A mysterious follower is introduced, but the player chooses to seek out Tomas Vex, who reacts cautiously to questions about Hessa and the bell tower."
     },
     {
       "turns": [
@@ -310,12 +314,12 @@
       },
       "contradictions": [],
       "flags": [
-        "T75: The DM repeats the player's dialogue verbatim in the narration, which is unnecessary.",
-        "T75: The DM's narration cuts off mid-sentence at the end of the turn.",
-        "T76: The DM's narration cuts off mid-sentence at the end of the turn.",
-        "T77: The DM's narration cuts off mid-sentence at the end of the turn."
+        "T74: The phrase 'as if seeing them for the first time' is a common clich\u00e9.",
+        "T75: The phrase 'telling a story you're trying to read but can't quite piece together' is a bit generic and could be more specific to the lock's damage.",
+        "T76: 'Not quite a sigh, not quite a laugh. Something in between.' is a slightly clunky way to describe a non-committal sound.",
+        "T77: 'The gravity tides make strange noises, the chains groan, the wind howls through the fossil ribs.' This is a good detail, but it feels a little like an info-dump about the setting's unique physics rather than a natural part of Tomas's dialogue."
       ],
-      "summary": "Kael questions Tomas Vex about Hessa and the bell tower. Tomas confirms Hessa had him replace a lock three nights ago and asked about keys to the tower. He also reveals Hessa was hearing a single bell tolling at odd hours. Tomas gives Kael an old key to the tower door, found the morning after Hessa's visit."
+      "summary": "The player interrogates Tomas Vex about Hessa and the bell tower. Tomas reveals Hessa had him replace a lock three nights prior, was jumpy, and asked about odd bell tolls and who had keys to the tower. He connects this to the courier boy's death two mornings ago, and ultimately gives the player an old key to the tower door, found the morning after Hessa's visit."
     },
     {
       "turns": [
@@ -325,15 +329,15 @@
       "scores": {
         "continuity": 5,
         "contradiction_free": 5,
-        "npc_voice": 4,
+        "npc_voice": 5,
         "prose_freshness": 4,
         "player_agency": 5
       },
       "contradictions": [],
       "flags": [
-        "T80: Tomas's dialogue feels a little too on-the-nose with the 'story in its stones' and 'stories don't let go easy' lines, bordering on clich\u00e9 for a simple blacksmith."
+        "T80: The phrase \"Life goes on, ordinary and indifferent\" is a bit clich\u00e9, though it fits the mood."
       ],
-      "summary": "Kael receives a key to the bell tower from Tomas Vex, who warns him about the tower's dark history and the urgency of investigating before the Watch patrols change. Tomas's demeanor shifts to nervous, emphasizing the danger of the situation."
+      "summary": "Tomas Vex, having given the player a key to the bell tower, expresses his fear and suspicion about Hessa's actions and the courier boy's death. He warns the player about the tower's secrets and the limited time before Watch patrols change. The player is left with the key and a clear objective."
     }
   ]
 }

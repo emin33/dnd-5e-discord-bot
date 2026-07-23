@@ -6,9 +6,23 @@ from test_narrative_grader import (
     GradeReport,
     TurnRow,
     WindowGrade,
+    _excerpt,
     opening_bigrams,
     repeat_ratios,
 )
+
+
+class TestExcerpt:
+    def test_short_text_untouched(self):
+        assert _excerpt("A short line.", 100) == "A short line."
+
+    def test_long_text_cuts_at_sentence_and_announces(self):
+        text = ("First sentence here. Second sentence follows. " * 10).strip()
+        out = _excerpt(text, 120)
+        assert "TRUNCATED BY GRADER" in out
+        # The kept portion ends at a sentence boundary, not mid-word.
+        kept = out.split(" [EXCERPT")[0]
+        assert kept.endswith(".")
 
 
 def _row(turn: int, narration: str) -> TurnRow:
