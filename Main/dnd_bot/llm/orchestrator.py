@@ -11,6 +11,7 @@ survives only as a fallback when the narrator returns no tool calls.
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, Optional, TYPE_CHECKING
+import asyncio
 import json
 import re
 import uuid
@@ -1583,7 +1584,11 @@ class DMOrchestrator:
                 # Tier 3: Vector fallback if player text didn't match any entities
                 if not text_seeds and kg.node_count() > 0:
                     vs = get_vector_store()
-                    text_seeds = matcher.vector_match(action, context.campaign_id, vs)
+                    # Chroma embeds synchronously; off the event loop so a
+                    # long graph history cannot stall the Discord heartbeat.
+                    text_seeds = await asyncio.to_thread(
+                        matcher.vector_match, action, context.campaign_id, vs
+                    )
                     _kg_vector_matches = len(text_seeds)
                     _kg_vector_match_seeds = list(text_seeds)
 
@@ -1633,7 +1638,8 @@ class DMOrchestrator:
                         ]
                         if seed_names:
                             ws_turn = world_state_pre.turn if world_state_pre else 0
-                            past_chunks = vs.recall_narratives_for_entities(
+                            past_chunks = await asyncio.to_thread(
+                                vs.recall_narratives_for_entities,
                                 campaign_id=context.campaign_id,
                                 entity_ids=recall_seed_ids,
                                 query_text=" ".join(seed_names),
@@ -1889,7 +1895,8 @@ class DMOrchestrator:
                     else:
                         continue
                     if entity and entity.properties.get("description"):
-                        vs.add_entity_description(
+                        await asyncio.to_thread(
+                            vs.add_entity_description,
                             campaign_id=context.campaign_id,
                             node_id=entity.node_id,
                             entity_type=entity.entity_type.value,
@@ -1918,7 +1925,8 @@ class DMOrchestrator:
 
                 if all_tags:
                     vs = get_vector_store()
-                    vs.add_narrative_chunk(
+                    await asyncio.to_thread(
+                        vs.add_narrative_chunk,
                         campaign_id=context.campaign_id,
                         chunk_id=str(uuid.uuid4()),
                         narrative_text=narrative,
@@ -2035,7 +2043,8 @@ class DMOrchestrator:
                         else:
                             continue
                         if entity and entity.properties.get("description"):
-                            vs.add_entity_description(
+                            await asyncio.to_thread(
+                                vs.add_entity_description,
                                 campaign_id=context.campaign_id,
                                 node_id=entity.node_id,
                                 entity_type=entity.entity_type.value,
@@ -2049,7 +2058,8 @@ class DMOrchestrator:
                     entity = kg.get_entity(promo.node_id)
                     if entity and entity.properties.get("description"):
                         vs = get_vector_store()
-                        vs.add_entity_description(
+                        await asyncio.to_thread(
+                            vs.add_entity_description,
                             campaign_id=context.campaign_id,
                             node_id=entity.node_id,
                             entity_type=entity.entity_type.value,

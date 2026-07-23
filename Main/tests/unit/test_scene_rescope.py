@@ -289,9 +289,10 @@ class TestProcessMessageWiring:
             "dnd_bot.game.session.get_scene_registry",
             lambda campaign_id, session_key: registry,
         )
-        monkeypatch.setattr(
-            manager, "_build_context", lambda *a, **k: None
-        )
+        async def _fake_build_context(*a, **k):
+            return None
+
+        monkeypatch.setattr(manager, "_build_context", _fake_build_context)
 
         async def _no_persist(sess) -> None:
             return None
