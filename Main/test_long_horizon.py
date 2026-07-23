@@ -1304,6 +1304,10 @@ def evaluate_tool_omission_signals(
                 # their naming cue in production. The post-turn catalog may
                 # still contain the generic label during that transition.
                 continue
+            if is_generic_npc_label(alias):
+                # A role/title alias ("Brother", "the woman") is descriptive
+                # address of the entity, not a competing identity claim.
+                continue
             canonical_labels = [
                 canonical_name,
                 *(target.get("aliases") or []),

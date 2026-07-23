@@ -339,3 +339,31 @@ intermittent); the registry-consult path is pinned by unit tests against
 the live cases. Next: soak #3 for the pass-rate matrix should confirm
 `canonical_npc_identity_unique` + `tool_reference_identity_grounding`
 hold at 80 turns with the seams active.
+
+## Soak #3 (20260723_122931, seed "Pell"): 24/26 — seams confirmed at 80 turns
+
+Third consecutive soak with recall 6/6. With the naming-promotion seams
+active: `canonical_npc_identity_unique` collisions={} — and the seams fired
+live ('acolyte 1' promoted to Pell at T4; a duplicate Pell merged into the
+canonical node at T61 via the narrator-reference merge). Reliability 99.7%
+(336/337). KG and player washout gates clean.
+
+Residual fails, both understood:
+- `tool_reference_identity_grounding`: two gate artifacts, fixed — bare
+  numerals now count as generic tokens ("acolyte 1" is a spawn-numbering
+  label, and the catalog snapshot predates Step 4 promotion), and a
+  generic/title alias ("Brother") is descriptive address, not an identity
+  claim; 'brother'/'sister' joined the generic vocabulary.
+- `narrator_kept_seed_out_of_memory_gap` (7 turns): the narrator kept Pell
+  on-stage into the washout — organic continuity (Mira-Vex class, stronger).
+  The player and KG gates stayed clean, so the recall core holds; run-level
+  cold-recall evidence is weaker. Matrix interpretation: count clean-washout
+  runs toward the recall claim rather than forcing the narrator to drop
+  threads.
+
+Soak matrix so far (deep_seeded_callback, deepseek_v4_flash_qwen9b):
+| run | seed | score | recall | identity unique | omission | notes |
+|-----|------|-------|--------|-----------------|----------|-------|
+| 20260722_230128 | Sera Vellik | 22/26 | 6/6 | FAIL (pre-fix) | FAIL (pre-fix) | baseline |
+| 20260723_005611 | Tomas Vex | 24/26 | 6/6 | PASS | PASS | pre-seams |
+| 20260723_122931 | Pell | 24/26 | 6/6 | PASS | PASS | all seams active |

@@ -54,6 +54,7 @@ _GENERIC_NPC_TERMS = {
     "bartender",
     "beggar",
     "boy",
+    "brother",
     "captain",
     "child",
     "clerk",
@@ -90,6 +91,7 @@ _GENERIC_NPC_TERMS = {
     "refugee",
     "scavenger",
     "scribe",
+    "sister",
     "soldier",
     "stranger",
     "the",
@@ -135,7 +137,11 @@ def is_generic_npc_label(value: str) -> bool:
     ``"Mira"`` and ``"Warden Elara"`` are not.
     """
     words = _normalized_words(value)
-    return bool(words) and all(word in _GENERIC_NPC_TERMS for word in words)
+    # Bare numerals are spawn-numbering artifacts ("acolyte 1", "guard 2"),
+    # not identity-bearing tokens.
+    return bool(words) and all(
+        word in _GENERIC_NPC_TERMS or word.isdigit() for word in words
+    )
 
 
 def explicit_npc_naming_link(

@@ -584,6 +584,40 @@ def test_tool_omission_audit_skips_sub_scene_location_refinement():
     assert "T25 change_location(Tallow Rows)" in coverage.detail
 
 
+def test_reference_grounding_skips_numbered_generic_and_title_aliases():
+    """Live gate false positives from soak 20260723_122931.
+
+    T4: 'acolyte 1' was ref'd with the newly revealed name Pell — the
+    catalog snapshot is recorded before Step 4's promotion, so the target
+    still wore the numbered generic label. T12: alias 'Brother' is a
+    monastic address of Pell, not a competing identity claim.
+    """
+    records = [
+        (4, {
+            "narrator_response": {"raw": "Pell bows. Brother Pell, they call him."},
+            "state_delta": {"delta": {}},
+            "knowledge_graph": {"catalog_entities": [
+                {"id": "acolyte-1", "name": "acolyte 1", "type": "npc",
+                 "aliases": []},
+                {"id": "pell-id", "name": "Pell", "type": "npc",
+                 "aliases": []},
+            ]},
+            "effects": {"proposed": [
+                {"type": "ref_entity", "ref_id": "acolyte-1",
+                 "ref_alias": "Pell"},
+                {"type": "ref_entity", "ref_id": "pell-id",
+                 "ref_alias": "Brother"},
+            ]},
+        }),
+    ]
+
+    results = evaluate_tool_omission_signals(records)
+    grounding = next(
+        r for r in results if r.name == "tool_reference_identity_grounding"
+    )
+    assert grounding.passed, grounding.detail
+
+
 def test_tool_omission_audit_skips_store_rejected_updates():
     """A delta update the store rejected mutated nothing and owes no tool.
 
