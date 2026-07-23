@@ -1,0 +1,142 @@
+{
+  "turn_log": "data\\turn_logs\\15bd53ec-770c-4014-9129-5394d5f03ccc.jsonl",
+  "judge_model": "gemini-2.5-flash",
+  "verdict": "PASS",
+  "overall_average": 4.84,
+  "dimension_means": {
+    "continuity": 5.0,
+    "contradiction_free": 5.0,
+    "npc_voice": 4.8,
+    "prose_freshness": 4.4,
+    "player_agency": 5.0
+  },
+  "gates": [
+    {
+      "name": "judge_coverage_complete",
+      "passed": true,
+      "detail": "windows graded=5; failed=0"
+    },
+    {
+      "name": "overall_average",
+      "passed": true,
+      "detail": "avg=4.84 (gate >= 4.0)"
+    },
+    {
+      "name": "no_dimension_below_minimum",
+      "passed": true,
+      "detail": "means={'continuity': 5.0, 'contradiction_free': 5.0, 'npc_voice': 4.8, 'prose_freshness': 4.4, 'player_agency': 5.0} (gate >= 3.0)"
+    },
+    {
+      "name": "zero_severe_contradictions",
+      "passed": true,
+      "detail": "severe=[]"
+    },
+    {
+      "name": "prose_repetition_bounded",
+      "passed": true,
+      "detail": "worst 8-gram repeat ratio=0.009 (gate <= 0.35)"
+    }
+  ],
+  "worst_repeat_ratio": 0.009,
+  "opening_bigrams": {
+    "you turn": 2,
+    "you step": 2,
+    "you stop": 2,
+    "the woman": 2,
+    "you lean": 2,
+    "the cobblestones": 1,
+    "the torn": 1,
+    "the agent's": 1
+  },
+  "windows": [
+    {
+      "turns": [
+        1,
+        6
+      ],
+      "scores": {
+        "continuity": 5,
+        "contradiction_free": 5,
+        "npc_voice": 5,
+        "prose_freshness": 5,
+        "player_agency": 5
+      },
+      "contradictions": [],
+      "flags": [],
+      "summary": "The player character, Kael Windrunner, discovers a dead courier in Saint Orra's Wake amidst upward-falling rain. They retrieve a torn letter and a mysterious brass compass from the courier's satchel before being confronted by Lena Harlow, a Choir of Anchors agent. Lena, a senior courier liaison, reveals the courier's name was Sable, the letter is a priority dispatch, and the compass is a directional lock for a deep vault in the Archive. Kael agrees to accompany Lena to the Archive to understand the compass's significance."
+    },
+    {
+      "turns": [
+        7,
+        12
+      ],
+      "scores": {
+        "continuity": 5,
+        "contradiction_free": 5,
+        "npc_voice": 5,
+        "prose_freshness": 5,
+        "player_agency": 5
+      },
+      "contradictions": [],
+      "flags": [],
+      "summary": "Kael Windrunner declines to accompany Lena Harlow to the Archive, instead pursuing a new lead in a different district. They encounter Orla, an old woman who reveals she was following Kael and knows about the Choir token. Orla, a rope mender, is curious about Kael's intentions and the Choir's interest, and Kael reveals they are looking for someone 'taken' from the Archive district."
+    },
+    {
+      "turns": [
+        13,
+        18
+      ],
+      "scores": {
+        "continuity": 5,
+        "contradiction_free": 5,
+        "npc_voice": 5,
+        "prose_freshness": 4,
+        "player_agency": 5
+      },
+      "contradictions": [],
+      "flags": [
+        "T17: The description of the lamplight as a 'single guttering flame' feels a little clich\u00e9. While functional, it doesn't add much unique flavor.",
+        "T18: The cup slipping from the player's hand feels a bit like a forced event to introduce the 'pause' from beyond the door. While not a direct hijacking of agency, it's a very specific outcome for a simple 'examine' action."
+      ],
+      "summary": "Kael learns from Orla about the 'deep vault' under the old counting house on Gallows Row, accessible via a separate entrance and requiring a Choir token. Kael navigates the gravity tide to the counting house, uses the token to open the first door, and descends into a corridor. There, they find a second, iron door with a keyhole, and a bench with a recently used cup, which Kael accidentally breaks, alerting someone beyond the iron door."
+    },
+    {
+      "turns": [
+        19,
+        24
+      ],
+      "scores": {
+        "continuity": 5,
+        "contradiction_free": 5,
+        "npc_voice": 5,
+        "prose_freshness": 4,
+        "player_agency": 5
+      },
+      "contradictions": [],
+      "flags": [
+        "T20: The DM states 'Nothing comes of it. The smell is bitter, the texture is... wet. That's all you can determine.' This feels a little dismissive given the player's detailed inspection in T19, where the DM themselves established 'burnt sugar' and 'astringent note' and 'alchemical' properties. While not a contradiction, it feels like a slight downplay of previously established detail.",
+        "T22: The description of the bristle as 'Horsehair, maybe' feels a little too definitive for a 'maybe'. It could be phrased to maintain more ambiguity if the DM intends it to be uncertain."
+      ],
+      "summary": "Kael investigates the iron door, finding evidence of a key being forced from the inside and alchemical residue on their shirt. They examine a grey cloak, finding a single bristle suggesting the owner worked with their hands. The iron door proves unyielding to force, and the keyhole offers no new clues, leaving Kael without a way forward. The silence beyond the door remains watchful."
+    },
+    {
+      "turns": [
+        25,
+        30
+      ],
+      "scores": {
+        "continuity": 5,
+        "contradiction_free": 5,
+        "npc_voice": 4,
+        "prose_freshness": 4,
+        "player_agency": 5
+      },
+      "contradictions": [],
+      "flags": [
+        "T25: The tinker's dialogue is a bit long and front-loaded with information, making it less natural for a casual street interaction.",
+        "T27: The DM's narration explicitly states the player 'already asked them' and 'already got your directions,' which, while true, feels a bit like scolding the player for re-checking information. It could be phrased more neutrally."
+      ],
+      "summary": "Kael successfully navigates to the Choir of Anchors Archive District Office, following directions from locals. The office door is ajar, and the room appears empty, though signs suggest someone left moments ago through a back door. Kael finds Lena Harlow's coat, but its pockets are empty."
+    }
+  ]
+}

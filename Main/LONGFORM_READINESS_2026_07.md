@@ -439,3 +439,14 @@ connecting them, but the class is worth an eye in future soaks.
 Remaining finding queue: prose freshness (consistently the floor,
 4.0-4.2), retire the generic tool-followup leg, extractor id-field
 sloppiness.
+
+### Freshness hint + id-field fix measured (run 20260723_160347)
+
+Run formally INVALID(player-error) — the Gemini test actor emitted a
+5-word action at T26 (harness flake, not product) — but the narration is
+genuine, so the grader measurement stands: **prose_freshness 4.4** (off
+the 4.0-4.2 floor of every prior run), overall **4.84** (highest yet),
+worst opener repetition 2x (was 6x). The cross-turn opening hint moved
+the one dial that had never moved. Product gates otherwise 24/26 with
+only the structural budget miss (7.1% — the generic followup leg, the
+last queue item). No update_entity rejections of the id-field class.
