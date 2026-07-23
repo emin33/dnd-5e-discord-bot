@@ -55,6 +55,63 @@ class TestPersistDirectoryResolution:
         assert not (tmp_path / "settings-chroma").exists()
 
 
+class TestVectorLifecycleAndAbstention:
+    def test_delete_campaign_collection_is_idempotent(self, vector_store):
+        assert vector_store.add_event(
+            CAMPAIGN_ID,
+            "bell-rang",
+            "The cracked bell rang beneath the harbor.",
+        )
+
+        assert vector_store.delete_campaign(CAMPAIGN_ID)
+        assert vector_store.delete_campaign(CAMPAIGN_ID)
+        collection_names = {
+            collection if isinstance(collection, str) else collection.name
+            for collection in vector_store._client.list_collections()
+        }
+        assert f"campaign_{CAMPAIGN_ID}" not in collection_names
+
+    def test_generic_recall_filters_types_and_abstains(self, vector_store, monkeypatch):
+        captured = {}
+
+        def fake_search(**kwargs):
+            captured.update(kwargs)
+            return [
+                {
+                    "content": "The relevant old event.",
+                    "distance": 0.7,
+                    "metadata": {"type": "event"},
+                },
+                {
+                    "content": "A nearest neighbor that is still irrelevant.",
+                    "distance": 1.8,
+                    "metadata": {"type": "session"},
+                },
+            ]
+
+        monkeypatch.setattr(vector_store, "search", fake_search)
+
+        context = vector_store.recall_for_context(
+            CAMPAIGN_ID,
+            "I ask about the cracked bell.",
+        )
+
+        assert "relevant old event" in context
+        assert "still irrelevant" not in context
+        assert captured["where"] == {
+            "type": {"$in": ["session", "event"]},
+        }
+
+    def test_generic_recall_can_return_no_context(self, vector_store, monkeypatch):
+        monkeypatch.setattr(vector_store, "search", lambda **_: [{
+            "content": "Unrelated",
+            "distance": 1.9,
+            "metadata": {"type": "session"},
+        }])
+
+        assert vector_store.recall_for_context(CAMPAIGN_ID, "new topic") == ""
+
+
 # ======================================================================
 # Entity description indexing
 # ======================================================================

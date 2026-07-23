@@ -253,13 +253,26 @@ class SRDDataLoader:
                 best_match = monster
 
         if best_score >= threshold and best_match:
+            # A fuzzy score alone can bind a personal name to an unrelated
+            # monster ("Elara" -> "Lamia" at 0.60, turning a story NPC into
+            # a stat block). Accept a sub-0.8 fuzzy match only when the
+            # names share an actual word ("goblin chief" -> "Goblin").
+            query_tokens = set(normalized.split())
+            match_tokens = set(best_match.get("name", "").lower().split())
+            if best_score >= 0.8 or (query_tokens & match_tokens):
+                logger.debug(
+                    "fuzzy_monster_match",
+                    query=name,
+                    match=best_match.get("name"),
+                    score=best_score,
+                )
+                return best_match
             logger.debug(
-                "fuzzy_monster_match",
+                "fuzzy_monster_match_rejected_no_shared_token",
                 query=name,
                 match=best_match.get("name"),
                 score=best_score,
             )
-            return best_match
 
         return None
 

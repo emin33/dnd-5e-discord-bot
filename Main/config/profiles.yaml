@@ -659,6 +659,26 @@ deepseek_v4_flash:
     condensed_size: 10
     compaction_threshold: 6
 
+# DeepSeek V4 Flash narrator + Qwen 3.5 9B brain (local).
+# Brain benchmark (2026-07-21, 46 cases): 94% action type, 94% roll,
+# 62% skill selection, 100% PGI, 0 JSON failures, 1.5s/case. This beat
+# both gemma4:e2b and gemma4:e4b while using the already-installed 6.6GB model.
+deepseek_v4_flash_qwen9b:
+  narrator:
+    provider: deepseek
+    model: deepseek-v4-flash
+    tools: full
+  brain:
+    provider: ollama
+    model: qwen3.5:9b
+    context_size: 8000
+    fallback_to_ollama: false
+  memory:
+    buffer_size: 24
+    verbatim_size: 8
+    condensed_size: 10
+    compaction_threshold: 6
+
 # DeepSeek V4 Flash narrator + Groq qwen3-32b brain, no immersion.
 # Plain benchmarking twin of deepseek_pro_voice: cheap cloud long-form
 # testing and measuring DeepSeek prompt-caching benefits.

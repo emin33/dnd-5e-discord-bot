@@ -25,7 +25,7 @@ from dnd_bot.llm.brains.base import BrainContext
 from dnd_bot.llm.effects import EffectExecutionResult, EffectType, ProposedEffect
 from dnd_bot.llm.orchestrator import DMOrchestrator, TriageResult
 from dnd_bot.game.session import GameSession
-from dnd_bot.game.world_state import WorldState
+from dnd_bot.game.world_state import NPCState, WorldState
 from dnd_bot.models import InventoryItem
 
 
@@ -74,6 +74,30 @@ def _spawn_effect(**overrides) -> ProposedEffect:
     return ProposedEffect(**kwargs)
 
 
+@pytest.mark.asyncio
+async def test_process_action_clears_stale_effect_receipts_before_triage(orch):
+    orch._last_executed_effects = [_spawn_effect()]
+    orch._last_effect_executions = [{"type": "spawn_object"}]
+    orch._last_effect_rejections = [{"type": "ref_entity"}]
+
+    class _StopAfterAssertion(Exception):
+        pass
+
+    async def _assert_clean(*args, **kwargs):
+        assert orch._last_executed_effects == []
+        assert orch._last_effect_executions == []
+        assert orch._last_effect_rejections == []
+        raise _StopAfterAssertion
+
+    orch._triage_action = _assert_clean
+    with pytest.raises(_StopAfterAssertion):
+        await orch.process_action(
+            "I wait.",
+            "Hero",
+            BrainContext(campaign_id="camp", session_id="sess"),
+        )
+
+
 # ── A (DF-12): idempotency hits must not double-apply ────────────────────────
 
 
@@ -95,6 +119,8 @@ async def test_duplicate_effect_does_not_reapply_to_world_state():
     assert [e.effect_type for e in orch._last_executed_effects] == [
         EffectType.SPAWN_OBJECT
     ]
+    assert orch._last_effect_executions[0]["type"] == "spawn_object"
+    assert orch._last_effect_executions[0]["was_duplicate"] is False
 
     # Retry (executor reports the idempotency hit): NO second WorldState
     # apply, NO transfer-log repeat, NO KG-bridge append.
@@ -103,6 +129,7 @@ async def test_duplicate_effect_does_not_reapply_to_world_state():
         "a rusty iron key appeared in the scene"
     ]
     assert orch._last_executed_effects == []
+    assert orch._last_effect_executions[0]["was_duplicate"] is True
 
 
 # ── B: drop must resolve the item and actually remove it ─────────────────────
@@ -125,8 +152,16 @@ class _FakeInventoryRepo:
 def drop_setup(mock_character, monkeypatch):
     session = GameSession(id="sess", channel_id=901_103, guild_id=1, campaign_id="camp")
     session.add_player(12345, "Test Hero", mock_character)
+    session.world_state = WorldState(current_location="Copper Finch")
     orch = DMOrchestrator()
     orch.set_session(session)
+    mara = NPCState(
+        id="mara-id",
+        name="Mara Venn",
+        location="Copper Finch",
+        inventory=[],
+    )
+    session.world_state.npcs[mara.id] = mara
 
     lantern = InventoryItem(
         character_id=mock_character.id,
@@ -182,6 +217,58 @@ async def test_drop_of_item_not_in_inventory_fails_honestly(drop_setup):
     assert result["success"] is False
     assert "not found in inventory" in result["error"]
     assert repo.removed == []
+
+
+@pytest.mark.asyncio
+async def test_player_to_npc_transfer_emits_authoritative_two_sided_effects(drop_setup):
+    orch, repo, lantern = drop_setup
+    triage = TriageResult(
+        action_type="inventory", reasoning="", item_name="brass lantern",
+    )
+
+    result = await orch._handle_inventory(
+        triage, "Test Hero",
+        BrainContext(campaign_id="camp", session_id="sess"),
+        "I hand my brass lantern to Mara Venn, who accepts it.",
+    )
+
+    assert result["operation"] == "transfer_to_npc"
+    assert result["success"] is True
+    assert repo.removed == []  # effects own the atomic two-sided write
+    player_effect, npc_effect = result["authoritative_effects"]
+    assert player_effect.player_item_remove == [{
+        "name": lantern.item_name,
+        "quantity": 1,
+        "destination": "npc:mara-id",
+    }]
+    assert npc_effect.update_entity_id == "mara-id"
+    assert npc_effect.update_add_items == [lantern.item_name]
+
+
+@pytest.mark.asyncio
+async def test_npc_to_player_return_emits_authoritative_two_sided_effects(drop_setup):
+    orch, _, lantern = drop_setup
+    mara = orch._current_session.world_state.npcs["mara-id"]
+    mara.inventory = [lantern.item_name]
+    triage = TriageResult(
+        action_type="inventory", reasoning="", item_name="brass lantern",
+    )
+
+    result = await orch._handle_inventory(
+        triage, "Test Hero",
+        BrainContext(campaign_id="camp", session_id="sess"),
+        "Mara Venn hands the brass lantern back to me.",
+    )
+
+    assert result["operation"] == "transfer_from_npc"
+    assert result["success"] is True
+    player_effect, npc_effect = result["authoritative_effects"]
+    assert player_effect.player_item_grant == [{
+        "name": lantern.item_name,
+        "quantity": 1,
+        "source": "npc:mara-id",
+    }]
+    assert npc_effect.update_remove_items == [lantern.item_name]
 
 
 # ── C: requires_confirmation executes (auto-approved), not discarded ─────────

@@ -132,6 +132,38 @@ class TestFacadeServesRegistry:
         cases, fail here instead of silently skipping it."""
         assert set(CONVERTER_CASES) == {s.name for s in tool_registry.all_specs()}
 
+    def test_add_npc_schema_never_teaches_tool_only_names(self):
+        schema = next(
+            tool for tool in tool_registry.tools_for_tier("full")
+            if tool["function"]["name"] == "add_npc"
+        )["function"]
+
+        description = schema["description"]
+        assert "PROPERLY NAMED NPC" in description
+        assert "make NO add_npc call" in description
+        assert description.count("Korin Ironeye") >= 2  # prose and tool call
+        for field in ("npc_id", "name", "description"):
+            assert schema["parameters"]["properties"][field]["minLength"] == 1
+
+    @pytest.mark.parametrize(
+        ("tool_name", "field"),
+        [
+            ("ref_entity", "entity_id"),
+            ("spawn_object", "object_id"),
+            ("spawn_object", "name"),
+            ("change_location", "location_name"),
+            ("update_entity", "entity_id"),
+        ],
+    )
+    def test_required_identity_strings_declare_nonempty_contract(self, tool_name, field):
+        schema = next(
+            tool for tool in tool_registry.tools_for_tier("full")
+            if tool["function"]["name"] == tool_name
+        )["function"]["parameters"]
+
+        assert field in schema["required"]
+        assert schema["properties"][field]["minLength"] == 1
+
 
 class TestExecutorCrossCheck:
     """Every EffectType a registered converter can emit must have an
@@ -201,14 +233,13 @@ class TestExecutorCrossCheck:
         """Every EffectType a registered converter can emit must have an
         EffectValidator row, or sit on this explicit allowlist of types
         that deliberately ride _validate_default:
-        - REF_ENTITY: recency signal, nothing to pre-validate
         - REMOVE_ENTITY: the executor does the honest existence check
           against the scene registry
         A new tool whose type lands in neither fails here instead of
         silently passing through the default validator."""
         from dnd_bot.llm.effects import EffectValidator
 
-        default_validated = {EffectType.REF_ENTITY, EffectType.REMOVE_ENTITY}
+        default_validated = {EffectType.REMOVE_ENTITY}
         validated = EffectValidator().validated_effect_types()
         unaccounted = (
             tool_registry.emittable_effect_types()

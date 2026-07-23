@@ -30,12 +30,244 @@ import pytest
 
 from dnd_bot.game.knowledge.bridge import DeltaBridge, NamePromotion
 from dnd_bot.game.knowledge.models import UpdateNode, slugify
+from dnd_bot.game.identity import explicit_npc_naming_link, is_generic_npc_label
 from dnd_bot.game.scene.registry import SceneEntityRegistry
 from dnd_bot.game.session import GameSession
 from dnd_bot.game.world_state import NPCState, NPCUpdate, StateDelta, WorldState
 from dnd_bot.game.world_store import WorldStateStore
 from dnd_bot.llm.effects import EffectExecutor, EffectType, ProposedEffect
+from dnd_bot.llm.orchestrator import (
+    _anchor_returning_add_npc_effects,
+    _canonicalize_npc_effect_ids,
+    _merge_delta_npcs_with_narrator_refs,
+    _reanchor_same_turn_generic_npc_effects,
+    _reanchor_returning_npc_ids,
+)
 from dnd_bot.models.npc import NPC, Disposition, EntityType, SceneEntity
+
+
+# ---------------------------------------------------------------------------
+# Returning NPCs — scene-scoped WorldState must recover the durable KG id
+# ---------------------------------------------------------------------------
+
+
+def test_returning_npc_reuses_action_matched_canonical_kg_id():
+    canonical_id = "11111111-2222-4333-8444-555555555555"
+    proposed_id = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+    entity = SimpleNamespace(
+        node_id=canonical_id,
+        name="Vennic",
+        entity_type=SimpleNamespace(value="npc"),
+    )
+    kg = SimpleNamespace(
+        get_entity=lambda entity_id: entity if entity_id == canonical_id else None
+    )
+    delta = StateDelta(new_npcs=[NPCState(id=proposed_id, name="Vennic")])
+
+    changes = _reanchor_returning_npc_ids(delta, kg, set(), [canonical_id])
+
+    assert delta.new_npcs[0].id == canonical_id
+    assert changes == [(proposed_id, canonical_id, "Vennic")]
+
+
+def test_returning_npc_is_not_reanchored_without_current_action_match():
+    proposed_id = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+    delta = StateDelta(new_npcs=[NPCState(id=proposed_id, name="Vennic")])
+    kg = SimpleNamespace(get_entity=lambda entity_id: None)
+
+    assert _reanchor_returning_npc_ids(delta, kg, set(), []) == []
+    assert delta.new_npcs[0].id == proposed_id
+
+
+def test_exact_named_npc_return_reuses_unique_campaign_graph_id_without_action_seed():
+    canonical_id = "11111111-2222-4333-8444-555555555555"
+    proposed_id = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+    entity = SimpleNamespace(
+        node_id=canonical_id,
+        name="Cinder Vex",
+        aliases=[],
+        entity_type=SimpleNamespace(value="npc"),
+    )
+    kg = SimpleNamespace(
+        _entities={canonical_id: entity},
+        get_entity=lambda entity_id: None,
+    )
+    delta = StateDelta(new_npcs=[NPCState(id=proposed_id, name="Cinder Vex")])
+
+    changes = _reanchor_returning_npc_ids(delta, kg, set(), [])
+
+    assert delta.new_npcs[0].id == canonical_id
+    assert changes == [(proposed_id, canonical_id, "Cinder Vex")]
+
+
+def test_narrator_npc_slug_is_canonicalized_before_state_extraction():
+    canonical_id = "11111111-2222-4333-8444-555555555555"
+    entity = SimpleNamespace(
+        node_id=canonical_id,
+        name="Cinder Vex",
+        aliases=[],
+        entity_type=SimpleNamespace(value="npc"),
+    )
+    kg = SimpleNamespace(_entities={canonical_id: entity})
+    effects = [
+        ProposedEffect(
+            effect_type=EffectType.REF_ENTITY,
+            ref_entity_id="cinder-vex",
+        ),
+        ProposedEffect(
+            effect_type=EffectType.UPDATE_ENTITY,
+            update_entity_id="Cinder Vex",
+            update_description="Now alert.",
+        ),
+    ]
+
+    normalized = _canonicalize_npc_effect_ids(effects, WorldState(), kg)
+
+    assert normalized[0].ref_entity_id == canonical_id
+    assert normalized[1].update_entity_id == canonical_id
+
+
+def test_same_turn_generic_npc_update_reanchors_after_state_delta_creation():
+    world = WorldState(current_location="Archive gate")
+    courier = NPCState(name="the courier", location="Archive gate")
+    world.npcs[courier.id] = courier
+    delta = StateDelta(new_npcs=[courier])
+    effect = ProposedEffect(
+        effect_type=EffectType.UPDATE_ENTITY,
+        update_entity_id="archive-courier",
+        update_status="injured",
+    )
+
+    anchored = _reanchor_same_turn_generic_npc_effects([effect], delta, world)
+
+    assert anchored[0].update_entity_id == courier.id
+
+
+def test_same_turn_generic_npc_update_abstains_when_role_is_ambiguous():
+    world = WorldState(current_location="Archive gate")
+    couriers = [
+        NPCState(name="the courier", location="Archive gate"),
+        NPCState(name="masked courier", location="Archive gate"),
+    ]
+    for courier in couriers:
+        world.npcs[courier.id] = courier
+    delta = StateDelta(new_npcs=couriers)
+    effect = ProposedEffect(
+        effect_type=EffectType.UPDATE_ENTITY,
+        update_entity_id="archive-courier",
+        update_status="injured",
+    )
+
+    anchored = _reanchor_same_turn_generic_npc_effects([effect], delta, world)
+
+    assert anchored[0].update_entity_id == "archive-courier"
+
+
+def test_generic_role_reuses_the_only_authoritatively_referenced_kg_identity():
+    canonical_id = "11111111-2222-4333-8444-555555555555"
+    entity = SimpleNamespace(
+        node_id=canonical_id,
+        name="the hooded figure",
+        entity_type=SimpleNamespace(value="npc"),
+    )
+    kg = SimpleNamespace(get_entity=lambda entity_id: entity)
+    delta = StateDelta(new_npcs=[NPCState(name="Ragpicker")])
+
+    changes = _reanchor_returning_npc_ids(delta, kg, set(), [canonical_id])
+
+    assert delta.new_npcs[0].id == canonical_id
+    assert changes[0][1:] == (canonical_id, "Ragpicker")
+
+
+def test_narrator_alias_merges_extractor_new_npc_onto_current_uuid():
+    world = WorldState(current_location="Saint Orra's Wake")
+    existing = NPCState(
+        name="woman in worn wool cloak",
+        location="Saint Orra's Wake",
+    )
+    world.npcs[existing.id] = existing
+    proposed = NPCState(
+        name="Mira",
+        location="the archway",
+        description="A sharp-featured woman in a worn cloak.",
+    )
+    delta = StateDelta(new_npcs=[proposed])
+
+    changes = _merge_delta_npcs_with_narrator_refs(
+        delta,
+        world,
+        [(existing.id, "Mira")],
+    )
+
+    assert delta.new_npcs == []
+    assert len(delta.npc_updates) == 1
+    update = delta.npc_updates[0]
+    assert update.id == existing.id
+    assert update.new_name == "Mira"
+    assert update.location is None  # reject extractor-invented sub-location
+    assert changes == [(proposed.id, existing.id, "Mira")]
+
+
+def test_explicit_self_naming_merges_extractor_npc_without_tool_name_alias():
+    world = WorldState(current_location="Saint Orra's Wake")
+    existing = NPCState(
+        name="the woman",
+        location="Saint Orra's Wake",
+        description="Leather apron and soot-stained sleeves.",
+    )
+    world.npcs[existing.id] = existing
+    proposed = NPCState(
+        name="Orra",
+        location="the Glass Archive's sealed inner vault",
+        description="Leather apron and soot-stained sleeves.",
+    )
+    delta = StateDelta(new_npcs=[proposed])
+    prose = 'The woman watches you. "I\'m called Orra."'
+
+    changes = _merge_delta_npcs_with_narrator_refs(
+        delta,
+        world,
+        [(existing.id, "the woman")],
+        prose,
+    )
+
+    assert delta.new_npcs == []
+    assert delta.npc_updates[0].id == existing.id
+    assert delta.npc_updates[0].new_name == "Orra"
+    assert changes == [(proposed.id, existing.id, "Orra")]
+
+
+def test_role_vocabulary_and_narrative_name_confirmation_are_shared():
+    assert is_generic_npc_label("Watch officer")
+    assert is_generic_npc_label("distiller woman")
+    assert explicit_npc_naming_link(
+        "The distiller woman folds her arms. Mira. She said her name.",
+        "distiller woman",
+        "Mira",
+    )
+
+
+def test_returning_add_npc_carries_the_existing_graph_uuid_into_world_state():
+    canonical_id = "11111111-2222-4333-8444-555555555555"
+    graph_entity = SimpleNamespace(
+        node_id=canonical_id,
+        name="Sorin",
+        aliases=["courier"],
+        entity_type=SimpleNamespace(value="npc"),
+    )
+    kg = SimpleNamespace(_entities={canonical_id: graph_entity})
+    effect = ProposedEffect(effect_type=EffectType.ADD_NPC, npc_name="Sorin")
+
+    anchored = _anchor_returning_add_npc_effects([effect], kg)[0]
+    world = WorldState(current_location="Archive gate")
+    npc = WorldStateStore(world).ensure_npc(
+        "Sorin",
+        canonical_id=anchored.npc_canonical_id,
+    )
+
+    assert anchored.npc_canonical_id == canonical_id
+    assert npc.id == canonical_id
+    assert list(world.npcs) == [canonical_id]
 
 
 @pytest.fixture
@@ -230,6 +462,21 @@ class TestDeltaPathStamp:
 
 
 class TestToolPathStamp:
+    @pytest.fixture(autouse=True)
+    def _stub_voice_assignment(self, monkeypatch):
+        """Keep the unit path from opening the process-global SQLite DB.
+
+        Voice assignment is a best-effort integration owned by its own tests;
+        letting it escape this unit test left an aiosqlite worker alive after
+        pytest had reported every assertion as passed.
+        """
+        async def _no_voice(*args, **kwargs):
+            return None
+
+        monkeypatch.setattr(
+            "dnd_bot.immersion.voice_assigner.assign_voice", _no_voice
+        )
+
     async def test_execute_add_npc_stamps_canonical_id(self, registry, world):
         """FLIPPED (was PINNED-BROKEN): the executor mints/links the canonical id.
 
@@ -457,6 +704,31 @@ class TestPreloadSeed:
         from dnd_bot.game.scene.registry import get_scene_registry
         registry = get_scene_registry("camp", session.session_key)
         assert registry.get_by_name("Grokk") is None
+
+    async def test_preload_keeps_durable_dead_npc_as_non_scene_fact(
+        self, manager, fake_npc_repo, registry_cleanup, unique_channel_id, world
+    ):
+        """A fresh session retains DB death without polluting the live roster."""
+        fake_npc_repo.npcs = [
+            NPC(
+                id="dead-1",
+                campaign_id="camp",
+                name="Old Bram",
+                location="Ash Gate",
+                is_alive=False,
+            ),
+        ]
+        session = _session(unique_channel_id, world)
+        registry_cleanup.append(session.session_key)
+
+        await manager._preload_scene_npcs(session)
+
+        from dnd_bot.game.scene.registry import get_scene_registry
+        registry = get_scene_registry("camp", session.session_key)
+        assert registry.get_by_name("Old Bram") is None
+        assert world.npcs == {}
+        assert session.campaign_dead_npcs["dead-1"].name == "Old Bram"
+        assert session.campaign_dead_npcs["dead-1"].alive is False
 
     async def test_preload_seeds_registry_from_world_only_npc(
         self, manager, fake_npc_repo, registry_cleanup, unique_channel_id, world

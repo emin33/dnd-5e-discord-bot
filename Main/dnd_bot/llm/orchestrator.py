@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, Optional, TYPE_CHECKING
 import json
+import re
 import uuid
 
 from pydantic import BaseModel
@@ -20,9 +21,16 @@ import structlog
 from .client import get_llm_client, get_narrator_client_for, OllamaClient, AnthropicClient, _write_debug_log
 from .narrative_signals import select_narrator_tier
 from .narration import NarrationSpec, NarrationStrategy
+from .continuity import NarrativeGovernance
 from .json_extract import extract_json_object
 from .brains.base import BrainContext
 from .brains.narrator import NarratorBrain, get_narrator
+from ..game.identity import (
+    explicit_npc_naming_link,
+    identity_keys,
+    is_generic_npc_label,
+    resolve_unique_identity,
+)
 from .brains.adjudicator import EffectsAdjudicator, get_adjudicator
 from .intents import validate_narrator_format
 from .narrator_tools import (
@@ -88,6 +96,407 @@ def _get_client_provider(client) -> str:
 # so a densely connected end-game subgraph can balloon the block and eat the
 # local narrator's context budget.
 KG_CONTEXT_MAX_CHARS = 4000
+
+
+def _explicit_narrative_tags(
+    mentioned_entity_ids: list[str],
+    narrator_ref_ids: list[str],
+) -> list[str]:
+    """Return stable, explicit provenance tags for a narrative episode."""
+    return list(dict.fromkeys(mentioned_entity_ids + narrator_ref_ids))
+
+
+def _effect_telemetry_record(effect) -> dict:
+    """Compact, stable effect shape for proposed/executed/rejected logs."""
+    effect_type = getattr(getattr(effect, "effect_type", None), "value", "")
+    record = {"type": effect_type}
+    if effect_type == "ref_entity":
+        record["ref_id"] = getattr(effect, "ref_entity_id", None)
+    alias = getattr(effect, "ref_alias_used", None)
+    if alias:
+        record["ref_alias"] = alias
+    if effect_type == "add_npc":
+        record["npc_name"] = getattr(effect, "npc_name", None)
+        canonical_id = getattr(effect, "npc_canonical_id", None)
+        if canonical_id:
+            record["canonical_id"] = canonical_id
+    if effect_type == "update_entity":
+        record["entity_id"] = getattr(effect, "update_entity_id", None)
+        record["changes"] = [
+            name
+            for name, value in (
+                ("importance", getattr(effect, "update_importance", None)),
+                ("disposition", getattr(effect, "update_disposition", None)),
+                ("status", getattr(effect, "update_status", None)),
+                (
+                    "description",
+                    getattr(effect, "update_description_addition", None),
+                ),
+                ("add_items", getattr(effect, "update_add_items", None)),
+                ("remove_items", getattr(effect, "update_remove_items", None)),
+            )
+            if value not in (None, [], "")
+        ]
+    item = getattr(effect, "item_name", None) or getattr(effect, "object_name", None)
+    if item:
+        record["item"] = item
+    return record
+
+
+def _reanchor_returning_npc_ids(
+    delta,
+    knowledge_graph,
+    current_npc_ids: set[str],
+    candidate_entity_ids: list[str],
+) -> list[tuple[str, str, str]]:
+    """Reuse canonical KG ids when an off-scene NPC returns.
+
+    Scene rescoping removes departed non-important NPCs from
+    ``WorldState.npcs`` while the KG retains them. If one later returns in
+    narration, the state extractor sees no current-scene roster entry and may
+    emit a fresh UUID. Proper names resolve against the whole durable graph;
+    generic roles remain restricted to entities activated by this turn.
+    """
+    if not delta or not knowledge_graph:
+        return []
+
+    graph_candidates = [
+        entity
+        for entity in (getattr(knowledge_graph, "_entities", {}) or {}).values()
+        if getattr(getattr(entity, "entity_type", None), "value", "") == "npc"
+        and str(getattr(entity, "name", "") or "").strip()
+    ]
+    activated_candidates: list[Any] = []
+    for entity_id in dict.fromkeys(candidate_entity_ids):
+        entity = knowledge_graph.get_entity(entity_id)
+        entity_type = getattr(getattr(entity, "entity_type", None), "value", "")
+        name = str(getattr(entity, "name", "") or "").strip()
+        if not entity or entity_type != "npc" or not name:
+            continue
+        # The graph uses node_id; the shared resolver accepts either id or
+        # node_id, so expose the canonical graph id without mutating Entity.
+        activated_candidates.append(entity)
+        if all(
+            getattr(candidate, "node_id", None) != entity.node_id
+            for candidate in graph_candidates
+        ):
+            graph_candidates.append(entity)
+
+    reanchored: list[tuple[str, str, str]] = []
+    proposed_npcs = list(getattr(delta, "new_npcs", []) or [])
+    for npc in proposed_npcs:
+        name = str(getattr(npc, "name", "") or "").strip()
+        generic = is_generic_npc_label(name)
+        match = resolve_unique_identity(
+            name,
+            activated_candidates if generic else graph_candidates,
+        )
+        if (
+            match is None
+            and generic
+            and len(proposed_npcs) == 1
+            and len(activated_candidates) == 1
+        ):
+            # A sole role label ("Ragpicker", "the hooded figure") is not a
+            # new identity.  The narrator's sole activated/ref'd NPC is the
+            # only safe canonical anchor; ambiguous turns still abstain.
+            match = activated_candidates[0]
+        if match is None:
+            continue
+        canonical_id = match.node_id
+        if canonical_id in current_npc_ids or npc.id == canonical_id:
+            continue
+        previous_id = npc.id
+        npc.id = canonical_id
+        reanchored.append((previous_id, canonical_id, npc.name))
+    return reanchored
+
+
+def _canonicalize_npc_effect_ids(
+    effects: list[ProposedEffect],
+    world_state,
+    knowledge_graph,
+) -> list[ProposedEffect]:
+    """Rewrite narrator NPC slugs onto durable UUIDs before extraction.
+
+    Models sometimes echo ``cinder-vex`` even though the authoritative graph
+    key is a UUID. Both dialects resolve at execution time, but retaining the
+    slug prevents StateDelta from reconciling an off-screen return. Only exact,
+    unique NPC identities are rewritten.
+    """
+    if not effects:
+        return effects
+    graph_npcs = [
+        entity
+        for entity in (getattr(knowledge_graph, "_entities", {}) or {}).values()
+        if getattr(getattr(entity, "entity_type", None), "value", "") == "npc"
+    ]
+    normalized: list[ProposedEffect] = []
+    for effect in effects:
+        field = None
+        value = ""
+        alias = None
+        if effect.effect_type == EffectType.REF_ENTITY and effect.ref_entity_id:
+            field = "ref_entity_id"
+            value = effect.ref_entity_id
+            alias = effect.ref_alias_used
+        elif effect.effect_type == EffectType.UPDATE_ENTITY and effect.update_entity_id:
+            field = "update_entity_id"
+            value = effect.update_entity_id
+        if field is None:
+            normalized.append(effect)
+            continue
+
+        existing = (
+            world_state._resolve_npc(value, alias or None)
+            if world_state is not None
+            else None
+        )
+        canonical_id = getattr(existing, "id", None)
+        if not canonical_id:
+            match = resolve_unique_identity(value, graph_npcs)
+            canonical_id = getattr(match, "node_id", None)
+        normalized.append(
+            effect.model_copy(update={field: canonical_id})
+            if canonical_id and canonical_id != value
+            else effect
+        )
+    return normalized
+
+
+def _reanchor_same_turn_generic_npc_effects(
+    effects: list[ProposedEffect],
+    delta,
+    world_state,
+) -> list[ProposedEffect]:
+    """Anchor an early role-slug update to a sole NPC created this turn.
+
+    Narrator effects are proposed before StateDelta materializes anonymous
+    people.  A model may therefore target ``archive-courier`` while the same
+    prose creates ``the courier``.  After StateDelta applies, reconcile only a
+    unique generic-role token overlap; ambiguous scenes deliberately abstain.
+    """
+    if not effects or not delta or world_state is None:
+        return effects
+
+    generic_new_npcs = [
+        npc
+        for npc in (getattr(delta, "new_npcs", []) or [])
+        if is_generic_npc_label(str(getattr(npc, "name", "") or ""))
+        and getattr(npc, "id", None) in world_state.npcs
+    ]
+    if not generic_new_npcs:
+        return effects
+
+    noise = {"a", "an", "the", "this", "that"}
+    anchored: list[ProposedEffect] = []
+    for effect in effects:
+        target = str(effect.update_entity_id or "").strip()
+        if effect.effect_type != EffectType.UPDATE_ENTITY or not target:
+            anchored.append(effect)
+            continue
+        resolved_target = world_state._resolve_npc(target, target)
+        if resolved_target is not None:
+            if (
+                resolved_target.id != target
+                and any(
+                    npc.id == resolved_target.id for npc in generic_new_npcs
+                )
+            ):
+                anchored.append(effect.model_copy(update={
+                    "update_entity_id": resolved_target.id,
+                }))
+            else:
+                anchored.append(effect)
+            continue
+
+        target_words = set(re.findall(r"[a-z0-9]+", target.casefold())) - noise
+        matches = []
+        for npc in generic_new_npcs:
+            role_words = (
+                set(re.findall(r"[a-z0-9]+", npc.name.casefold())) - noise
+            )
+            if target_words and role_words and target_words.intersection(role_words):
+                matches.append(npc)
+        unique_matches = {npc.id: npc for npc in matches}
+        if len(unique_matches) != 1:
+            anchored.append(effect)
+            continue
+
+        npc = next(iter(unique_matches.values()))
+        anchored.append(effect.model_copy(update={"update_entity_id": npc.id}))
+        logger.info(
+            "same_turn_generic_npc_effect_reanchored",
+            previous_id=target,
+            canonical_id=npc.id,
+            npc_name=npc.name,
+        )
+    return anchored
+
+
+def _merge_delta_npcs_with_narrator_refs(
+    delta,
+    world_state,
+    narrator_refs: list[tuple[str, str]],
+    narrator_prose: str = "",
+) -> list[tuple[str, str, str]]:
+    """Turn extractor ``new_npcs`` into updates when tools proved identity.
+
+    ``ref_entity`` is the narrator's explicit identity claim.  The cheaper
+    StateDelta extractor can nevertheless see a newly revealed proper name
+    (``the cloaked woman`` -> ``Mira``) and emit a fresh UUID.  When that name
+    exactly matches the alias attached to a reference, merge the descriptive
+    delta onto the referenced WorldState NPC instead of fragmenting the graph.
+
+    A generic role is also safe to merge when the turn contains exactly one
+    referenced current NPC and one proposed NPC; roles are aliases, never new
+    durable identities.  All ambiguous cases abstain.
+    """
+    if not delta or not world_state or not narrator_refs:
+        return []
+
+    resolved_refs: list[tuple[Any, str]] = []
+    seen_ids: set[str] = set()
+    for entity_id, alias in narrator_refs:
+        existing = world_state._resolve_npc(entity_id, alias or None)
+        if existing is None or existing.id in seen_ids:
+            continue
+        seen_ids.add(existing.id)
+        resolved_refs.append((existing, alias))
+    if not resolved_refs:
+        return []
+
+    proposed_npcs = list(getattr(delta, "new_npcs", []) or [])
+    surviving = []
+    merged: list[tuple[str, str, str]] = []
+    from ..game.world_state import NPCUpdate
+
+    for proposed in proposed_npcs:
+        matches = []
+        for existing, alias in resolved_refs:
+            if resolve_unique_identity(proposed.name, [existing]) is existing:
+                matches.append((existing, alias))
+                continue
+            if alias and identity_keys(proposed.name) & identity_keys(alias):
+                matches.append((existing, alias))
+                continue
+            if explicit_npc_naming_link(
+                narrator_prose,
+                str(getattr(existing, "name", "") or ""),
+                str(getattr(proposed, "name", "") or ""),
+            ):
+                matches.append((existing, alias))
+
+        if (
+            not matches
+            and len(proposed_npcs) == 1
+            and len(resolved_refs) == 1
+            and is_generic_npc_label(proposed.name)
+        ):
+            matches = resolved_refs
+
+        unique_matches = {match[0].id: match for match in matches}
+        if len(unique_matches) != 1:
+            surviving.append(proposed)
+            continue
+
+        existing, _alias = next(iter(unique_matches.values()))
+        explicit_name = (
+            proposed.name
+            if not is_generic_npc_label(proposed.name)
+            and not resolve_unique_identity(proposed.name, [existing])
+            else None
+        )
+        aliases = None
+        if (
+            is_generic_npc_label(proposed.name)
+            and proposed.name.casefold() != existing.name.casefold()
+        ):
+            aliases = [proposed.name]
+        disposition = (
+            proposed.disposition
+            if proposed.disposition and proposed.disposition != existing.disposition
+            else None
+        )
+        delta.npc_updates.append(NPCUpdate(
+            id=existing.id,
+            location=(
+                proposed.location
+                if proposed.location
+                and proposed.location == world_state.current_location
+                and proposed.location != existing.location
+                else None
+            ),
+            disposition=disposition,
+            description=proposed.description or None,
+            important=True if proposed.important and not existing.important else None,
+            new_name=explicit_name,
+            add_aliases=aliases,
+            add_inventory=list(proposed.inventory) or None,
+        ))
+        merged.append((proposed.id, existing.id, proposed.name))
+
+    delta.new_npcs = surviving
+    return merged
+
+
+def _anchor_returning_add_npc_effects(
+    effects: list[ProposedEffect],
+    knowledge_graph,
+) -> list[ProposedEffect]:
+    """Attach a durable graph UUID when add_npc brings back a known NPC.
+
+    Scene-scoped WorldState legitimately forgets off-screen NPC projections,
+    but the campaign graph does not.  An exact unique name/alias match means
+    the visible arrival is a materialization of that durable identity, not a
+    license to mint a second UUID.
+    """
+    if not effects or knowledge_graph is None:
+        return effects
+    candidates = [
+        entity
+        for entity in (getattr(knowledge_graph, "_entities", {}) or {}).values()
+        if getattr(getattr(entity, "entity_type", None), "value", "") == "npc"
+    ]
+    anchored: list[ProposedEffect] = []
+    for effect in effects:
+        if (
+            effect.effect_type != EffectType.ADD_NPC
+            or not effect.npc_name
+            or is_generic_npc_label(effect.npc_name)
+        ):
+            anchored.append(effect)
+            continue
+        match = resolve_unique_identity(effect.npc_name, candidates)
+        if match is None:
+            anchored.append(effect)
+            continue
+        anchored_effect = effect.model_copy(update={"npc_canonical_id": match.node_id})
+        anchored.append(anchored_effect)
+        logger.info(
+            "returning_add_npc_anchored",
+            npc_name=effect.npc_name,
+            canonical_id=match.node_id,
+        )
+    return anchored
+
+
+def _drop_dead_npc_reintroductions(delta, dead_npcs: list[Any]) -> list[str]:
+    """Remove extractor-created NPCs that resolve to immutable death facts."""
+    if not delta or not dead_npcs:
+        return []
+    surviving = []
+    rejections = []
+    for proposed in getattr(delta, "new_npcs", []) or []:
+        dead = resolve_unique_identity(str(getattr(proposed, "name", "")), dead_npcs)
+        if dead is None:
+            surviving.append(proposed)
+            continue
+        rejections.append(
+            f"Dead NPC cannot be reintroduced as living: {dead.name}"
+        )
+    delta.new_npcs = surviving
+    return rejections
 
 
 def _cap_kg_context_yaml(yaml_text: str, max_chars: int = KG_CONTEXT_MAX_CHARS) -> str:
@@ -602,6 +1011,8 @@ class DMOrchestrator:
         # turn collapse onto the same key.
         self._applied_effects: _BoundedKeySet = _BoundedKeySet(maxlen=1000)
         self._last_executed_effects: list[ProposedEffect] = []  # For KG bridging
+        self._last_effect_executions: list[dict] = []
+        self._last_effect_rejections: list[dict] = []
 
         # DM Scratchpad: session-scoped state for narrator continuity.
         # Inspired by coordinator scratchpad pattern from agentic orchestration.
@@ -628,6 +1039,7 @@ class DMOrchestrator:
             append_tool_reminder=self._append_tool_reminder,
             extract_prose_and_effects=self._extract_prose_and_effects,
             get_on_token=lambda: getattr(self, "_on_narrative_token", None),
+            get_governance=self._get_narrative_governance,
         )
 
     def set_session(self, session: Optional["GameSession"]) -> None:
@@ -665,6 +1077,33 @@ class DMOrchestrator:
         self._effect_executor = None  # Lazy init in _process_proposed_effects
 
     # ==================== Post-Generation Validation ====================
+
+    def _known_dead_npcs(self) -> list[Any]:
+        """Return de-duplicated session and campaign death facts."""
+        known: list[Any] = []
+        seen: set[str] = set()
+        world_ids: set[str] = set()
+        if self._current_session:
+            world_state = getattr(self._current_session, "world_state", None)
+            if world_state is not None:
+                world_ids = set(world_state.npcs)
+                for npc in world_state.npcs.values():
+                    if not npc.alive and npc.id not in seen:
+                        known.append(npc)
+                        seen.add(npc.id)
+            for npc in getattr(
+                self._current_session, "campaign_dead_npcs", {}
+            ).values():
+                # A code-authorized revival in WorldState overrides the older
+                # durable death fact until persistence catches up.
+                if npc.id not in seen and npc.id not in world_ids:
+                    known.append(npc)
+                    seen.add(npc.id)
+        return known
+
+    def _get_narrative_governance(self) -> NarrativeGovernance:
+        """Build rules from authoritative state for this exact turn."""
+        return NarrativeGovernance(self._known_dead_npcs())
 
     def _validate_npc_references(self, narrative: str) -> str:
         """Deterministic check for NPC references in narrator output.
@@ -823,6 +1262,13 @@ class DMOrchestrator:
         """
         context.player_action = action
         context.player_name = player_name
+
+        # Effect receipts are turn-local even when this turn returns early or
+        # continuity fails closed with no proposals. Stale receipts overstated
+        # execution telemetry and could be bridged into the graph again.
+        self._last_executed_effects = []
+        self._last_effect_executions = []
+        self._last_effect_rejections = []
 
         # ── Turn Logger: start recording ──
         session_id = context.session_id or context.campaign_id or "unknown"
@@ -1047,8 +1493,23 @@ class DMOrchestrator:
                 items=pgi_items,
                 currency=pgi_currency,
                 resources_consumed=triage.resources_consumed or None,
-                item_name=triage.item_name,
+                item_name=(
+                    None
+                    if mechanical_result
+                    and mechanical_result.get("operation") == "transfer_from_npc"
+                    else triage.item_name
+                ),
                 cost_gold=float(triage.item_cost) if triage.item_cost else 0,
+                scene_item_names=(
+                    [entity.name for entity in self._scene_registry.get_all()]
+                    if self._scene_registry
+                    else []
+                ) + (
+                    list(self._current_session.world_state.scene_items)
+                    if self._current_session
+                    and self._current_session.world_state
+                    else []
+                ),
             )
 
             # Record PGI results for observability
@@ -1137,19 +1598,34 @@ class DMOrchestrator:
                 if _kg_seed_ids:
                     # Graph context: structured relationships, capped —
                     # to_context_yaml limits entity count, not rendered size.
+                    # A 2.0-radius neighborhood crossed location-to-location
+                    # edges and then pulled in NPCs at the adjacent location.
+                    # That leaked off-screen people into otherwise irrelevant
+                    # prompts. A 1.0 weighted radius still includes directly
+                    # related co-located entities (LOCATED_AT = 0.3) while
+                    # requiring explicit text/vector retrieval for NPCs beyond
+                    # the immediate graph neighborhood.
                     context.kg_context_yaml = _cap_kg_context_yaml(
-                        kg.to_context_yaml(_kg_seed_ids)
+                        kg.to_context_yaml(_kg_seed_ids, radius=1.0)
                     )
 
-                    # Narrative recall: past prose about these entities
+                    # Narrative recall is triggered only by entities resolved
+                    # from the player's action (exact or vector fallback).
+                    # Ambient scene membership supplies current graph context,
+                    # but must not continuously reactivate old episodes.
                     try:
                         vs = get_vector_store()
-                        seed_names = [kg.get_entity(s).name for s in _kg_seed_ids if kg.get_entity(s)]
+                        recall_seed_ids = list(text_seeds)
+                        seed_names = [
+                            kg.get_entity(s).name
+                            for s in recall_seed_ids
+                            if kg.get_entity(s)
+                        ]
                         if seed_names:
                             ws_turn = world_state_pre.turn if world_state_pre else 0
                             past_chunks = vs.recall_narratives_for_entities(
                                 campaign_id=context.campaign_id,
-                                entity_ids=_kg_seed_ids,
+                                entity_ids=recall_seed_ids,
                                 query_text=" ".join(seed_names),
                                 max_results=2,
                                 current_turn=ws_turn,
@@ -1187,12 +1663,39 @@ class DMOrchestrator:
         else:
             # No mechanics - just respond to the player's action naturally
             narrative, proposed_effects = await self._narrate_action(action, player_name, context, triage)
+
+        # Some mechanical handlers own deterministic state transitions that
+        # narration must dramatize but must not be trusted to reconstruct.
+        # Keep narrator references/scene additions, replace overlapping
+        # mutation families with the authoritative mechanical effects.
+        authoritative_effects = list(
+            (mechanical_result or {}).get("authoritative_effects") or []
+        )
+        if authoritative_effects:
+            authoritative_types = {
+                effect.effect_type for effect in authoritative_effects
+            }
+            proposed_effects = [
+                effect for effect in proposed_effects
+                if effect.effect_type not in authoritative_types
+            ] + authoritative_effects
         # Cache the prose for the dedup judge in _process_proposed_effects.
         # The judge reads this to decide whether an add_npc looks like an
         # entity already in the registry.
         self._last_narrator_prose = narrative or ""
         _turn_record.end_stage("narrate")
-        _turn_record.record_narrator_response(narrative or "", format_type=_get_client_provider(self.narrator.client))
+        _narration_diagnostics = dict(
+            getattr(self._narration_strategy, "last_diagnostics", {})
+        )
+        _turn_record.record_narrator_response(
+            narrative or "",
+            format_type=_get_client_provider(self.narrator.client),
+            reprompted=bool(
+                _narration_diagnostics.get("continuity_repair_attempted")
+                or _narration_diagnostics.get("tool_followup_attempted")
+            ),
+        )
+        _turn_record.set("narration_diagnostics", _narration_diagnostics)
 
         # Phase A telemetry: record which narrator tier handled this turn.
         # Source-of-truth is _last_narrator_routing populated by
@@ -1206,40 +1709,124 @@ class DMOrchestrator:
         if narrative and self._scene_registry:
             narrative = self._validate_npc_references(narrative)
 
+        world_state = (
+            getattr(self._current_session, 'world_state', None)
+            if self._current_session else None
+        )
+        proposed_effects = _anchor_returning_add_npc_effects(
+            proposed_effects,
+            kg,
+        )
+        proposed_effects = _canonicalize_npc_effect_ids(
+            proposed_effects,
+            world_state,
+            kg,
+        )
+
         # Step 3.5b: Collect ref_entity IDs from narrator intents.
         # These are entities the narrator explicitly tagged — used to
         # prevent the state extractor from creating duplicates, and as
         # additional KG seeds for narrative chunk tagging.
         _narrator_ref_ids: list[str] = []
+        _narrator_refs: list[tuple[str, str]] = []
+        _extractor_accounted_entities: list[str] = []
         if proposed_effects:
-            from .effects import EffectType as _ET
             for e in proposed_effects:
-                if e.effect_type == _ET.REF_ENTITY and e.ref_entity_id:
+                if e.effect_type == EffectType.REF_ENTITY and e.ref_entity_id:
                     _narrator_ref_ids.append(e.ref_entity_id)
-                elif e.effect_type == _ET.ADD_NPC and e.npc_name:
+                    alias = str(e.ref_alias_used or "").strip()
+                    _narrator_refs.append((e.ref_entity_id, alias))
+                    _extractor_accounted_entities.append(
+                        f"{e.ref_entity_id} (prose alias: {alias})"
+                        if alias else e.ref_entity_id
+                    )
+                elif e.effect_type == EffectType.ADD_NPC and e.npc_name:
                     # Also tell extractor about narrator-declared new NPCs
                     # so it doesn't create duplicates via new_npcs
                     _narrator_ref_ids.append(e.npc_name)
+                    _extractor_accounted_entities.append(e.npc_name)
+                    if e.npc_canonical_id:
+                        _narrator_ref_ids.append(e.npc_canonical_id)
+                        _narrator_refs.append(
+                            (e.npc_canonical_id, e.npc_name)
+                        )
 
         # Step 3.6: World state extraction — extract StateDelta and apply
         # Uses cheap brain model to identify what changed in the world
         delta = None
-        world_state = getattr(self._current_session, 'world_state', None) if self._current_session else None
+        self._last_state_rejections = []
         # Capture pre-delta location for knowledge graph connectivity
         pre_delta_location = world_state.current_location if world_state else ""
         if narrative and world_state:
             _turn_record.start_stage("state_extract")
             delta = await self._extract_and_apply_state_delta(
                 narrative, world_state, context,
-                referenced_entity_ids=_narrator_ref_ids,
+                referenced_entity_ids=_extractor_accounted_entities,
+                canonical_entity_ids=list(dict.fromkeys(
+                    _kg_seed_ids + _narrator_ref_ids
+                )),
+                narrator_refs=_narrator_refs,
             )
             _turn_record.end_stage("state_extract")
+
+            # Step 3.6a: Extractor-coordinated tool recovery. When the applied
+            # delta contains a high-confidence mutation with no matching
+            # narrator tool, request exactly the missing calls so canonical
+            # grounding (location names, identity bindings) still flows
+            # through Step 4. The delta already kept world state correct;
+            # this leg only restores narrator-authored grounding.
+            if delta:
+                try:
+                    from .state_followup import uncovered_state_signals
+                    _followup_signals = uncovered_state_signals(
+                        delta,
+                        before_location=pre_delta_location,
+                        narrative=narrative,
+                        proposed_effects=proposed_effects,
+                        world_state=world_state,
+                        player_name=context.player_name,
+                    )
+                    if _followup_signals:
+                        _turn_record.start_stage("state_followup")
+                        _recovered = await (
+                            self._narration_strategy.targeted_state_followup(
+                                narrative, _followup_signals
+                            )
+                        )
+                        _turn_record.end_stage("state_followup")
+                        proposed_effects.extend(_recovered)
+                        _turn_record.record_state_followup(
+                            signals=[
+                                s.instruction for s in _followup_signals
+                            ],
+                            recovered=len(_recovered),
+                            structural_errors=list(
+                                self._narration_strategy.last_diagnostics.get(
+                                    "state_followup_structural_errors", []
+                                )
+                            ),
+                        )
+                        logger.info(
+                            "state_followup_recovery",
+                            signals=len(_followup_signals),
+                            recovered=len(_recovered),
+                        )
+                except Exception as e:
+                    logger.warning(
+                        "state_followup_failed", error=str(e), exc_info=True
+                    )
+
+            proposed_effects = _reanchor_same_turn_generic_npc_effects(
+                proposed_effects,
+                delta,
+                world_state,
+            )
 
             # Record state delta to turn log (including parse warnings)
             if delta:
                 _turn_record.record_state_delta(
                     delta_dict=delta.model_dump(exclude_none=True, exclude_defaults=True),
-                    rejections=[],
+                    rejections=list(self._last_state_rejections),
                     parse_warnings=getattr(delta, "_parse_warnings", None),
                 )
 
@@ -1299,9 +1886,13 @@ class DMOrchestrator:
                 from ..memory import get_vector_store
                 matcher = EntityNameMatcher(kg)
 
-                # Tag with entities mentioned in the narrative + scene seeds + narrator refs
+                # Narrative memory provenance must reflect this output, not
+                # the context that happened to be retrieved before generation.
                 narrator_entity_ids = matcher.match(narrative)
-                all_tags = list(set(narrator_entity_ids + _kg_seed_ids + _narrator_ref_ids))
+                all_tags = _explicit_narrative_tags(
+                    narrator_entity_ids,
+                    _narrator_ref_ids,
+                )
 
                 if all_tags:
                     vs = get_vector_store()
@@ -1335,6 +1926,15 @@ class DMOrchestrator:
                 text_match_seeds=_kg_text_match_seeds,
                 scene_seeds=_kg_scene_seeds,
                 vector_match_seeds=_kg_vector_match_seeds,
+                catalog_entities=[
+                    {
+                        "id": entity.node_id,
+                        "name": entity.name,
+                        "type": entity.entity_type.value,
+                        "aliases": list(entity.aliases),
+                    }
+                    for entity in kg._entities.values()
+                ],
             )
 
         # Step 4: Process narrator output - entity extraction + proposed effects
@@ -1454,21 +2054,13 @@ class DMOrchestrator:
         ws_after = world_state.to_yaml() if world_state else ""
         _turn_record.record_world_state(ws_before, ws_after)
         _turn_record.set("combat_triggered", combat_triggered)
-        _turn_record.set("effects_count", len(proposed_effects))
-
-        # Record effects detail — especially ref_entity for entity grounding observability
-        if proposed_effects:
-            from .effects import EffectType as _ET
-            _turn_record.set("effects", [
-                {
-                    "type": e.effect_type.value,
-                    **({"ref_id": e.ref_entity_id} if e.effect_type == _ET.REF_ENTITY else {}),
-                    **({"ref_alias": e.ref_alias_used} if e.ref_alias_used else {}),
-                    **({"npc_name": e.npc_name} if e.effect_type == _ET.ADD_NPC else {}),
-                    **({"item": e.item_name or e.object_name} if e.item_name or e.object_name else {}),
-                }
-                for e in proposed_effects
-            ])
+        _turn_record.set("effects_count", len(self._last_effect_executions))
+        _turn_record.set("effects_proposed_count", len(proposed_effects))
+        _turn_record.record_effects(
+            proposed=[_effect_telemetry_record(effect) for effect in proposed_effects],
+            executed=list(self._last_effect_executions),
+            rejected=list(self._last_effect_rejections),
+        )
 
         # Token usage stats
         narr_prompt = getattr(self, '_last_narrator_prompt_tokens', 0)
@@ -1931,28 +2523,56 @@ class DMOrchestrator:
 
         _, character = resolved
 
-        # Determine inventory action type from the action text
+        # Determine inventory action type from the action text. NPC transfers
+        # are their own operations: treating "hand my compass to Mara" as an
+        # unknown interaction fed [RESULT: FAILURE] to the narrator even when
+        # the player owned the item and Mara had already agreed.
+        transfer_from_npc = bool(re.search(
+            r"\b(?:hands?|gives?|passes?|returns?)\b.+\b(?:back\s+)?to\s+me\b",
+            action_lower,
+        ))
+        transfer_to_npc = bool(re.search(
+            r"\b(?:i\s+)?(?:hand|give|pass|offer)\b.+\bto\b",
+            action_lower,
+        )) and not transfer_from_npc
+
         pickup_keywords = ["pick up", "pickup", "take", "grab", "collect", "pocket", "put in", "stash", "keep"]
         drop_keywords = ["drop", "discard", "throw away", "leave", "abandon"]
         equip_keywords = ["equip", "wield", "wear", "don", "put on", "draw"]
         unequip_keywords = ["unequip", "remove", "take off", "sheathe", "stow"]
         use_keywords = ["use", "drink", "eat", "consume", "apply", "read"]
 
-        is_pickup = any(kw in action_lower for kw in pickup_keywords)
-        is_drop = any(kw in action_lower for kw in drop_keywords)
-        is_equip = any(kw in action_lower for kw in equip_keywords)
-        is_unequip = any(kw in action_lower for kw in unequip_keywords)
-        is_use = any(kw in action_lower for kw in use_keywords)
+        # Resolve overlapping phrases before branching.  In particular,
+        # ``unequip`` contains ``equip`` and ``take off`` contains ``take``;
+        # the old independent booleans therefore routed both to the wrong
+        # mutation and reported a success that never reached the DB.
+        if transfer_from_npc:
+            operation = "transfer_from_npc"
+        elif transfer_to_npc:
+            operation = "transfer_to_npc"
+        elif any(kw in action_lower for kw in unequip_keywords):
+            operation = "unequip"
+        elif any(kw in action_lower for kw in equip_keywords):
+            operation = "equip"
+        elif any(kw in action_lower for kw in drop_keywords):
+            operation = "drop"
+        elif any(kw in action_lower for kw in pickup_keywords):
+            operation = "pickup"
+        elif any(kw in action_lower for kw in use_keywords):
+            operation = "use"
+        else:
+            operation = "interact"
 
         # Extract item name from triage or try to parse from action
         item_name = triage.item_name
         if not item_name:
             # Try to extract from common patterns like "pick up the feather"
-            import re
             patterns = [
                 r"(?:pick up|take|grab|pocket|keep|put)\s+(?:the\s+)?(.+?)(?:\s+in|\s+into|$)",
                 r"(?:drop|discard)\s+(?:the\s+)?(.+?)$",
-                r"(?:equip|wield|wear)\s+(?:the\s+)?(.+?)$",
+                r"(?:unequip|remove|take off|sheathe|stow)\s+(?:the\s+)?(.+?)$",
+                r"(?:equip|wield|wear|don|put on|draw)\s+(?:the\s+)?(.+?)$",
+                r"(?:use|drink|eat|consume|apply|read)\s+(?:the\s+)?(.+?)$",
             ]
             for pattern in patterns:
                 match = re.search(pattern, action_lower)
@@ -1968,7 +2588,123 @@ class DMOrchestrator:
 
         quantity = triage.quantity or 1
 
-        if is_pickup:
+        if operation in {"transfer_to_npc", "transfer_from_npc"}:
+            world = (
+                self._current_session.world_state
+                if self._current_session else None
+            )
+            local_npcs = world.get_npcs_at_location() if world else []
+            target_npc = next(
+                (
+                    npc for npc in local_npcs
+                    if npc.name and npc.name.casefold() in action_lower
+                ),
+                None,
+            )
+            if target_npc is None:
+                return {
+                    "action_type": "inventory",
+                    "operation": operation,
+                    "success": False,
+                    "item": item_name,
+                    "error": "Transfer target is not a named NPC in the scene",
+                    "narrative_hint": (
+                        f"{player_name} cannot complete the transfer because "
+                        "the recipient is not present."
+                    ),
+                }
+
+            inventory_repo = await get_inventory_repo()
+            player_items = await inventory_repo.get_all_items(character.id)
+            item_lower = item_name.casefold()
+
+            if operation == "transfer_to_npc":
+                matching = [
+                    item for item in player_items
+                    if item_lower in item.item_name.casefold()
+                ]
+                if not matching:
+                    return {
+                        "action_type": "inventory",
+                        "operation": operation,
+                        "success": False,
+                        "item": item_name,
+                        "error": f"'{item_name}' not found in inventory",
+                        "narrative_hint": (
+                            f"{player_name} reaches for the {item_name}, but "
+                            "does not have it to give."
+                        ),
+                    }
+                canonical_item = matching[0].item_name
+                authoritative_effects = [
+                    ProposedEffect(
+                        effect_type=EffectType.UPDATE_PLAYER,
+                        player_item_remove=[{
+                            "name": canonical_item,
+                            "quantity": quantity,
+                            "destination": f"npc:{target_npc.id}",
+                        }],
+                    ),
+                    ProposedEffect(
+                        effect_type=EffectType.UPDATE_ENTITY,
+                        update_entity_id=target_npc.id,
+                        update_add_items=[canonical_item],
+                    ),
+                ]
+                hint = (
+                    f"{player_name} hands the {canonical_item} to "
+                    f"{target_npc.name}, who accepts it and now holds it."
+                )
+            else:
+                matching = [
+                    held for held in target_npc.inventory
+                    if item_lower in held.casefold()
+                ]
+                if not matching:
+                    return {
+                        "action_type": "inventory",
+                        "operation": operation,
+                        "success": False,
+                        "item": item_name,
+                        "error": f"{target_npc.name} does not hold '{item_name}'",
+                        "narrative_hint": (
+                            f"{target_npc.name} cannot return the {item_name} "
+                            "because they do not have it."
+                        ),
+                    }
+                canonical_item = matching[0]
+                authoritative_effects = [
+                    ProposedEffect(
+                        effect_type=EffectType.UPDATE_PLAYER,
+                        player_item_grant=[{
+                            "name": canonical_item,
+                            "quantity": quantity,
+                            "source": f"npc:{target_npc.id}",
+                        }],
+                    ),
+                    ProposedEffect(
+                        effect_type=EffectType.UPDATE_ENTITY,
+                        update_entity_id=target_npc.id,
+                        update_remove_items=[canonical_item],
+                    ),
+                ]
+                hint = (
+                    f"{target_npc.name} hands the {canonical_item} back to "
+                    f"{player_name}, who puts it in their pack."
+                )
+
+            return {
+                "action_type": "inventory",
+                "operation": operation,
+                "success": True,
+                "item": canonical_item,
+                "quantity": quantity,
+                "target_npc_id": target_npc.id,
+                "narrative_hint": hint,
+                "authoritative_effects": authoritative_effects,
+            }
+
+        if operation == "pickup":
             # Add item to inventory (pass the Character resolved above —
             # see _execute_add_item)
             result = await self._execute_add_item(character, {
@@ -1999,7 +2735,7 @@ class DMOrchestrator:
                     "narrative_hint": f"{player_name} tries to pick up the {item_name}, but something prevents them.",
                 }
 
-        elif is_drop:
+        elif operation == "drop":
             # Resolve the item against the character's real inventory before
             # claiming a drop (mirrors the commerce fix: this used to return
             # narrative-only success while the inventory row was untouched).
@@ -2041,32 +2777,97 @@ class DMOrchestrator:
                 "tool_calls": [{"name": "remove_item", "result": result}],
             }
 
-        elif is_equip:
+        elif operation in {"equip", "unequip"}:
+            inventory_repo = await get_inventory_repo()
+            items = await inventory_repo.get_all_items(character.id)
+            item_lower = item_name.lower()
+            should_be_equipped = operation == "equip"
+            matching = [
+                item for item in items
+                if item_lower in item.item_name.lower()
+                and item.equipped is not should_be_equipped
+            ]
+
+            if not matching:
+                desired_state = "unequipped" if should_be_equipped else "equipped"
+                return {
+                    "action_type": "inventory",
+                    "operation": operation,
+                    "success": False,
+                    "item": item_name,
+                    "error": f"'{item_name}' not found {desired_state} in inventory",
+                    "narrative_hint": (
+                        f"{player_name} tries to {operation} the {item_name}, "
+                        f"but doesn't have it {desired_state}."
+                    ),
+                }
+
+            item = matching[0]
+            if should_be_equipped:
+                changed = await inventory_repo.equip_item(item.id)
+            else:
+                changed = await inventory_repo.unequip_item(item.id)
+
+            if not changed:
+                return {
+                    "action_type": "inventory",
+                    "operation": operation,
+                    "success": False,
+                    "item": item.item_name,
+                    "error": f"Failed to {operation} '{item.item_name}'",
+                    "narrative_hint": (
+                        f"{player_name} tries to {operation} the {item.item_name}, "
+                        "but its state does not change."
+                    ),
+                }
+
+            verb = "equips" if should_be_equipped else "unequips"
             return {
                 "action_type": "inventory",
-                "operation": "equip",
+                "operation": operation,
                 "success": True,
-                "item": item_name,
-                "narrative_hint": f"{player_name} equips the {item_name}.",
+                "item": item.item_name,
+                "narrative_hint": f"{player_name} {verb} the {item.item_name}.",
+                "tool_calls": [{
+                    "name": f"{operation}_item",
+                    "result": {
+                        "character": character.name,
+                        "item": item.item_name,
+                        "item_id": item.id,
+                        "equipped": should_be_equipped,
+                    },
+                }],
             }
 
-        elif is_use:
+        elif operation == "use":
+            # Inventory rows do not yet carry item effects, charges, or a
+            # consumable category.  Consuming an arbitrary matching row here
+            # would be as misleading as the old narrative-only success.
             return {
                 "action_type": "inventory",
                 "operation": "use",
-                "success": True,
+                "success": False,
                 "item": item_name,
-                "narrative_hint": f"{player_name} uses the {item_name}.",
+                "error": "Generic item use is not implemented for this item",
+                "narrative_hint": (
+                    f"{player_name} tries to use the {item_name}, but its "
+                    "mechanical effect is not defined."
+                ),
             }
 
         else:
-            # Generic inventory interaction
+            # Do not claim a state change for an operation we could not
+            # classify and execute.
             return {
                 "action_type": "inventory",
                 "operation": "interact",
-                "success": True,
+                "success": False,
                 "item": item_name,
-                "narrative_hint": f"{player_name} interacts with the {item_name}.",
+                "error": "Inventory operation was not recognized",
+                "narrative_hint": (
+                    f"{player_name} considers the {item_name}, but takes no "
+                    "tracked inventory action."
+                ),
             }
 
     async def _consume_resources(
@@ -2314,10 +3115,17 @@ class DMOrchestrator:
         if world_state and world_state.npcs:
             constraints = []
             hostile_npcs = []
-            for npc in world_state.npcs.values():
+            # The reminder is part of the narrator prompt, so it must obey
+            # the same scene boundary as WorldState.to_yaml and KG seeding.
+            # Important off-screen NPCs remain durable in ``world_state.npcs``
+            # but must not become ambient cast members on every turn.
+            for npc in world_state.get_npcs_at_location():
                 if npc.alive:
                     desc = npc.description[:80] if npc.description else ""
-                    constraints.append(f"- {npc.name}: {npc.disposition}, {desc}")
+                    constraints.append(
+                        f"- **{npc.name}** [id: {npc.id}]: "
+                        f"{npc.disposition}, {desc}"
+                    )
                     if npc.disposition in ("hostile", "unfriendly"):
                         hostile_npcs.append(npc.name)
             if constraints:
@@ -2336,12 +3144,50 @@ class DMOrchestrator:
                     "Describe what THEY do, not just what they look like."
                 )
 
+        # Keep the final tool instruction self-contained. Some callers pass
+        # a prebuilt BrainContext that omits the scene block; without this
+        # roster copy the model can echo a plausible ID that neither the
+        # followup guard nor StateDelta can safely classify as existing.
+        scene_registry = getattr(self, "_scene_registry", None)
+        if scene_registry:
+            live_roster = scene_registry.get_narrator_roster()
+            if live_roster:
+                parts.append(live_roster)
+
+        # The durable death catalog may grow large in a seeded campaign.
+        # Surface only facts relevant to the assembled context; the
+        # deterministic post-validator still checks every known dead NPC.
+        grounding_text = "\n".join(
+            str(message.get("content") or "") for message in messages
+        ).casefold()
+        dead_npcs = []
+        for npc in self._known_dead_npcs():
+            candidates = [npc.name, *npc.aliases]
+            if not any(
+                candidate and candidate.casefold() in grounding_text
+                for candidate in candidates
+            ):
+                continue
+            aliases = (
+                f" (aliases: {', '.join(npc.aliases)})" if npc.aliases else ""
+            )
+            dead_npcs.append(f"- {npc.name}{aliases}: DEAD")
+        if dead_npcs:
+            parts.append(
+                "IMMUTABLE DEAD-NPC FACTS (never contradict these):\n"
+                + "\n".join(dead_npcs)
+                + "\nA dead NPC cannot speak, move, react, arrive, or appear "
+                "alive. Mention one only as an explicitly framed corpse, "
+                "memory, dream, spirit, or illusion. Never invent a resurrection."
+            )
+
         parts.append(
             "AFTER writing your prose, you MUST call tools:\n"
             "- ref_entity for each roster entity you mentioned\n"
-            "- add_npc for any new NPC you introduced\n"
+            "- add_npc ONLY for a properly named new NPC physically present in this scene; the exact proper name must already appear in your visible prose; if you leave someone anonymous as 'the woman', 'a guard', or a role, do not call add_npc and do not invent a tool-only name\n"
             "- spawn_object for any new object you described\n"
             "Do NOT skip tool calls. Every entity in your prose must be tagged.\n\n"
+            "Every tool call MUST include all required arguments; never call a tool with {}.\n\n"
             "NEVER write [id: ...] tags in your prose text."
         )
 
@@ -2743,6 +3589,8 @@ Write your narration directly."""
         world_state: "WorldState",
         context: BrainContext,
         referenced_entity_ids: list[str] | None = None,
+        canonical_entity_ids: list[str] | None = None,
+        narrator_refs: list[tuple[str, str]] | None = None,
     ) -> Optional["StateDelta"]:
         """Extract a StateDelta from narrator prose and apply to WorldState.
 
@@ -2755,6 +3603,12 @@ Write your narration directly."""
                 via ref_entity intents. Passed to the extractor so it knows
                 which entities are already accounted for and avoids creating
                 duplicates.
+            canonical_entity_ids: KG entities activated by the player's action
+                this turn. Exact-name returning NPCs may reuse these durable
+                IDs after scene rescoping removed them from WorldState.
+            narrator_refs: Explicit ``(entity_id, prose_alias)`` pairs from
+                narrator tools. These are authoritative identity evidence for
+                merging extractor-created duplicate NPCs.
         """
 
         try:
@@ -2765,13 +3619,55 @@ Write your narration directly."""
                 referenced_entity_ids=referenced_entity_ids,
             )
 
+            merged_refs = _merge_delta_npcs_with_narrator_refs(
+                delta,
+                world_state,
+                narrator_refs or [],
+                narrative,
+            )
+            for previous_id, canonical_id, npc_name in merged_refs:
+                logger.info(
+                    "state_delta_npc_merged_into_narrator_reference",
+                    npc_name=npc_name,
+                    previous_id=previous_id,
+                    canonical_id=canonical_id,
+                )
+
+            kg = getattr(self._current_session, "knowledge_graph", None)
+            reanchored = _reanchor_returning_npc_ids(
+                delta,
+                kg,
+                set(world_state.npcs),
+                canonical_entity_ids or [],
+            )
+            for previous_id, canonical_id, npc_name in reanchored:
+                logger.info(
+                    "returning_npc_reanchored",
+                    npc_name=npc_name,
+                    previous_id=previous_id,
+                    canonical_id=canonical_id,
+                )
+
+            governance_rejections = _drop_dead_npc_reintroductions(
+                delta,
+                self._known_dead_npcs(),
+            )
+            for rejection in governance_rejections:
+                logger.warning(
+                    "state_delta_governance_rejection",
+                    reason=rejection,
+                )
+
             # Apply through the single-writer store: dedup (the brain judge
             # catching extractor paraphrases like "Old Bram" for a
             # registered "Bram") → validate → write, all inside apply_delta
             # (Step 5).
-            rejections = await WorldStateStore(world_state).apply_delta(
+            rejections = governance_rejections + await WorldStateStore(
+                world_state
+            ).apply_delta(
                 delta, narrator_prose=narrative
             )
+            self._last_state_rejections = list(rejections)
 
             if rejections:
                 logger.debug(
@@ -2949,6 +3845,8 @@ Write your narration directly."""
         Returns True if any effect triggered combat.
         """
         self._last_executed_effects = []
+        self._last_effect_executions = []
+        self._last_effect_rejections = []
 
         if not effects:
             return False
@@ -3020,6 +3918,11 @@ Write your narration directly."""
             # Validate
             validation = self._effect_validator.validate(effect)
             if not validation.valid:
+                self._last_effect_rejections.append({
+                    **_effect_telemetry_record(effect),
+                    "stage": "validation",
+                    "reason": validation.rejection_reason,
+                })
                 logger.warning(
                     "effect_validation_failed",
                     effect_type=effect.effect_type.value,
@@ -3031,6 +3934,11 @@ Write your narration directly."""
             result = await self._effect_executor.execute(effect, idem_key)
 
             if result.success:
+                self._last_effect_executions.append({
+                    **_effect_telemetry_record(effect),
+                    "was_duplicate": bool(result.was_duplicate),
+                    "details": dict(result.details or {}),
+                })
                 logger.info(
                     "effect_applied",
                     effect_type=effect.effect_type.value,
@@ -3070,6 +3978,11 @@ Write your narration directly."""
                                 reason=effect.reason,
                             )
             else:
+                self._last_effect_rejections.append({
+                    **_effect_telemetry_record(effect),
+                    "stage": "execution",
+                    "reason": result.error,
+                })
                 logger.warning(
                     "effect_execution_failed",
                     effect_type=effect.effect_type.value,

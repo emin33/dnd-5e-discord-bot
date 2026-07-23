@@ -228,6 +228,7 @@ class KGContextSnapshot:
     scene_seeds: list[str]
     vector_match_seeds: list[str]
     narrative_chunks: list[dict]
+    catalog_entities: list[dict]
 
     def mentions(self, substring: str) -> bool:
         """Does the injected context (yaml + chunks) reference this string?"""
@@ -263,13 +264,9 @@ class NarratorResponse:
 class EffectsSnapshot:
     """All effects emitted on a single turn.
 
-    The orchestrator currently writes effects as a flat list of dicts
-    via ``_turn_record.set("effects", [...])``. Each entry has a "type"
-    key plus ad-hoc shape fields (item, ref_id, npc_name, etc.). The
-    reader normalizes both that list and the legacy
-    {proposed, executed, rejected} shape into a single flat ``effects``
-    list and continues to expose ``executed_of_type`` etc. as if all
-    fired effects landed.
+    Current logs use ``{proposed, executed, rejected}``; ``effects`` is the
+    executed bucket used by reliability assertions. Flat-list logs from older
+    runs remain readable and are treated as executed for compatibility.
     """
     effects: list[dict]
     proposed: list[dict] = None
@@ -398,6 +395,7 @@ class TurnLogReader:
             scene_seeds=list(kg.get("scene_seeds", []) or []),
             vector_match_seeds=list(kg.get("vector_match_seeds", []) or []),
             narrative_chunks=list(kg.get("narrative_chunks", []) or []),
+            catalog_entities=list(kg.get("catalog_entities", []) or []),
         )
 
     def narrator_response(self, turn: int) -> NarratorResponse:
@@ -408,6 +406,11 @@ class TurnLogReader:
             format=nr.get("format", ""),
             reprompted=bool(nr.get("reprompted", False)),
         )
+
+    def narration_diagnostics(self, turn: int) -> dict:
+        """Repair/buffering counters emitted by the shared narration path."""
+        rec = self._by_turn.get(turn) or {}
+        return dict(rec.get("narration_diagnostics") or {})
 
     def effects_at(self, turn: int) -> EffectsSnapshot:
         rec = self._by_turn.get(turn) or {}

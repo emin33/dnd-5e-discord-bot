@@ -252,10 +252,9 @@ class TestExtractorDedupRewrite:
         )
 
         # Stateful mock: rewrite first, accept second
-        responses = [
-            '{"action": "rewrite", "target_id": "bram-uuid", "alias": "Old Bram"}',
-            '{"action": "accept"}',
-        ]
+        # Old Bram is resolved deterministically before the semantic judge;
+        # only the genuinely distinct Marta reaches the model.
+        responses = ['{"action": "accept"}']
         class _SeqBrain:
             def __init__(self):
                 self.i = 0

@@ -11,13 +11,22 @@ narrator's view of reality as a compact YAML snapshot.
 """
 
 from typing import Optional
+import re
 import uuid
 import structlog
 import yaml
 
 from pydantic import BaseModel, Field
 
+from .identity import locations_equivalent
+
 logger = structlog.get_logger()
+
+_GENERIC_FACT_ANCHORS = {
+    "the woman", "a woman", "woman", "the man", "a man", "man",
+    "the person", "a person", "person", "the stranger", "a stranger",
+    "the guard", "a guard", "the scribe", "a scribe",
+}
 
 # Valid time-of-day values (ordered for advancement)
 TIME_PROGRESSION = [
@@ -205,6 +214,27 @@ class WorldState(BaseModel):
         """Advance the turn counter."""
         self.turn += 1
 
+    def revive_npc(self, name_or_id: str, *, authoritative_reason: str) -> bool:
+        """Perform an explicit, code-authorized dead-to-alive transition.
+
+        Generic extractor deltas and narrator tools may describe state but
+        cannot authorize resurrection. A future spell/ritual mechanic calls
+        this method only after it has validated costs, targets, and outcome.
+        """
+        reason = (authoritative_reason or "").strip()
+        if not reason:
+            raise ValueError("NPC revival requires an authoritative reason")
+        npc = self.npcs.get(name_or_id) or self._find_npc(name_or_id)
+        if npc is None or npc.alive:
+            return False
+        npc.alive = True
+        marker = f"[revived: {reason}]"
+        npc.notes = f"{npc.notes} {marker}".strip()
+        self.recent_events.append(f"{npc.name} was revived: {reason}")
+        if len(self.recent_events) > self._max_recent_events:
+            self.recent_events = self.recent_events[-self._max_recent_events:]
+        return True
+
     # ── Item & Currency Tracking ──
 
     def spawn_item(self, item_id: str, description: str) -> None:
@@ -274,7 +304,9 @@ class WorldState(BaseModel):
                 self.location_description = delta.location_description
             scene_changed = bool(
                 previous_location
-                and previous_location.lower() != delta.location_change.lower()
+                and not locations_equivalent(
+                    previous_location, delta.location_change
+                )
             )
 
         # New connections
@@ -307,8 +339,16 @@ class WorldState(BaseModel):
                 )
                 continue
 
+            # Generic LLM-extracted deltas cannot authorize resurrection.
+            # A validated game mechanic must call revive_npc() explicitly.
+            if not existing.alive and update.alive is True:
+                rejections.append(
+                    f"Dead NPC revival requires authoritative transition: {existing.name}"
+                )
+                continue
+
             # Validate: dead NPCs can't act
-            if not existing.alive and update.alive is not True:
+            if not existing.alive:
                 if update.disposition or update.location or update.notes:
                     rejections.append(f"Dead NPC cannot act: {existing.name}")
                     continue
@@ -437,13 +477,14 @@ class WorldState(BaseModel):
         the rescope onto registry-side state.
         """
         self.scene_items.clear()
-        loc = (self.current_location or "").lower()
         dropped: list[NPCState] = []
         for npc_id in list(self.npcs):
             npc = self.npcs[npc_id]
             if npc.important:
                 continue
-            if npc.location and npc.location.lower() == loc:
+            if npc.location and locations_equivalent(
+                npc.location, self.current_location
+            ):
                 continue
             dropped.append(self.npcs.pop(npc_id))
         if dropped:
@@ -512,30 +553,69 @@ class WorldState(BaseModel):
 
     def get_npcs_at_location(self, location: str = "") -> list[NPCState]:
         """Get NPCs at a specific location (default: current party location)."""
-        loc = location or self.current_location
-        if not loc:
+        target_location = location or self.current_location
+        if not target_location:
             return list(self.npcs.values())
         return [
             npc for npc in self.npcs.values()
-            if npc.alive and npc.location and npc.location.lower() == loc.lower()
+            if npc.alive
+            and npc.location
+            and locations_equivalent(npc.location, target_location)
         ]
 
     def get_important_npcs_elsewhere(self) -> list[NPCState]:
         """Get important NPCs NOT at the current location."""
-        loc = self.current_location.lower() if self.current_location else ""
         return [
             npc for npc in self.npcs.values()
             if npc.alive and npc.important
-            and (not npc.location or npc.location.lower() != loc)
+            and (
+                not npc.location
+                or not locations_equivalent(npc.location, self.current_location)
+            )
         ]
+
+    @staticmethod
+    def _normalized_fact_text(value: str) -> str:
+        return " ".join(re.findall(r"[a-z0-9]+", (value or "").casefold()))
+
+    def get_scene_relevant_facts(self, max_facts: int = 20) -> list[str]:
+        """Project durable facts whose canonical subject is in this scene.
+
+        ``established_facts`` remains the complete campaign ledger. The
+        narrator sees only facts anchored to the current location, a living
+        on-stage NPC (name or alias), or a current scene-item ID. This keeps
+        immediate prerequisites authoritative without making old off-screen
+        characters globally salient forever.
+        """
+        anchors = [self.current_location]
+        for npc in self.get_npcs_at_location():
+            anchors.extend([npc.name, *npc.aliases])
+        anchors.extend(self.scene_items.keys())
+        normalized_anchors = {
+            self._normalized_fact_text(anchor)
+            for anchor in anchors
+            if self._normalized_fact_text(anchor)
+            and self._normalized_fact_text(anchor) not in _GENERIC_FACT_ANCHORS
+        }
+        if not normalized_anchors:
+            return []
+
+        relevant = []
+        for fact in self.established_facts:
+            normalized_fact = f" {self._normalized_fact_text(fact)} "
+            if any(
+                f" {anchor} " in normalized_fact
+                for anchor in normalized_anchors
+            ):
+                relevant.append(fact)
+        return relevant[-max_facts:]
 
     def to_yaml(self) -> str:
         """Serialize to compact YAML for narrator injection.
 
-        Tiered NPC detail:
-        - Full detail for NPCs at current location
-        - One-line summary for important NPCs elsewhere
-        - Minor NPCs at other locations omitted
+        This is a current-scene prompt projection, not a dump of the durable
+        campaign catalog. Off-screen NPCs and historical map connections stay
+        in WorldState for explicit retrieval but are intentionally absent here.
         """
         data: dict = {
             "turn": self.turn,
@@ -548,8 +628,6 @@ class WorldState(BaseModel):
             data["location"] = self.current_location
             if self.location_description:
                 data["location_desc"] = self.location_description
-            if self.connected_locations:
-                data["exits"] = self.connected_locations
 
         # Players
         if self.players:
@@ -593,32 +671,6 @@ class WorldState(BaseModel):
                 npc_entries.append(entry)
             data["npcs_here"] = npc_entries
 
-        # Important NPCs elsewhere — same structured format as npcs_here,
-        # so paraphrase-resolution against id+description+aliases works
-        # regardless of whether the entity is in the current scene.
-        distant_important = self.get_important_npcs_elsewhere()
-        if distant_important:
-            distant_entries = []
-            for npc in distant_important:
-                entry: dict = {
-                    "id": npc.id,
-                    "name": npc.name,
-                    "disposition": npc.disposition,
-                    "location": npc.location or "unknown",
-                }
-                if npc.description:
-                    entry["desc"] = npc.description[:120]
-                if npc.aliases:
-                    entry["aliases"] = list(npc.aliases)
-                if npc.inventory:
-                    entry["inventory"] = list(npc.inventory)
-                if npc.notes:
-                    entry["notes"] = npc.notes[:60]
-                if npc.last_seen_turn:
-                    entry["last_seen_turn"] = npc.last_seen_turn
-                distant_entries.append(entry)
-            data["key_npcs_elsewhere"] = distant_entries
-
         # Active quests
         active_quests = [q for q in self.quests.values() if q.status == "active"]
         if active_quests:
@@ -650,9 +702,12 @@ class WorldState(BaseModel):
         if self.recent_events:
             data["recent_events"] = self.recent_events
 
-        # Established facts
-        if self.established_facts:
-            data["facts"] = self.established_facts
+        # ``established_facts`` is a durable campaign ledger, not ambient
+        # scene membership. Broadcast only facts canonically anchored to the
+        # current scene; historical/off-screen facts return through retrieval.
+        scene_facts = self.get_scene_relevant_facts()
+        if scene_facts:
+            data["facts"] = scene_facts
 
         # Global flags (only true ones, for brevity)
         active_flags = {k: v for k, v in self.global_flags.items() if v}

@@ -139,79 +139,83 @@ class RestManager:
         elif class_index == "fighter":
             # Second Wind: recover 1 use per short/long rest (level 1+)
             # Action Surge: recover 1 use per short/long rest (level 2+)
-            if level >= 1:
-                if not hasattr(character, "second_wind_used"):
-                    character.second_wind_used = False
-                if character.second_wind_used:
-                    character.second_wind_used = False
-                    features.append("Second Wind")
+            # These counters are not part of the persisted Character schema
+            # yet.  Recover them only when a caller supplies a compatible
+            # extended model; assigning unknown Pydantic fields raises and
+            # used to make an otherwise-valid rest fail.
+            if level >= 1 and getattr(character, "second_wind_used", False):
+                setattr(character, "second_wind_used", False)
+                features.append("Second Wind")
 
-            if level >= 2:
-                if not hasattr(character, "action_surge_used"):
-                    character.action_surge_used = 0
-                # At level 17+, fighters get 2 Action Surges
-                max_surges = 2 if level >= 17 else 1
-                if character.action_surge_used > 0:
-                    character.action_surge_used = 0
-                    features.append("Action Surge")
+            if level >= 2 and getattr(character, "action_surge_used", 0) > 0:
+                setattr(character, "action_surge_used", 0)
+                features.append("Action Surge")
 
         elif class_index == "monk":
             # All ki points recovered on short rest
             if level >= 2:
-                if not hasattr(character, "ki_points"):
-                    character.ki_points = level  # Ki = monk level
-                    character.ki_max = level
-                else:
-                    if character.ki_points < character.ki_max:
-                        character.ki_points = character.ki_max
-                        features.append(f"Ki points ({character.ki_max})")
+                ki_points = getattr(character, "ki_points", None)
+                ki_max = getattr(character, "ki_max", None)
+                if (
+                    isinstance(ki_points, int)
+                    and isinstance(ki_max, int)
+                    and ki_points < ki_max
+                ):
+                    setattr(character, "ki_points", ki_max)
+                    features.append(f"Ki points ({ki_max})")
 
         elif class_index == "bard":
             # Song of Rest happens automatically (healing bonus) - handled elsewhere
             # Bardic Inspiration: at level 5+, recharges on short rest
             if level >= 5:
-                if not hasattr(character, "bardic_inspiration_uses"):
-                    cha_mod = max(1, character.abilities.cha_mod)
-                    character.bardic_inspiration_uses = cha_mod
-                    character.bardic_inspiration_max = cha_mod
-                else:
-                    if character.bardic_inspiration_uses < character.bardic_inspiration_max:
-                        character.bardic_inspiration_uses = character.bardic_inspiration_max
-                        features.append("Bardic Inspiration")
+                uses = getattr(character, "bardic_inspiration_uses", None)
+                maximum = getattr(character, "bardic_inspiration_max", None)
+                if (
+                    isinstance(uses, int)
+                    and isinstance(maximum, int)
+                    and uses < maximum
+                ):
+                    setattr(character, "bardic_inspiration_uses", maximum)
+                    features.append("Bardic Inspiration")
 
         elif class_index == "cleric":
             # Channel Divinity: recover 1 use per short rest (level 2+)
             if level >= 2:
-                if not hasattr(character, "channel_divinity_uses"):
-                    max_uses = 1 if level < 6 else (2 if level < 18 else 3)
-                    character.channel_divinity_uses = max_uses
-                    character.channel_divinity_max = max_uses
-                else:
-                    if character.channel_divinity_uses < character.channel_divinity_max:
-                        character.channel_divinity_uses = character.channel_divinity_max
-                        features.append("Channel Divinity")
+                uses = getattr(character, "channel_divinity_uses", None)
+                maximum = getattr(character, "channel_divinity_max", None)
+                if (
+                    isinstance(uses, int)
+                    and isinstance(maximum, int)
+                    and uses < maximum
+                ):
+                    setattr(character, "channel_divinity_uses", maximum)
+                    features.append("Channel Divinity")
 
         elif class_index == "paladin":
             # Channel Divinity: recover 1 use per short rest (level 3+)
             if level >= 3:
-                if not hasattr(character, "channel_divinity_uses"):
-                    character.channel_divinity_uses = 1
-                    character.channel_divinity_max = 1
-                else:
-                    if character.channel_divinity_uses < character.channel_divinity_max:
-                        character.channel_divinity_uses = character.channel_divinity_max
-                        features.append("Channel Divinity")
+                uses = getattr(character, "channel_divinity_uses", None)
+                maximum = getattr(character, "channel_divinity_max", None)
+                if (
+                    isinstance(uses, int)
+                    and isinstance(maximum, int)
+                    and uses < maximum
+                ):
+                    setattr(character, "channel_divinity_uses", maximum)
+                    features.append("Channel Divinity")
 
         elif class_index == "druid":
             # Wild Shape uses: 2 per short/long rest (level 2+)
             if level >= 2:
-                if not hasattr(character, "wild_shape_uses"):
-                    character.wild_shape_uses = 2
-                    character.wild_shape_max = 2
-                else:
-                    if character.wild_shape_uses < character.wild_shape_max:
-                        character.wild_shape_uses = character.wild_shape_max
-                        features.append("Wild Shape")
+                uses = getattr(character, "wild_shape_uses", None)
+                maximum = getattr(character, "wild_shape_max", None)
+                if (
+                    isinstance(uses, int)
+                    and isinstance(maximum, int)
+                    and uses < maximum
+                ):
+                    setattr(character, "wild_shape_uses", maximum)
+                    features.append("Wild Shape")
 
         return features
 
@@ -271,7 +275,6 @@ class RestManager:
         character.spell_slots.restore_all()
 
         # Recover hit dice (half rounded up, minimum 1) — PHB p.186
-        dice_to_recover = max(1, -(-character.hit_dice.total // 2))
         old_dice = character.hit_dice.remaining
         character.hit_dice.recover_long_rest()
         hit_dice_restored = character.hit_dice.remaining - old_dice
@@ -294,8 +297,10 @@ class RestManager:
         # Break concentration
         character.concentration_spell_id = None
 
-        # TODO: Recover class features
-        features_recovered: list[str] = ["All class features"]
+        # Restore only feature counters that actually exist on the model.
+        # The base Character schema currently persists none of the class-use
+        # counters, so claiming "All class features" here was a false success.
+        features_recovered = self._recover_short_rest_features(character)
 
         logger.info(
             "long_rest_taken",

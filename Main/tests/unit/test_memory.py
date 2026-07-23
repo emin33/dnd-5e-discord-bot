@@ -394,6 +394,17 @@ class TestContextBuilding:
         assert "Eldermoor" in context
         assert "</established_facts>" in context
 
+    def test_live_turn_context_does_not_broadcast_unrelated_pinned_facts(self):
+        mgr = MemoryManager("test-campaign")
+        mgr.buffer._pinned_facts = [
+            "NPC: Sera Vell - ragpicker at the distant Tallow Market",
+        ]
+
+        context = mgr.build_context("I pause at the Archive gate and look around.")
+
+        assert "Sera Vell" not in context
+        assert "<established_facts>" not in context
+
     def test_context_pinned_facts_before_story(self):
         """Pinned facts appear before story_so_far in context."""
         mgr = MemoryManager("test-campaign")

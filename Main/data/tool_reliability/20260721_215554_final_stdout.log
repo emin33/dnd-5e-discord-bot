@@ -1,0 +1,850 @@
+[1m[2m[STORAGE][0m isolated: C:\Users\ericm\AppData\Local\Temp\dnd-longform-hj7j2tb6
+2026-07-21 21:55:55 [info     ] connecting_to_database         path=C:\Users\ericm\AppData\Local\Temp\dnd-longform-hj7j2tb6\dnd_bot.db
+2026-07-21 21:55:55 [info     ] applying_migration             file=001_initial_schema.sql version=1
+2026-07-21 21:55:55 [info     ] migration_applied              version=1
+2026-07-21 21:55:55 [info     ] applying_migration             file=002_add_indexes_and_cascades.sql version=2
+2026-07-21 21:55:55 [info     ] migration_applied              version=2
+2026-07-21 21:55:55 [info     ] applying_migration             file=003_knowledge_graph.sql version=3
+2026-07-21 21:55:55 [info     ] migration_applied              version=3
+2026-07-21 21:55:55 [info     ] applying_migration             file=004_immersion_features.sql version=4
+2026-07-21 21:55:55 [info     ] migration_applied              version=4
+2026-07-21 21:55:55 [info     ] applying_migration             file=005_character_immersion_columns.sql version=5
+2026-07-21 21:55:55 [info     ] migration_applied              version=5
+2026-07-21 21:55:55 [info     ] database_connected
+2026-07-21 21:55:55 [info     ] loading_srd_data               path='C:\\Projects\\Discord Bots\\D&D 5e\\Main\\..\\5e-database\\src\\2014'
+2026-07-21 21:55:55 [debug    ] srd_category_loaded            category=ability_scores count=6
+2026-07-21 21:55:55 [debug    ] srd_category_loaded            category=alignments count=9
+2026-07-21 21:55:55 [debug    ] srd_category_loaded            category=backgrounds count=1
+2026-07-21 21:55:55 [debug    ] srd_category_loaded            category=classes count=12
+2026-07-21 21:55:55 [debug    ] srd_category_loaded            category=conditions count=15
+2026-07-21 21:55:55 [debug    ] srd_category_loaded            category=damage_types count=13
+2026-07-21 21:55:55 [debug    ] srd_category_loaded            category=equipment_categories count=39
+2026-07-21 21:55:55 [debug    ] srd_category_loaded            category=equipment count=237
+2026-07-21 21:55:55 [debug    ] srd_category_loaded            category=feats count=1
+2026-07-21 21:55:55 [debug    ] srd_category_loaded            category=features count=407
+2026-07-21 21:55:55 [debug    ] srd_category_loaded            category=languages count=16
+2026-07-21 21:55:55 [debug    ] srd_category_loaded            category=levels count=290
+2026-07-21 21:55:55 [debug    ] srd_category_loaded            category=magic_items count=362
+2026-07-21 21:55:55 [debug    ] srd_category_loaded            category=magic_schools count=8
+2026-07-21 21:55:55 [debug    ] srd_category_loaded            category=monsters count=334
+2026-07-21 21:55:55 [debug    ] srd_category_loaded            category=proficiencies count=117
+2026-07-21 21:55:55 [debug    ] srd_category_loaded            category=races count=9
+2026-07-21 21:55:55 [debug    ] srd_category_loaded            category=rule_sections count=33
+2026-07-21 21:55:55 [debug    ] srd_category_loaded            category=rules count=6
+2026-07-21 21:55:55 [debug    ] srd_category_loaded            category=skills count=18
+2026-07-21 21:55:55 [debug    ] srd_category_loaded            category=spells count=319
+2026-07-21 21:55:55 [debug    ] srd_category_loaded            category=subclasses count=12
+2026-07-21 21:55:55 [debug    ] srd_category_loaded            category=subraces count=4
+2026-07-21 21:55:55 [debug    ] srd_category_loaded            category=traits count=38
+2026-07-21 21:55:55 [debug    ] srd_category_loaded            category=weapon_properties count=11
+2026-07-21 21:55:55 [info     ] srd_data_loaded                categories=25 total_items=2317
+2026-07-21 21:55:55 [debug    ] starting_item_added            character_id=539f2236-8f69-448d-aede-44a31883528e item=Longbow quantity=1
+2026-07-21 21:55:55 [debug    ] starting_item_added            character_id=539f2236-8f69-448d-aede-44a31883528e item=Arrow quantity=20
+2026-07-21 21:55:55 [info     ] starting_equipment_assigned    character_id=539f2236-8f69-448d-aede-44a31883528e class_index=ranger gold=100 item_count=5
+[1m[92m[EQUIPMENT][0m Starting gear assigned
+[1m[92m[CAMPAIGN][0m test_harness (aff357d6...)
+[1m[92m[CHARACTER][0m Kael Windrunner - L1 elf ranger
+2026-07-21 21:55:55 [info     ] knowledge_graph_loaded         campaign_id=aff357d6-0760-4650-9e52-c563cf572449 edges=0 nodes=0
+2026-07-21 21:55:55 [info     ] knowledge_graph_loaded         campaign_id=aff357d6-0760-4650-9e52-c563cf572449 edges=0 nodes=0
+2026-07-21 21:55:56 [info     ] session_started                campaign_id=aff357d6-0760-4650-9e52-c563cf572449 channel_id=999999 session_id=3d986478-d972-4941-92fe-cf4c8c082dbf session_number=1
+[1m[92m[SESSION][0m Started: 3d986478-d972-4941-92fe-cf4c8c082dbf
+2026-07-21 21:55:56 [info     ] player_joined_session          character='Kael Windrunner' session_id=3d986478-d972-4941-92fe-cf4c8c082dbf user_id=888888
+[1m[92m[PLAYER][0m Joined as Kael Windrunner
+2026-07-21 21:55:56 [debug    ] kg_operations_applied          count=4 rejections=0
+2026-07-21 21:55:56 [info     ] entity_registered              disposition=friendly hostility=0 id=672de291-36f8-4f53-bc0f-409001347bc6 monster_index=None name='Mara Venn' type=npc
+2026-07-21 21:55:56 [info     ] entity_registered              disposition=neutral hostility=0 id=brass-compass monster_index=None name='brass compass' type=object
+2026-07-21 21:55:56 [info     ] entity_registered              disposition=neutral hostility=0 id=sealed-reliquary monster_index=None name='sealed reliquary' type=object
+
+[1m------------------------------------------------------------[0m
+[1m  Turn 1: [96m"I greet Mara Venn by name and ask what she has learned about the Ash Gate."[0m
+[1m------------------------------------------------------------[0m
+2026-07-21 21:55:56 [info     ] chromadb_initialized           path=C:\Users\ericm\AppData\Local\Temp\dnd-longform-hj7j2tb6\chroma
+2026-07-21 21:55:57 [info     ] narrator_client_init           cache_hit=False model=deepseek-v4-flash profile=deepseek_v4_flash_qwen9b provider=deepseek requested_tier=standard resolved_tier=standard
+2026-07-21 21:55:57 [info     ] brain_client_init              model=qwen3.5:9b profile=deepseek_v4_flash_qwen9b provider=ollama
+2026-07-21 21:55:57 [info     ] processing_action              action='I greet Mara Venn by name and ask what she has lea' player='Kael Windrunner'
+2026-07-21 21:56:08 [info     ] ollama_raw_response            has_message_attr=True is_dict=False response_type=ChatResponse
+2026-07-21 21:56:08 [info     ] ollama_message_extracted       content_length=128 content_preview='{\n    "action_type": "social",\n    "narrative_significance": "routine",\n    "resources_consumed": [],\n    "currency_spent": {}\n}' content_type=str has_thinking=False
+2026-07-21 21:56:08 [debug    ] triage_raw_response            content='{\n    "action_type": "social",\n    "narrative_significance": "routine",\n    "resources_consumed": [],\n    "currency_spent": {}\n}'
+2026-07-21 21:56:08 [info     ] triage_decision                action_type=social dc=None is_creature_target=False needs_roll=False reasoning= skill=None target_name=None
+2026-07-21 21:56:08 [debug    ] kg_context_injected            narrative_recalled=0 scene_seeds=2 seed_count=2 text_matches=1 vector_matches=0
+2026-07-21 21:56:08 [info     ] narrator_tier_selected         action_type=social definitely_standard=False forced=False in_combat=False is_opening=False significance=routine tier=standard
+2026-07-21 21:56:08 [info     ] srd_rules_loaded               count=33
+2026-07-21 21:56:14 [info     ] deepseek_response              cache_hit_ratio=0.8720800889877642 cache_hit_tokens=6272 cache_miss_tokens=920 content_length=1112 content_preview="Mara Venn looks up from the iron reliquary on the table. Her fingers hover near the bronze pin but don't touch it. The Copper Finch is empty this morning — just the two of you and the rain hammering t" model=deepseek-v4-flash reasoning_length=0 thinking=False
+2026-07-21 21:56:14 [debug    ] narrator_tools_used            action='I greet Mara Venn by name and ask what she has learned about' effects_count=2 tool_count=2
+2026-07-21 21:56:14 [debug    ] narrator_npc_reference         disposition=friendly npc='Mara Venn'
+2026-07-21 21:56:18 [info     ] ollama_raw_response            has_message_attr=True is_dict=False response_type=ChatResponse
+2026-07-21 21:56:18 [info     ] ollama_message_extracted       content_length=426 content_preview='{\n  "new_facts": [\n    "The Copper Finch tavern is empty except for Kael and Mara Venn.",\n    "Old Bram\'s body was found on the ferry slip three days ago.",\n    "Bram had an iron key to the Ash Gate, ' content_type=str has_thinking=False
+2026-07-21 21:56:18 [info     ] state_delta_extracted          has_location=False has_time=False new_events=0 new_facts=4 new_npcs=0 npc_updates=0
+2026-07-21 21:56:18 [info     ] world_state_updated            facts_count=6 location='Copper Finch' npc_count=1 time=morning turn=1
+2026-07-21 21:56:18 [info     ] memory_added                   campaign_id=aff357d6-0760-4650-9e52-c563cf572449 memory_id=narrative_bd588c1f-cbab-41b0-bb3c-4875d981bc62
+2026-07-21 21:56:18 [info     ] entity_referenced              alias_used=None dialogue_emotions=['tired', 'sharp', 'calm', 'serious', 'probing'] dialogue_indices=[1, 2, 3, 4, 5] entity_id=mara-venn entity_name='Mara Venn'
+2026-07-21 21:56:18 [info     ] effect_executed                effect_type=ref_entity idempotency_key=aff357d6-0760-4650-9e52-c563cf572449:discord:999999:turn-1:0 success=True
+2026-07-21 21:56:18 [info     ] effect_applied                 details={'entity_id': 'mara-venn', 'alias_used': None, 'found_in_scene': True, 'found_in_world': True, 'world_reference_type': 'npc'} effect_type=ref_entity was_duplicate=False
+2026-07-21 21:56:18 [info     ] entity_referenced              alias_used=None dialogue_emotions=[] dialogue_indices=[] entity_id=sealed-reliquary entity_name='sealed reliquary'
+2026-07-21 21:56:18 [info     ] effect_executed                effect_type=ref_entity idempotency_key=aff357d6-0760-4650-9e52-c563cf572449:discord:999999:turn-1:1 success=True
+2026-07-21 21:56:18 [info     ] effect_applied                 details={'entity_id': 'sealed-reliquary', 'alias_used': None, 'found_in_scene': True, 'found_in_world': True, 'world_reference_type': 'item'} effect_type=ref_entity was_duplicate=False
+2026-07-21 21:56:18 [info     ] message_processed              action_preview='I greet Mara Venn by name and ask what she has lea' combat_triggered=False has_mechanics=False scene_entities=3 session_id=3d986478-d972-4941-92fe-cf4c8c082dbf user=TestPlayer
+
+[1m[95m[NARRATION][0m 
+  Mara Venn looks up from the iron reliquary on the table. Her fingers hover 
+  near the bronze pin but don't touch it. The Copper Finch is empty this 
+  morning — just the two of you and the rain hammering the shutters. She 
+  studies you a moment, then nods. "Kael. Good. I was about to come find you." 
+  She leans back, charcoal coat creaking. Her eyes are tired but sharp. "The 
+  Ash Gate's been sealed for three days now. Since Old Bram's body was found on 
+  the ferry slip." She pauses. "You knew him?" She doesn't wait for an answer. 
+  "Whoever killed him didn't just want him dead. They wanted the gate locked 
+  from this side. Bram had the only key — iron, old as the city. It's gone. And 
+  the gate won't open without it." She taps the reliquary with one knuckle. A 
+  hollow ring. "This arrived at my door last night. Anonymous. The demolition 
+  charge inside is live. Armed. Someone wants that gate blown open." Her eyes 
+  lock onto yours. "So tell me, Kael — what do you *want* to know about the Ash 
+  Gate? Because I've got three different answers depending on whether you're 
+  planning to open it, seal it, or walk away." 
+
+[2m  [22.9s][0m
+  [92mNo issues detected[0m
+  [2m[MEM] buffer=2, overflow=0, summary=no (0ch), scratchpad=0[0m
+
+[1m------------------------------------------------------------[0m
+[1m  Turn 2: [96m"This is an uncontested item transfer with no roll: I hand my brass compass to Mara Venn, she accepts it, and it is now in her coat rather than my pack."[0m
+[1m------------------------------------------------------------[0m
+2026-07-21 21:56:19 [info     ] processing_action              action='This is an uncontested item transfer with no roll:' player='Kael Windrunner'
+2026-07-21 21:56:21 [info     ] ollama_raw_response            has_message_attr=True is_dict=False response_type=ChatResponse
+2026-07-21 21:56:21 [info     ] ollama_message_extracted       content_length=530 content_preview='{\n    "action_type": "inventory",\n    "reasoning": "The player explicitly states \'uncontested item transfer with no roll\'. The scene involves moving an object from one inventory to another between fri' content_type=str has_thinking=False
+2026-07-21 21:56:21 [debug    ] triage_raw_response            content='{\n    "action_type": "inventory",\n    "reasoning": "The player explicitly states \'uncontested item transfer with no roll\'. The scene involves moving an object from one inventory to another between fri'
+2026-07-21 21:56:21 [info     ] triage_decision                action_type=inventory dc=None is_creature_target=False needs_roll=False reasoning="The player explicitly states 'uncontested item transfer with no roll'. The scene involves moving an " skill=None target_name=None
+2026-07-21 21:56:21 [debug    ] kg_context_injected            narrative_recalled=0 scene_seeds=2 seed_count=2 text_matches=1 vector_matches=0
+2026-07-21 21:56:21 [info     ] narrator_tier_selected         action_type=inventory definitely_standard=True forced=False in_combat=False is_opening=False significance=routine tier=standard
+2026-07-21 21:56:24 [info     ] deepseek_response              cache_hit_ratio=0.8054535920293655 cache_hit_tokens=6144 cache_miss_tokens=1484 content_length=824 content_preview="Kael's fingers find the familiar weight of the brass compass in his pack. He draws it out — the casing worn smooth by years of handling — and holds it across the table.\n\nMara's eyes track the movement" model=deepseek-v4-flash reasoning_length=0 thinking=False
+2026-07-21 21:56:26 [info     ] deepseek_response              cache_hit_ratio=0.9727170798554877 cache_hit_tokens=7808 cache_miss_tokens=219 content_length=0 content_preview= model=deepseek-v4-flash reasoning_length=0 thinking=False
+2026-07-21 21:56:26 [info     ] narrator_tool_followup         effects_count=3 tool_count=3
+2026-07-21 21:56:29 [info     ] ollama_raw_response            has_message_attr=True is_dict=False response_type=ChatResponse
+2026-07-21 21:56:29 [info     ] ollama_message_extracted       content_length=205 content_preview='{\n  "new_facts": [\n    "Mara Venn has not yet taken Kael\'s brass compass.",\n    "Kael is offering his brass compass to Mara Venn voluntarily."\n  ],\n  "flag_changes": {\n    "gate_sealed_status": false\n' content_type=str has_thinking=False
+2026-07-21 21:56:29 [info     ] state_delta_extracted          has_location=False has_time=False new_events=0 new_facts=2 new_npcs=0 npc_updates=0
+2026-07-21 21:56:29 [info     ] world_state_updated            facts_count=8 location='Copper Finch' npc_count=1 time=morning turn=2
+2026-07-21 21:56:30 [info     ] memory_added                   campaign_id=aff357d6-0760-4650-9e52-c563cf572449 memory_id=narrative_cc3ac551-045d-4183-b2d2-5d4f5754888d
+2026-07-21 21:56:30 [info     ] entity_referenced              alias_used=None dialogue_emotions=['thoughtful', 'probing'] dialogue_indices=[1, 2] entity_id=mara-venn entity_name='Mara Venn'
+2026-07-21 21:56:30 [info     ] effect_executed                effect_type=ref_entity idempotency_key=aff357d6-0760-4650-9e52-c563cf572449:discord:999999:turn-2:0 success=True
+2026-07-21 21:56:30 [info     ] effect_applied                 details={'entity_id': 'mara-venn', 'alias_used': None, 'found_in_scene': True, 'found_in_world': True, 'world_reference_type': 'npc'} effect_type=ref_entity was_duplicate=False
+2026-07-21 21:56:30 [info     ] entity_referenced              alias_used=None dialogue_emotions=[] dialogue_indices=[] entity_id=brass-compass entity_name='brass compass'
+2026-07-21 21:56:30 [info     ] effect_executed                effect_type=ref_entity idempotency_key=aff357d6-0760-4650-9e52-c563cf572449:discord:999999:turn-2:1 success=True
+2026-07-21 21:56:30 [info     ] effect_applied                 details={'entity_id': 'brass-compass', 'alias_used': None, 'found_in_scene': True, 'found_in_world': False, 'world_reference_type': None} effect_type=ref_entity was_duplicate=False
+2026-07-21 21:56:30 [info     ] entity_referenced              alias_used=None dialogue_emotions=[] dialogue_indices=[] entity_id=sealed-reliquary entity_name='sealed reliquary'
+2026-07-21 21:56:30 [info     ] effect_executed                effect_type=ref_entity idempotency_key=aff357d6-0760-4650-9e52-c563cf572449:discord:999999:turn-2:2 success=True
+2026-07-21 21:56:30 [info     ] effect_applied                 details={'entity_id': 'sealed-reliquary', 'alias_used': None, 'found_in_scene': True, 'found_in_world': True, 'world_reference_type': 'item'} effect_type=ref_entity was_duplicate=False
+2026-07-21 21:56:30 [info     ] message_processed              action_preview='This is an uncontested item transfer with no roll:' combat_triggered=False has_mechanics=True scene_entities=3 session_id=3d986478-d972-4941-92fe-cf4c8c082dbf user=TestPlayer
+
+[1m[94m[MECHANICS][0m inventory:  | Roll: ? vs DC ? → [91mFailure[0m
+[1m[95m[NARRATION][0m 
+  Kael's fingers find the familiar weight of the brass compass in his pack. He 
+  draws it out — the casing worn smooth by years of handling — and holds it 
+  across the table. Mara's eyes track the movement. She doesn't reach for it. 
+  Instead, she tilts her head. A single lamp on the wall sputters. Rain drums 
+  against the shutters. "That compass," she says slowly, "has been in your hand 
+  since you walked in. You fidget with it when you're thinking. You touched it 
+  when I mentioned Old Bram's name." She doesn't move to take it. "I asked you 
+  to hand it over for safekeeping, didn't I? And you're offering it now." She 
+  folds her arms. "But here's the thing, Kael — I don't want it because I asked 
+  for it. I want you to tell me why you're giving it to me." She lets the 
+  silence stretch. "What changed between 'no' and 'here'?" 
+
+[2m  [11.3s][0m
+  [92mNo issues detected[0m
+  [2m[MEM] buffer=4, overflow=0, summary=no (0ch), scratchpad=0[0m
+
+[1m------------------------------------------------------------[0m
+[1m  Turn 3: [96m"Mara reveals the fresh crescent scar beneath her glove and swears to become my ally in exposing the gate conspiracy."[0m
+[1m------------------------------------------------------------[0m
+2026-07-21 21:56:32 [info     ] ollama_raw_response            has_message_attr=True is_dict=False response_type=ChatResponse
+2026-07-21 21:56:32 [info     ] ollama_message_extracted       content_length=763 content_preview='NPC: Mara Venn - Investigator with a charcoal coat, currently holding an iron reliquary containing a live demolition charge; disposition is wary but becoming allied.\nLOCATION: Ash Gate location (impli' content_type=str has_thinking=False
+2026-07-21 21:56:32 [info     ] periodic_facts_extracted       campaign_id=aff357d6-0760-4650-9e52-c563cf572449 new_facts_count=5 total_pinned_facts=5
+2026-07-21 21:56:32 [info     ] processing_action              action='Mara reveals the fresh crescent scar beneath her g' player='Kael Windrunner'
+2026-07-21 21:56:33 [info     ] ollama_raw_response            has_message_attr=True is_dict=False response_type=ChatResponse
+2026-07-21 21:56:33 [info     ] ollama_message_extracted       content_length=130 content_preview='{\n    "action_type": "roleplay",\n    "narrative_significance": "notable",\n    "resources_consumed": [],\n    "currency_spent": {}\n}' content_type=str has_thinking=False
+2026-07-21 21:56:33 [debug    ] triage_raw_response            content='{\n    "action_type": "roleplay",\n    "narrative_significance": "notable",\n    "resources_consumed": [],\n    "currency_spent": {}\n}'
+2026-07-21 21:56:33 [info     ] triage_decision                action_type=roleplay dc=None is_creature_target=False needs_roll=False reasoning= skill=None target_name=None
+2026-07-21 21:56:33 [debug    ] kg_context_injected            narrative_recalled=0 scene_seeds=2 seed_count=2 text_matches=0 vector_matches=0
+2026-07-21 21:56:33 [debug    ] narrator_client_cache_hit      model=deepseek-v4-flash provider=deepseek requested_tier=premium resolved_tier=standard
+2026-07-21 21:56:33 [info     ] narrator_tier_selected         action_type=roleplay definitely_standard=False forced=False in_combat=False is_opening=False significance=notable tier=premium
+2026-07-21 21:56:37 [info     ] deepseek_response              cache_hit_ratio=0.7832167832167832 cache_hit_tokens=6272 cache_miss_tokens=1736 content_length=1129 content_preview="The lamp hisses. Rain drums. Mara's hand hovers over the reliquary's bronze pin — and then she pulls off her glove.\n\nA crescent scar, still pink and puckered, runs across her palm. Fresh. Days old.\n\nS" model=deepseek-v4-flash reasoning_length=0 thinking=False
+2026-07-21 21:56:40 [info     ] deepseek_response              cache_hit_ratio=0.9646726330664155 cache_hit_tokens=8192 cache_miss_tokens=300 content_length=0 content_preview= model=deepseek-v4-flash reasoning_length=0 thinking=False
+2026-07-21 21:56:40 [warning  ] narrator_tool_arguments_invalid_repairing errors=['ref_entity: ref_entity requires entity_id from the roster']
+2026-07-21 21:56:43 [info     ] deepseek_response              cache_hit_ratio=0.9909677419354839 cache_hit_tokens=8448 cache_miss_tokens=77 content_length=0 content_preview= model=deepseek-v4-flash reasoning_length=0 thinking=False
+2026-07-21 21:56:43 [info     ] narrator_tool_followup         effects_count=4 tool_count=1
+2026-07-21 21:56:47 [info     ] ollama_raw_response            has_message_attr=True is_dict=False response_type=ChatResponse
+2026-07-21 21:56:47 [info     ] ollama_message_extracted       content_length=411 content_preview='{\n  "new_facts": [\n    "Mara Venn has an old scar on her palm from a wire trap set in a reliquary three nights ago.",\n    "The anonymous reliquary sent to Mara Venn contained a live demolition charge ' content_type=str has_thinking=False
+2026-07-21 21:56:47 [info     ] state_delta_extracted          has_location=False has_time=False new_events=0 new_facts=2 new_npcs=0 npc_updates=0
+2026-07-21 21:56:47 [info     ] world_state_updated            facts_count=10 location='Copper Finch' npc_count=1 time=morning turn=3
+2026-07-21 21:56:47 [info     ] memory_added                   campaign_id=aff357d6-0760-4650-9e52-c563cf572449 memory_id=narrative_4abf99a6-ed80-4803-9e7f-80f263aa13ac
+2026-07-21 21:56:47 [info     ] entity_referenced              alias_used=None dialogue_emotions=['tired', 'intense', 'bitter', 'determined', 'commanding'] dialogue_indices=[1, 2, 3, 4, 5] entity_id=mara-venn entity_name='Mara Venn'
+2026-07-21 21:56:47 [info     ] effect_executed                effect_type=ref_entity idempotency_key=aff357d6-0760-4650-9e52-c563cf572449:discord:999999:turn-3:0 success=True
+2026-07-21 21:56:47 [info     ] effect_applied                 details={'entity_id': 'mara-venn', 'alias_used': None, 'found_in_scene': True, 'found_in_world': True, 'world_reference_type': 'npc'} effect_type=ref_entity was_duplicate=False
+2026-07-21 21:56:47 [info     ] entity_referenced              alias_used=None dialogue_emotions=[] dialogue_indices=[] entity_id=sealed-reliquary entity_name='sealed reliquary'
+2026-07-21 21:56:47 [info     ] effect_executed                effect_type=ref_entity idempotency_key=aff357d6-0760-4650-9e52-c563cf572449:discord:999999:turn-3:1 success=True
+2026-07-21 21:56:47 [info     ] effect_applied                 details={'entity_id': 'sealed-reliquary', 'alias_used': None, 'found_in_scene': True, 'found_in_world': True, 'world_reference_type': 'item'} effect_type=ref_entity was_duplicate=False
+2026-07-21 21:56:47 [info     ] entity_referenced              alias_used=None dialogue_emotions=[] dialogue_indices=[] entity_id=brass-compass entity_name='brass compass'
+2026-07-21 21:56:47 [info     ] effect_executed                effect_type=ref_entity idempotency_key=aff357d6-0760-4650-9e52-c563cf572449:discord:999999:turn-3:2 success=True
+2026-07-21 21:56:47 [info     ] effect_applied                 details={'entity_id': 'brass-compass', 'alias_used': None, 'found_in_scene': True, 'found_in_world': False, 'world_reference_type': None} effect_type=ref_entity was_duplicate=False
+2026-07-21 21:56:47 [info     ] entity_updated_by_narrator     applied={'disposition': 'allied', 'description_appended': 'Has a fresh crescent scar across her right palm from a razor wire trap on the reliquary. Now allied with Kael against the gate conspiracy.'} entity_id=mara-venn
+2026-07-21 21:56:47 [info     ] effect_executed                effect_type=update_entity idempotency_key=aff357d6-0760-4650-9e52-c563cf572449:discord:999999:turn-3:3 success=True
+2026-07-21 21:56:47 [info     ] effect_applied                 details={'entity_id': 'mara-venn', 'applied': {'disposition': 'allied', 'description_appended': 'Has a fresh crescent scar across her right palm from a razor wire trap on the reliquary. Now allied with Kael against the gate conspiracy.'}, 'found_in_scene': True, 'found_in_world': True} effect_type=update_entity was_duplicate=False
+2026-07-21 21:56:47 [debug    ] effect_bridge_converted        op_count=1 promotion_count=0
+2026-07-21 21:56:47 [debug    ] kg_operations_applied          count=1 rejections=0
+2026-07-21 21:56:47 [info     ] message_processed              action_preview='Mara reveals the fresh crescent scar beneath her g' combat_triggered=False has_mechanics=False scene_entities=3 session_id=3d986478-d972-4941-92fe-cf4c8c082dbf user=TestPlayer
+
+[1m[95m[NARRATION][0m 
+  The lamp hisses. Rain drums. Mara's hand hovers over the reliquary's bronze 
+  pin — and then she pulls off her glove. A crescent scar, still pink and 
+  puckered, runs across her palm. Fresh. Days old. She holds it up for you to 
+  see. "Three nights ago, someone slipped this reliquary under my door. I 
+  picked it up. The pin didn't move. But the *box* did." She flexes her 
+  fingers. "A wire. Razor-thin. Wrapped around the base. Meant to open my hand 
+  before I could set it down." She lets that sit. "I bled on the floor for an 
+  hour before I stopped the bleeding. And I realized — whoever sent this 
+  doesn't just want the gate open. They want me *curious*. They want me chasing 
+  threads. They want me to pull the pin myself." She pulls the glove back on. 
+  Tight. "I'm done being their pawn." She meets your eyes. Steady. Certain. "So 
+  yes, Kael. I'm in. Fully. Whatever you find, whatever you're chasing — I'll 
+  see it through. The gate, the key, Bram's killer, the people pulling the 
+  strings. All of it." She extends her gloved hand. Not for the compass. For a 
+  handshake. "Your turn. What do you know that you haven't told me yet?" 
+
+[2m  [17.5s][0m
+  [92mNo issues detected[0m
+  [2m[MEM] buffer=6, overflow=0, summary=no (0ch), scratchpad=0[0m
+
+[1m------------------------------------------------------------[0m
+[1m  Turn 4: [96m"This is an uncontested return with no roll: Mara Venn takes the brass compass from her coat, hands it back to me, and it is now in my pack rather than hers."[0m
+[1m------------------------------------------------------------[0m
+2026-07-21 21:56:48 [info     ] processing_action              action='This is an uncontested return with no roll: Mara V' player='Kael Windrunner'
+2026-07-21 21:56:49 [info     ] ollama_raw_response            has_message_attr=True is_dict=False response_type=ChatResponse
+2026-07-21 21:56:49 [info     ] ollama_message_extracted       content_length=131 content_preview='{\n    "action_type": "inventory",\n    "narrative_significance": "routine",\n    "resources_consumed": [],\n    "currency_spent": {}\n}' content_type=str has_thinking=False
+2026-07-21 21:56:49 [debug    ] triage_raw_response            content='{\n    "action_type": "inventory",\n    "narrative_significance": "routine",\n    "resources_consumed": [],\n    "currency_spent": {}\n}'
+2026-07-21 21:56:49 [info     ] triage_decision                action_type=inventory dc=None is_creature_target=False needs_roll=False reasoning= skill=None target_name=None
+2026-07-21 21:56:49 [debug    ] kg_context_injected            narrative_recalled=0 scene_seeds=2 seed_count=2 text_matches=1 vector_matches=0
+2026-07-21 21:56:49 [info     ] narrator_tier_selected         action_type=inventory definitely_standard=True forced=False in_combat=False is_opening=False significance=routine tier=standard
+2026-07-21 21:56:52 [info     ] deepseek_response              cache_hit_ratio=0.08822515795519816 cache_hit_tokens=768 cache_miss_tokens=7937 content_length=934 content_preview='Mara\'s gloved hand closes around yours in the handshake — firm, deliberate. Then she pulls back, reaches into her coat, and produces the brass compass.\n\nShe holds it out to you, flat on her palm.\n\n"I ' model=deepseek-v4-flash reasoning_length=0 thinking=False
+2026-07-21 21:56:55 [info     ] deepseek_response              cache_hit_ratio=0.9683148777546322 cache_hit_tokens=8832 cache_miss_tokens=289 content_length=0 content_preview= model=deepseek-v4-flash reasoning_length=0 thinking=False
+2026-07-21 21:56:55 [info     ] narrator_tool_followup         effects_count=5 tool_count=5
+2026-07-21 21:56:59 [info     ] ollama_raw_response            has_message_attr=True is_dict=False response_type=ChatResponse
+2026-07-21 21:56:59 [info     ] ollama_message_extracted       content_length=325 content_preview='{\n  "npc_updates": [\n    {\n      "id": "979d519d-4e72-4a7a-b188-51b4cf0c2362",\n      "add_aliases": [],\n      "remove_inventory": ["brass compass"]\n    }\n  ],\n  "new_facts": [\n    "Mara Venn returned ' content_type=str has_thinking=False
+2026-07-21 21:56:59 [info     ] state_delta_extracted          has_location=False has_time=False new_events=0 new_facts=2 new_npcs=0 npc_updates=1
+2026-07-21 21:56:59 [info     ] world_state_updated            facts_count=16 location='Copper Finch' npc_count=1 time=morning turn=4
+2026-07-21 21:56:59 [info     ] memory_added                   campaign_id=aff357d6-0760-4650-9e52-c563cf572449 memory_id=narrative_4f22244d-65aa-4713-820b-92322fc2b225
+2026-07-21 21:56:59 [info     ] entity_referenced              alias_used=None dialogue_emotions=['steady', 'firm', 'leaning in'] dialogue_indices=[1, 2, 3] entity_id=mara-venn entity_name='Mara Venn'
+2026-07-21 21:56:59 [info     ] effect_executed                effect_type=ref_entity idempotency_key=aff357d6-0760-4650-9e52-c563cf572449:discord:999999:turn-4:0 success=True
+2026-07-21 21:56:59 [info     ] effect_applied                 details={'entity_id': 'mara-venn', 'alias_used': None, 'found_in_scene': True, 'found_in_world': True, 'world_reference_type': 'npc'} effect_type=ref_entity was_duplicate=False
+2026-07-21 21:56:59 [info     ] entity_referenced              alias_used=None dialogue_emotions=[] dialogue_indices=[] entity_id=brass-compass entity_name='brass compass'
+2026-07-21 21:56:59 [info     ] effect_executed                effect_type=ref_entity idempotency_key=aff357d6-0760-4650-9e52-c563cf572449:discord:999999:turn-4:1 success=True
+2026-07-21 21:56:59 [info     ] effect_applied                 details={'entity_id': 'brass-compass', 'alias_used': None, 'found_in_scene': True, 'found_in_world': False, 'world_reference_type': None} effect_type=ref_entity was_duplicate=False
+2026-07-21 21:56:59 [info     ] entity_referenced              alias_used=None dialogue_emotions=[] dialogue_indices=[] entity_id=sealed-reliquary entity_name='sealed reliquary'
+2026-07-21 21:56:59 [info     ] effect_executed                effect_type=ref_entity idempotency_key=aff357d6-0760-4650-9e52-c563cf572449:discord:999999:turn-4:2 success=True
+2026-07-21 21:56:59 [info     ] effect_applied                 details={'entity_id': 'sealed-reliquary', 'alias_used': None, 'found_in_scene': True, 'found_in_world': True, 'world_reference_type': 'item'} effect_type=ref_entity was_duplicate=False
+2026-07-21 21:56:59 [info     ] player_updated_by_narrator     applied={'items_granted': [{'name': 'brass compass', 'quantity': 1}]} character_id=539f2236-8f69-448d-aede-44a31883528e persisted=True
+2026-07-21 21:56:59 [info     ] effect_executed                effect_type=update_player idempotency_key=aff357d6-0760-4650-9e52-c563cf572449:discord:999999:turn-4:3 success=True
+2026-07-21 21:56:59 [info     ] effect_applied                 details={'applied': {'items_granted': [{'name': 'brass compass', 'quantity': 1}]}, 'narrator_authoritative': True, 'persisted': True} effect_type=update_player was_duplicate=False
+2026-07-21 21:56:59 [info     ] entity_updated_by_narrator     applied={'items_removed': ['brass compass']} entity_id=mara-venn
+2026-07-21 21:56:59 [info     ] effect_executed                effect_type=update_entity idempotency_key=aff357d6-0760-4650-9e52-c563cf572449:discord:999999:turn-4:4 success=True
+2026-07-21 21:56:59 [info     ] effect_applied                 details={'entity_id': 'mara-venn', 'applied': {'items_removed': ['brass compass']}, 'found_in_scene': True, 'found_in_world': True} effect_type=update_entity was_duplicate=False
+2026-07-21 21:56:59 [info     ] message_processed              action_preview='This is an uncontested return with no roll: Mara V' combat_triggered=False has_mechanics=True scene_entities=3 session_id=3d986478-d972-4941-92fe-cf4c8c082dbf user=TestPlayer
+
+[1m[94m[MECHANICS][0m inventory:  | Roll: ? vs DC ? → [92mSuccess[0m
+[1m[95m[NARRATION][0m 
+  Mara's gloved hand closes around yours in the handshake — firm, deliberate. 
+  Then she pulls back, reaches into her coat, and produces the brass compass. 
+  She holds it out to you, flat on her palm. "I don't need this to trust you, 
+  Kael. I never did." The compass glints in the lamplight. Brass worn smooth. 
+  Familiar weight. "You offered it freely. That told me everything I needed to 
+  know." She sets it on the table between you. A small push sends it sliding 
+  across the scarred wood until it bumps against your knuckles. Rain hammers 
+  the shutters. Somewhere in the walls, the old tavern groans. "Now — I've 
+  shown you the scar. I've sworn to follow this through. But I still don't know 
+  what *you* saw that made you walk into the Copper Finch this morning and 
+  offer a stranger your compass." She leans forward. The reliquary sits between 
+  you like a third person at the table. "So tell me, Kael. What's your stake in 
+  the Ash Gate?" 
+[1m[2m[TOOLS][0m 1 tool calls made
+
+[2m  [11.8s][0m
+  [92mNo issues detected[0m
+  [2m[MEM] buffer=8, overflow=0, summary=no (0ch), scratchpad=0[0m
+
+[1m------------------------------------------------------------[0m
+[1m  Turn 5: [96m"I pay Mara Venn exactly two gold pieces for her help, and she accepts them."[0m
+[1m------------------------------------------------------------[0m
+2026-07-21 21:56:59 [info     ] processing_action              action='I pay Mara Venn exactly two gold pieces for her he' player='Kael Windrunner'
+2026-07-21 21:57:01 [info     ] ollama_raw_response            has_message_attr=True is_dict=False response_type=ChatResponse
+2026-07-21 21:57:01 [info     ] ollama_message_extracted       content_length=169 content_preview='{\n    "action_type": "purchase",\n    "item_name": "Investigation assistance from Mara Venn",\n    "item_cost": 2,\n    "quantity": 1,\n    "currency_spent": { "gold": 2 }\n}' content_type=str has_thinking=False
+2026-07-21 21:57:01 [debug    ] triage_raw_response            content='{\n    "action_type": "purchase",\n    "item_name": "Investigation assistance from Mara Venn",\n    "item_cost": 2,\n    "quantity": 1,\n    "currency_spent": { "gold": 2 }\n}'
+2026-07-21 21:57:01 [info     ] triage_decision                action_type=purchase dc=None is_creature_target=False needs_roll=False reasoning= skill=None target_name=None
+2026-07-21 21:57:01 [debug    ] kg_context_injected            narrative_recalled=0 scene_seeds=2 seed_count=2 text_matches=1 vector_matches=0
+2026-07-21 21:57:01 [info     ] narrator_tier_selected         action_type=purchase definitely_standard=False forced=False in_combat=False is_opening=False significance=routine tier=standard
+2026-07-21 21:57:05 [info     ] deepseek_response              cache_hit_ratio=0.08411829134720701 cache_hit_tokens=768 cache_miss_tokens=8362 content_length=1217 content_preview="Kael's fingers find the coins in his pouch — two gold, warm from his pocket. He sets them on the scarred table between them. They clink once, settle.\n\nMara's eyes drop to the coins. Then back up to yo" model=deepseek-v4-flash reasoning_length=0 thinking=False
+2026-07-21 21:57:08 [info     ] deepseek_response              cache_hit_ratio=0.9708051948051948 cache_hit_tokens=9344 cache_miss_tokens=281 content_length=0 content_preview= model=deepseek-v4-flash reasoning_length=0 thinking=False
+2026-07-21 21:57:08 [warning  ] narrator_tool_arguments_invalid_repairing errors=['ref_entity: ref_entity requires entity_id from the roster']
+2026-07-21 21:57:11 [info     ] deepseek_response              cache_hit_ratio=0.9939946158624974 cache_hit_tokens=9600 cache_miss_tokens=58 content_length=0 content_preview= model=deepseek-v4-flash reasoning_length=0 thinking=False
+2026-07-21 21:57:11 [info     ] narrator_tool_followup         effects_count=4 tool_count=1
+2026-07-21 21:57:15 [info     ] ollama_raw_response            has_message_attr=True is_dict=False response_type=ChatResponse
+2026-07-21 21:57:15 [info     ] ollama_message_extracted       content_length=415 content_preview='{\n  "new_facts": [\n    "Mara Venn accepted two gold coins from Kael.",\n    "The iron key to the Ash Gate was taken by someone unknown after Old Bram\'s death.",\n    "Something passed through the Ash Ga' content_type=str has_thinking=False
+2026-07-21 21:57:15 [info     ] state_delta_extracted          has_location=False has_time=False new_events=0 new_facts=4 new_npcs=0 npc_updates=0
+2026-07-21 21:57:15 [info     ] world_state_updated            facts_count=20 location='Copper Finch' npc_count=1 time=morning turn=5
+2026-07-21 21:57:15 [info     ] memory_added                   campaign_id=aff357d6-0760-4650-9e52-c563cf572449 memory_id=narrative_39e077ac-b03e-4acf-a2bb-cd5302e80ba8
+2026-07-21 21:57:15 [info     ] entity_referenced              alias_used=None dialogue_emotions=['calm', 'serious', 'thoughtful', 'intense', 'determined', 'focused', 'steady'] dialogue_indices=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50] entity_id=mara-venn entity_name='Mara Venn'
+2026-07-21 21:57:15 [info     ] effect_executed                effect_type=ref_entity idempotency_key=aff357d6-0760-4650-9e52-c563cf572449:discord:999999:turn-5:0 success=True
+2026-07-21 21:57:15 [info     ] effect_applied                 details={'entity_id': 'mara-venn', 'alias_used': None, 'found_in_scene': True, 'found_in_world': True, 'world_reference_type': 'npc'} effect_type=ref_entity was_duplicate=False
+2026-07-21 21:57:15 [info     ] entity_referenced              alias_used=None dialogue_emotions=[] dialogue_indices=[] entity_id=brass-compass entity_name='brass compass'
+2026-07-21 21:57:15 [info     ] effect_executed                effect_type=ref_entity idempotency_key=aff357d6-0760-4650-9e52-c563cf572449:discord:999999:turn-5:1 success=True
+2026-07-21 21:57:15 [info     ] effect_applied                 details={'entity_id': 'brass-compass', 'alias_used': None, 'found_in_scene': True, 'found_in_world': False, 'world_reference_type': None} effect_type=ref_entity was_duplicate=False
+2026-07-21 21:57:15 [info     ] entity_referenced              alias_used=None dialogue_emotions=[] dialogue_indices=[] entity_id=sealed-reliquary entity_name='sealed reliquary'
+2026-07-21 21:57:15 [info     ] effect_executed                effect_type=ref_entity idempotency_key=aff357d6-0760-4650-9e52-c563cf572449:discord:999999:turn-5:2 success=True
+2026-07-21 21:57:15 [info     ] effect_applied                 details={'entity_id': 'sealed-reliquary', 'alias_used': None, 'found_in_scene': True, 'found_in_world': True, 'world_reference_type': 'item'} effect_type=ref_entity was_duplicate=False
+2026-07-21 21:57:15 [info     ] player_updated_by_narrator     applied={'currency_delta': {'gp': -2}} character_id=539f2236-8f69-448d-aede-44a31883528e persisted=True
+2026-07-21 21:57:15 [info     ] effect_executed                effect_type=update_player idempotency_key=aff357d6-0760-4650-9e52-c563cf572449:discord:999999:turn-5:3 success=True
+2026-07-21 21:57:15 [info     ] effect_applied                 details={'applied': {'currency_delta': {'gp': -2}}, 'narrator_authoritative': True, 'persisted': True} effect_type=update_player was_duplicate=False
+2026-07-21 21:57:15 [info     ] currency_spent                 amount={'gold': 2} character='Kael Windrunner' gold_equivalent=2 gold_remaining=94
+2026-07-21 21:57:15 [info     ] message_processed              action_preview='I pay Mara Venn exactly two gold pieces for her he' combat_triggered=False has_mechanics=True scene_entities=3 session_id=3d986478-d972-4941-92fe-cf4c8c082dbf user=TestPlayer
+
+[1m[94m[MECHANICS][0m purchase:  | Roll: ? vs DC ? → [92mSuccess[0m
+[1m[95m[NARRATION][0m 
+  Kael's fingers find the coins in his pouch — two gold, warm from his pocket. 
+  He sets them on the scarred table between them. They clink once, settle. 
+  Mara's eyes drop to the coins. Then back up to you. A beat of silence. Rain 
+  against the shutters. Then she reaches out, scoops them up without looking, 
+  and drops them into her coat pocket. No hesitation. "Fair price." She almost 
+  smiles. "Most people try to pay me in promises." She leans back, one hand 
+  resting on the iron reliquary. The bronze pin catches the lamplight — a dull, 
+  patient gleam. "Two gold buys you my full attention, Kael. And right now, my 
+  full attention is on three things." She counts them off on her scarred hand. 
+  "One — the key. Bram had it. Someone took it. Wherever it is, that's where 
+  this starts." "Two — the gate. I've been watching it for three days. No one 
+  approaches. No one leaves. But *something* came through the night Bram died. 
+  I heard boots on the ferry slip. Fast. Heading toward the city." "Three — the 
+  reliquary." She taps the iron box. "Someone wanted me to pull this pin. That 
+  means someone *wants* the gate open. Which means someone on the other side 
+  wants in." She fixes you with a look. "So. Where do we start?" 
+[1m[2m[TOOLS][0m 1 tool calls made
+
+[2m  [16.2s][0m
+  [92mNo issues detected[0m
+  [2m[MEM] buffer=8, overflow=0, summary=no (0ch), scratchpad=0[0m
+
+[1m------------------------------------------------------------[0m
+[1m  Turn 6: [96m"Mara Venn sets a newly revealed obsidian key on the table between us; it is a distinct object I can pick up."[0m
+[1m------------------------------------------------------------[0m
+2026-07-21 21:57:17 [info     ] ollama_raw_response            has_message_attr=True is_dict=False response_type=ChatResponse
+2026-07-21 21:57:17 [info     ] ollama_message_extracted       content_length=424 content_preview='- ITEM: Obsidian key - Newly revealed by Mara Venn, placed on the table between Kael and Mara for pickup.\n- EVENT: Kael pays Mara Venn two gold pieces for her assistance in exposing the gate conspirac' content_type=str has_thinking=False
+2026-07-21 21:57:17 [info     ] periodic_facts_extracted       campaign_id=aff357d6-0760-4650-9e52-c563cf572449 new_facts_count=3 total_pinned_facts=8
+2026-07-21 21:57:19 [info     ] ollama_raw_response            has_message_attr=True is_dict=False response_type=ChatResponse
+2026-07-21 21:57:19 [info     ] ollama_message_extracted       content_length=1015 content_preview='{\n    "summary": "Mara Venn reveals a fresh scar from an assassination attempt, swearing to ally with Kael Windrunner against the gate conspiracy. After accepting two gold pieces as payment for her se' content_type=str has_thinking=False
+2026-07-21 21:57:19 [info     ] incremental_summary_llm_response campaign_id=aff357d6-0760-4650-9e52-c563cf572449 raw_length=1015 raw_preview='{\n    "summary": "Mara Venn reveals a fresh scar from an assassination attempt, swearing to ally with Kael Windrunner against the gate conspiracy. After accepting two gold pieces as payment for her se'
+2026-07-21 21:57:19 [info     ] memory_added                   campaign_id=aff357d6-0760-4650-9e52-c563cf572449 memory_id=session_incremental_11
+2026-07-21 21:57:19 [info     ] incremental_summary_generated  campaign_id=aff357d6-0760-4650-9e52-c563cf572449 message_count=11
+2026-07-21 21:57:20 [info     ] processing_action              action='Mara Venn sets a newly revealed obsidian key on th' player='Kael Windrunner'
+2026-07-21 21:57:21 [info     ] ollama_raw_response            has_message_attr=True is_dict=False response_type=ChatResponse
+2026-07-21 21:57:21 [info     ] ollama_message_extracted       content_length=131 content_preview='{\n    "action_type": "inventory",\n    "narrative_significance": "routine",\n    "resources_consumed": [],\n    "currency_spent": {}\n}' content_type=str has_thinking=False
+2026-07-21 21:57:21 [debug    ] triage_raw_response            content='{\n    "action_type": "inventory",\n    "narrative_significance": "routine",\n    "resources_consumed": [],\n    "currency_spent": {}\n}'
+2026-07-21 21:57:21 [info     ] triage_decision                action_type=inventory dc=None is_creature_target=False needs_roll=False reasoning= skill=None target_name=None
+2026-07-21 21:57:21 [debug    ] kg_context_injected            narrative_recalled=0 scene_seeds=2 seed_count=2 text_matches=1 vector_matches=0
+2026-07-21 21:57:21 [info     ] narrator_tier_selected         action_type=inventory definitely_standard=True forced=False in_combat=False is_opening=False significance=routine tier=standard
+2026-07-21 21:57:25 [info     ] deepseek_response              cache_hit_ratio=0.6554299125240025 cache_hit_tokens=6144 cache_miss_tokens=3230 content_length=1012 content_preview="Mara's hand disappears into her coat — not the pocket where the gold went, but an inner lining, stitched close to her ribs. Her fingers find something, close around it, and emerge.\n\nShe sets it on the" model=deepseek-v4-flash reasoning_length=0 thinking=False
+2026-07-21 21:57:27 [info     ] deepseek_response              cache_hit_ratio=0.9784935276730201 cache_hit_tokens=9600 cache_miss_tokens=211 content_length=0 content_preview= model=deepseek-v4-flash reasoning_length=0 thinking=False
+2026-07-21 21:57:27 [info     ] narrator_tool_followup         effects_count=4 tool_count=4
+2026-07-21 21:57:32 [info     ] ollama_raw_response            has_message_attr=True is_dict=False response_type=ChatResponse
+2026-07-21 21:57:32 [info     ] ollama_message_extracted       content_length=545 content_preview='{\n  "npc_updates": [\n    {\n      "id": "979d519d-4e72-4a7a-b188-51b4cf0c2362",\n      "add_inventory": ["obsidian key"],\n      "remove_inventory": []\n    }\n  ],\n  "new_facts": [\n    "Mara Venn found an' content_type=str has_thinking=False
+2026-07-21 21:57:32 [info     ] state_delta_extracted          has_location=False has_time=False new_events=0 new_facts=3 new_npcs=0 npc_updates=1
+2026-07-21 21:57:32 [info     ] world_state_updated            facts_count=23 location='Copper Finch' npc_count=1 time=morning turn=6
+2026-07-21 21:57:32 [info     ] memory_added                   campaign_id=aff357d6-0760-4650-9e52-c563cf572449 memory_id=narrative_e0b49c22-28eb-4a07-b6bf-71ddca476dba
+2026-07-21 21:57:32 [info     ] entity_referenced              alias_used=None dialogue_emotions=['quiet', 'intense', 'low'] dialogue_indices=[1, 2, 3] entity_id=mara-venn entity_name='Mara Venn'
+2026-07-21 21:57:32 [info     ] effect_executed                effect_type=ref_entity idempotency_key=aff357d6-0760-4650-9e52-c563cf572449:discord:999999:turn-6:0 success=True
+2026-07-21 21:57:32 [info     ] effect_applied                 details={'entity_id': 'mara-venn', 'alias_used': None, 'found_in_scene': True, 'found_in_world': True, 'world_reference_type': 'npc'} effect_type=ref_entity was_duplicate=False
+2026-07-21 21:57:32 [info     ] entity_referenced              alias_used=None dialogue_emotions=[] dialogue_indices=[] entity_id=sealed-reliquary entity_name='sealed reliquary'
+2026-07-21 21:57:32 [info     ] effect_executed                effect_type=ref_entity idempotency_key=aff357d6-0760-4650-9e52-c563cf572449:discord:999999:turn-6:1 success=True
+2026-07-21 21:57:32 [info     ] effect_applied                 details={'entity_id': 'sealed-reliquary', 'alias_used': None, 'found_in_scene': True, 'found_in_world': True, 'world_reference_type': 'item'} effect_type=ref_entity was_duplicate=False
+2026-07-21 21:57:32 [info     ] entity_registered              disposition=neutral hostility=0 id=b224e207-8a96-48ce-a0cf-2d526eff8f64 monster_index=None name='obsidian key' type=object
+2026-07-21 21:57:32 [info     ] effect_executed                effect_type=spawn_object idempotency_key=aff357d6-0760-4650-9e52-c563cf572449:discord:999999:turn-6:2 success=True
+2026-07-21 21:57:32 [info     ] effect_applied                 details={'entity_id': 'b224e207-8a96-48ce-a0cf-2d526eff8f64', 'object_name': 'obsidian key'} effect_type=spawn_object was_duplicate=False
+2026-07-21 21:57:32 [info     ] player_updated_by_narrator     applied={'items_granted': [{'name': 'obsidian key', 'quantity': 1}]} character_id=539f2236-8f69-448d-aede-44a31883528e persisted=True
+2026-07-21 21:57:32 [info     ] effect_executed                effect_type=update_player idempotency_key=aff357d6-0760-4650-9e52-c563cf572449:discord:999999:turn-6:3 success=True
+2026-07-21 21:57:32 [info     ] effect_applied                 details={'applied': {'items_granted': [{'name': 'obsidian key', 'quantity': 1}]}, 'narrator_authoritative': True, 'persisted': True} effect_type=update_player was_duplicate=False
+2026-07-21 21:57:32 [debug    ] effect_bridge_converted        op_count=2 promotion_count=0
+2026-07-21 21:57:32 [debug    ] kg_operations_applied          count=2 rejections=0
+2026-07-21 21:57:32 [info     ] message_processed              action_preview='Mara Venn sets a newly revealed obsidian key on th' combat_triggered=False has_mechanics=True scene_entities=4 session_id=3d986478-d972-4941-92fe-cf4c8c082dbf user=TestPlayer
+
+[1m[94m[MECHANICS][0m inventory:  | Roll: ? vs DC ? → [92mSuccess[0m
+[1m[95m[NARRATION][0m 
+  Mara's hand disappears into her coat — not the pocket where the gold went, 
+  but an inner lining, stitched close to her ribs. Her fingers find something, 
+  close around it, and emerge. She sets it on the table. Not a key of iron or 
+  brass. This one is obsidian — black as still water, carved with a single 
+  groove running its length. It catches the lamplight like a splinter of night 
+  sky. "I found it three days ago," she says quietly. "Wedged in the ferry 
+  slip's mooring post. Half-hidden in the wood. Bram must have dropped it — or 
+  *placed* it there — before he died." She doesn't touch it again. Just watches 
+  it sit between them, black against the scarred oak. "I didn't show it to 
+  anyone. Didn't trust anyone." Her eyes lift to yours. "Until now." The 
+  reliquary hums with its dormant charge. The rain keeps its rhythm on the 
+  shutters. And the obsidian key lies on the table — waiting for your hand. 
+  Mara's voice drops. "That gate hasn't opened in three days. But this key 
+  might be the only thing that can." 
+[1m[2m[TOOLS][0m 1 tool calls made
+
+[2m  [17.2s][0m
+  [92mNo issues detected[0m
+  [2m[MEM] buffer=8, overflow=0, summary=no (0ch), scratchpad=0[0m
+
+[1m------------------------------------------------------------[0m
+[1m  Turn 7: [96m"I pick up the obsidian key from the table and put it in my pack."[0m
+[1m------------------------------------------------------------[0m
+2026-07-21 21:57:34 [info     ] ollama_raw_response            has_message_attr=True is_dict=False response_type=ChatResponse
+2026-07-21 21:57:34 [info     ] ollama_message_extracted       content_length=557 content_preview="- Kael asks about the Ash Gate, prompting Mara Venn to reveal that Old Bram's death led to the gate being sealed after his unique iron key was stolen by an anonymous sender who also left a live demoli" content_type=str has_thinking=False
+2026-07-21 21:57:34 [info     ] messages_condensed             campaign_id=aff357d6-0760-4650-9e52-c563cf572449 condensed_total=3 summaries_produced=3
+2026-07-21 21:57:34 [info     ] processing_action              action='I pick up the obsidian key from the table and put ' player='Kael Windrunner'
+2026-07-21 21:57:36 [info     ] ollama_raw_response            has_message_attr=True is_dict=False response_type=ChatResponse
+2026-07-21 21:57:36 [info     ] ollama_message_extracted       content_length=313 content_preview='{\n    "action_type": "inventory",\n    "reasoning": "The player is performing a mundane inventory management task (picking up an item). There are no signals of high stakes, campaign-arc payoff, or emot' content_type=str has_thinking=False
+2026-07-21 21:57:36 [debug    ] triage_raw_response            content='{\n    "action_type": "inventory",\n    "reasoning": "The player is performing a mundane inventory management task (picking up an item). There are no signals of high stakes, campaign-arc payoff, or emot'
+2026-07-21 21:57:36 [info     ] triage_decision                action_type=inventory dc=None is_creature_target=False needs_roll=False reasoning='The player is performing a mundane inventory management task (picking up an item). There are no sign' skill=None target_name=None
+2026-07-21 21:57:36 [debug    ] kg_context_injected            narrative_recalled=0 scene_seeds=3 seed_count=3 text_matches=1 vector_matches=0
+2026-07-21 21:57:36 [info     ] narrator_tier_selected         action_type=inventory definitely_standard=True forced=False in_combat=False is_opening=False significance=routine tier=standard
+2026-07-21 21:57:40 [info     ] deepseek_response              cache_hit_ratio=0.6311248073959939 cache_hit_tokens=6144 cache_miss_tokens=3591 content_length=1206 content_preview="Your fingers close around the obsidian key. It's colder than it should be — not the chill of morning air, but something deeper, like touching stone that's never seen the sun. The single groove along i" model=deepseek-v4-flash reasoning_length=0 thinking=False
+2026-07-21 21:57:42 [info     ] deepseek_response              cache_hit_ratio=0.9830641985033478 cache_hit_tokens=9984 cache_miss_tokens=172 content_length=0 content_preview= model=deepseek-v4-flash reasoning_length=0 thinking=False
+2026-07-21 21:57:42 [info     ] narrator_tool_followup         effects_count=5 tool_count=5
+2026-07-21 21:57:46 [info     ] ollama_raw_response            has_message_attr=True is_dict=False response_type=ChatResponse
+2026-07-21 21:57:46 [info     ] ollama_message_extracted       content_length=223 content_preview='{\n  "new_facts": [\n    "Kael Windrunner now holds the obsidian key.",\n    "Mara Venn returned Kael\'s brass compass to him."\n  ],\n  "flag_changes": {\n    "obsidian_key_location": false,\n    "gate_opena' content_type=str has_thinking=False
+2026-07-21 21:57:46 [info     ] state_delta_extracted          has_location=False has_time=False new_events=0 new_facts=2 new_npcs=0 npc_updates=0
+2026-07-21 21:57:46 [info     ] world_state_updated            facts_count=28 location='Copper Finch' npc_count=1 time=morning turn=7
+2026-07-21 21:57:46 [info     ] memory_added                   campaign_id=aff357d6-0760-4650-9e52-c563cf572449 memory_id=narrative_01e0ce22-9ed9-429b-86a4-799018609039
+2026-07-21 21:57:46 [info     ] entity_referenced              alias_used=None dialogue_emotions=['relieved', 'thoughtful', 'determined'] dialogue_indices=[1, 2, 3] entity_id=mara-venn entity_name='Mara Venn'
+2026-07-21 21:57:46 [info     ] effect_executed                effect_type=ref_entity idempotency_key=aff357d6-0760-4650-9e52-c563cf572449:discord:999999:turn-7:0 success=True
+2026-07-21 21:57:46 [info     ] effect_applied                 details={'entity_id': 'mara-venn', 'alias_used': None, 'found_in_scene': True, 'found_in_world': True, 'world_reference_type': 'npc'} effect_type=ref_entity was_duplicate=False
+2026-07-21 21:57:46 [info     ] entity_referenced              alias_used=None dialogue_emotions=[] dialogue_indices=[] entity_id=obsidian-key entity_name='obsidian key'
+2026-07-21 21:57:46 [info     ] effect_executed                effect_type=ref_entity idempotency_key=aff357d6-0760-4650-9e52-c563cf572449:discord:999999:turn-7:1 success=True
+2026-07-21 21:57:46 [info     ] effect_applied                 details={'entity_id': 'obsidian-key', 'alias_used': None, 'found_in_scene': True, 'found_in_world': True, 'world_reference_type': 'item'} effect_type=ref_entity was_duplicate=False
+2026-07-21 21:57:46 [info     ] entity_referenced              alias_used=None dialogue_emotions=[] dialogue_indices=[] entity_id=sealed-reliquary entity_name='sealed reliquary'
+2026-07-21 21:57:46 [info     ] effect_executed                effect_type=ref_entity idempotency_key=aff357d6-0760-4650-9e52-c563cf572449:discord:999999:turn-7:2 success=True
+2026-07-21 21:57:46 [info     ] effect_applied                 details={'entity_id': 'sealed-reliquary', 'alias_used': None, 'found_in_scene': True, 'found_in_world': True, 'world_reference_type': 'item'} effect_type=ref_entity was_duplicate=False
+2026-07-21 21:57:46 [info     ] entity_referenced              alias_used=None dialogue_emotions=[] dialogue_indices=[] entity_id=brass-compass entity_name='brass compass'
+2026-07-21 21:57:46 [info     ] effect_executed                effect_type=ref_entity idempotency_key=aff357d6-0760-4650-9e52-c563cf572449:discord:999999:turn-7:3 success=True
+2026-07-21 21:57:46 [info     ] effect_applied                 details={'entity_id': 'brass-compass', 'alias_used': None, 'found_in_scene': True, 'found_in_world': False, 'world_reference_type': None} effect_type=ref_entity was_duplicate=False
+2026-07-21 21:57:46 [info     ] player_updated_by_narrator     applied={'items_granted': [{'name': 'obsidian key', 'quantity': 1}]} character_id=539f2236-8f69-448d-aede-44a31883528e persisted=True
+2026-07-21 21:57:46 [info     ] effect_executed                effect_type=update_player idempotency_key=aff357d6-0760-4650-9e52-c563cf572449:discord:999999:turn-7:4 success=True
+2026-07-21 21:57:46 [info     ] effect_applied                 details={'applied': {'items_granted': [{'name': 'obsidian key', 'quantity': 1}]}, 'narrator_authoritative': True, 'persisted': True} effect_type=update_player was_duplicate=False
+2026-07-21 21:57:46 [info     ] message_processed              action_preview='I pick up the obsidian key from the table and put ' combat_triggered=False has_mechanics=True scene_entities=4 session_id=3d986478-d972-4941-92fe-cf4c8c082dbf user=TestPlayer
+
+[1m[94m[MECHANICS][0m inventory:  | Roll: ? vs DC ? → [92mSuccess[0m
+[1m[95m[NARRATION][0m 
+  Your fingers close around the obsidian key. It's colder than it should be — 
+  not the chill of morning air, but something deeper, like touching stone 
+  that's never seen the sun. The single groove along its length feels 
+  deliberate, a guide for something yet to come. It slides into your pack. The 
+  weight settles against the compass. Across the table, Mara exhales — a breath 
+  she might have been holding since she first pulled the key from her coat 
+  lining. "There. It's yours now." She almost sounds relieved. "I've been 
+  carrying that thing for three days, and every night I dreamed someone was 
+  reaching for it." She rubs her scarred palm absently. The reliquary sits 
+  between you. Still. Patient. Its bronze pin glints. Mara's eyes track to the 
+  shuttered window. Rain streaks the glass. Beyond it, somewhere in the grey 
+  morning, the Ash Gate waits. "So. We have a key. We have a gate. We have a 
+  reliquary that someone wanted me to open." She ticks them off. "And we have a 
+  dead ferryman whose last act was wedging that key into a post." She looks 
+  back at you. "Question is — do we go to the gate first, or do we find out who 
+  sent the reliquary before we walk into whatever's waiting on the other side?" 
+[1m[2m[TOOLS][0m 1 tool calls made
+
+[2m  [13.8s][0m
+  [92mNo issues detected[0m
+  [2m[MEM] buffer=8, overflow=0, summary=no (0ch), scratchpad=0[0m
+
+[1m------------------------------------------------------------[0m
+[1m  Turn 8: [96m"I do not touch or use the sealed reliquary. From across the room I say 'now,' the established trigger word. I watch its already-armed charge finish the countdown and destroy the reliquary completely."[0m
+[1m------------------------------------------------------------[0m
+2026-07-21 21:57:46 [info     ] processing_action              action='I do not touch or use the sealed reliquary. From a' player='Kael Windrunner'
+2026-07-21 21:57:48 [info     ] ollama_raw_response            has_message_attr=True is_dict=False response_type=ChatResponse
+2026-07-21 21:57:48 [info     ] ollama_message_extracted       content_length=519 content_preview='{\n    "action_type": "roleplay",\n    "reasoning": "The player is narrating a specific event (the destruction of an object) triggered by a verbal command (\'now\'). There are no mechanical uncertainties ' content_type=str has_thinking=False
+2026-07-21 21:57:48 [debug    ] triage_raw_response            content='{\n    "action_type": "roleplay",\n    "reasoning": "The player is narrating a specific event (the destruction of an object) triggered by a verbal command (\'now\'). There are no mechanical uncertainties '
+2026-07-21 21:57:48 [info     ] triage_decision                action_type=roleplay dc=None is_creature_target=False needs_roll=False reasoning='The player is narrating a specific event (the destruction of an object) triggered by a verbal comman' skill=None target_name=None
+2026-07-21 21:57:49 [debug    ] kg_context_injected            narrative_recalled=0 scene_seeds=3 seed_count=3 text_matches=0 vector_matches=0
+2026-07-21 21:57:49 [info     ] narrator_tier_selected         action_type=roleplay definitely_standard=False forced=False in_combat=False is_opening=False significance=notable tier=premium
+2026-07-21 21:57:56 [info     ] deepseek_response              cache_hit_ratio=0.07538280329799764 cache_hit_tokens=768 cache_miss_tokens=9420 content_length=2013 content_preview="The word hangs in the air like a held breath.\n\n*Now.*\n\nFor a heartbeat — nothing. Mara's eyes snap to you, confusion flickering across her face.\n\nThen the reliquary answers.\n\nA click from inside the i" model=deepseek-v4-flash reasoning_length=0 thinking=False
+2026-07-21 21:57:59 [info     ] deepseek_response              cache_hit_ratio=0.9764705882352941 cache_hit_tokens=10624 cache_miss_tokens=256 content_length=0 content_preview= model=deepseek-v4-flash reasoning_length=0 thinking=False
+2026-07-21 21:57:59 [info     ] narrator_tool_followup         effects_count=7 tool_count=7
+2026-07-21 21:58:03 [info     ] ollama_raw_response            has_message_attr=True is_dict=False response_type=ChatResponse
+2026-07-21 21:58:03 [info     ] ollama_message_extracted       content_length=332 content_preview='{\n  "new_facts": [\n    "The reliquary\'s demolition charge was triggered by speaking the word \'now\', not pulling a pin.",\n    "Mara Venn realized the sender intended for her to speak the trigger word, ' content_type=str has_thinking=False
+2026-07-21 21:58:03 [info     ] state_delta_extracted          has_location=False has_time=False new_events=0 new_facts=2 new_npcs=0 npc_updates=0
+2026-07-21 21:58:03 [info     ] world_state_updated            facts_count=30 location='Copper Finch' npc_count=1 time=morning turn=8
+2026-07-21 21:58:03 [info     ] memory_added                   campaign_id=aff357d6-0760-4650-9e52-c563cf572449 memory_id=narrative_b40fbdd6-2f0a-4a21-9514-fdd41b2b51a1
+2026-07-21 21:58:03 [info     ] entity_referenced              alias_used=None dialogue_emotions=['confused', 'surprised', 'understanding', 'rough laugh', 'quiet'] dialogue_indices=[1, 2, 3, 4, 5] entity_id=mara-venn entity_name='Mara Venn'
+2026-07-21 21:58:03 [info     ] effect_executed                effect_type=ref_entity idempotency_key=aff357d6-0760-4650-9e52-c563cf572449:discord:999999:turn-8:0 success=True
+2026-07-21 21:58:03 [info     ] effect_applied                 details={'entity_id': 'mara-venn', 'alias_used': None, 'found_in_scene': True, 'found_in_world': True, 'world_reference_type': 'npc'} effect_type=ref_entity was_duplicate=False
+2026-07-21 21:58:03 [info     ] entity_referenced              alias_used=None dialogue_emotions=[] dialogue_indices=[] entity_id=sealed-reliquary entity_name='sealed reliquary'
+2026-07-21 21:58:03 [info     ] effect_executed                effect_type=ref_entity idempotency_key=aff357d6-0760-4650-9e52-c563cf572449:discord:999999:turn-8:1 success=True
+2026-07-21 21:58:03 [info     ] effect_applied                 details={'entity_id': 'sealed-reliquary', 'alias_used': None, 'found_in_scene': True, 'found_in_world': True, 'world_reference_type': 'item'} effect_type=ref_entity was_duplicate=False
+2026-07-21 21:58:03 [info     ] entity_referenced              alias_used=None dialogue_emotions=[] dialogue_indices=[] entity_id=obsidian-key entity_name='obsidian key'
+2026-07-21 21:58:03 [info     ] effect_executed                effect_type=ref_entity idempotency_key=aff357d6-0760-4650-9e52-c563cf572449:discord:999999:turn-8:2 success=True
+2026-07-21 21:58:03 [info     ] effect_applied                 details={'entity_id': 'obsidian-key', 'alias_used': None, 'found_in_scene': True, 'found_in_world': True, 'world_reference_type': 'item'} effect_type=ref_entity was_duplicate=False
+2026-07-21 21:58:03 [info     ] entity_referenced              alias_used=None dialogue_emotions=[] dialogue_indices=[] entity_id=brass-compass entity_name='brass compass'
+2026-07-21 21:58:03 [info     ] effect_executed                effect_type=ref_entity idempotency_key=aff357d6-0760-4650-9e52-c563cf572449:discord:999999:turn-8:3 success=True
+2026-07-21 21:58:03 [info     ] effect_applied                 details={'entity_id': 'brass-compass', 'alias_used': None, 'found_in_scene': True, 'found_in_world': False, 'world_reference_type': None} effect_type=ref_entity was_duplicate=False
+2026-07-21 21:58:03 [info     ] player_updated_by_narrator     applied={'items_granted': [{'name': 'obsidian key', 'quantity': 1}]} character_id=539f2236-8f69-448d-aede-44a31883528e persisted=True
+2026-07-21 21:58:03 [info     ] effect_executed                effect_type=update_player idempotency_key=aff357d6-0760-4650-9e52-c563cf572449:discord:999999:turn-8:4 success=True
+2026-07-21 21:58:03 [info     ] effect_applied                 details={'applied': {'items_granted': [{'name': 'obsidian key', 'quantity': 1}]}, 'narrator_authoritative': True, 'persisted': True} effect_type=update_player was_duplicate=False
+2026-07-21 21:58:03 [info     ] entity_removed                 id=sealed-reliquary name='sealed reliquary'
+2026-07-21 21:58:03 [info     ] effect_executed                effect_type=remove_entity idempotency_key=aff357d6-0760-4650-9e52-c563cf572449:discord:999999:turn-8:5 success=True
+2026-07-21 21:58:03 [info     ] effect_applied                 details={'entity_id': 'sealed-reliquary', 'entity_name': 'sealed reliquary', 'reason': "destroyed by its own demolition charge triggered by the spoken word 'now'"} effect_type=remove_entity was_duplicate=False
+2026-07-21 21:58:03 [info     ] entity_registered              disposition=neutral hostility=0 id=34ab080c-6f53-4d20-b7ff-d1ecb94fe3f5 monster_index=None name='note fragment' type=object
+2026-07-21 21:58:03 [info     ] effect_executed                effect_type=spawn_object idempotency_key=aff357d6-0760-4650-9e52-c563cf572449:discord:999999:turn-8:6 success=True
+2026-07-21 21:58:03 [info     ] effect_applied                 details={'entity_id': '34ab080c-6f53-4d20-b7ff-d1ecb94fe3f5', 'object_name': 'note fragment'} effect_type=spawn_object was_duplicate=False
+2026-07-21 21:58:03 [debug    ] effect_bridge_converted        op_count=4 promotion_count=0
+2026-07-21 21:58:03 [debug    ] kg_operations_applied          count=4 rejections=1
+2026-07-21 21:58:03 [debug    ] effect_kg_rejections           rejections=['update_node: Node not found: sealed-reliquary']
+2026-07-21 21:58:04 [info     ] message_processed              action_preview='I do not touch or use the sealed reliquary. From a' combat_triggered=False has_mechanics=False scene_entities=4 session_id=3d986478-d972-4941-92fe-cf4c8c082dbf user=TestPlayer
+
+[1m[95m[NARRATION][0m 
+  The word hangs in the air like a held breath. *Now.* For a heartbeat — 
+  nothing. Mara's eyes snap to you, confusion flickering across her face. Then 
+  the reliquary answers. A click from inside the iron box. Precise. Deliberate. 
+  The bronze pin shudders once, then *drops* — sliding home into a recess that 
+  wasn't there a moment ago. Mara's hand shoots out — too late. She's already 
+  moving back, chair scraping the floorboards. The iron box *cracks*. Not an 
+  explosion. Not fire. A clean, surgical fracture — iron splitting along seams 
+  you couldn't see, the bronze pin shearing in two. A puff of grey smoke rises. 
+  No heat. No blast. Just the sound of metal giving way to something that was 
+  *waiting* inside it. The reliquary falls apart in two clean halves. They 
+  clatter onto the scarred oak table and lie still. Smoke curls upward, thin 
+  and grey, and dissipates against the copper lamps. Silence. Then the rain 
+  again. The shutters. The old tavern breathing. Mara stares at the wreckage. 
+  Her hand is still half-raised, frozen mid-reach. Slowly, she lowers it. 
+  "You—" She stops. Starts again. "*That* was the trigger?" She looks from the 
+  sundered iron to you, something new in her eyes. Not fear. Not anger. 
+  *Understanding.* "You knew. The whole time. You knew what word would finish 
+  it." She exhales. Runs a hand through her hair. "Damn, Kael." A rough laugh, 
+  barely there. "I was *holding* that thing. I was going to *pull the pin.*" 
+  She looks at the wrecked reliquary, then back at you. "Whoever sent it — they 
+  wanted me to say that word. Not pull the pin. *Speak.*" Her jaw tightens. 
+  "They knew I'd read the note aloud. They knew I'd say 'now' when I was 
+  ready." The two halves of the iron box lie open on the table. Inside the 
+  hollow of one half — nestled in a felt-lined compartment, untouched by the 
+  mechanism that destroyed its container — is a single strip of paper. Mara 
+  sees it at the same time you do. Her eyes meet yours. "Well?" she says 
+  quietly. "Are we reading it, or burning it?" 
+
+[2m  [17.4s][0m
+  [92mNo issues detected[0m
+  [2m[MEM] buffer=8, overflow=0, summary=no (0ch), scratchpad=0[0m
+
+[1m------------------------------------------------------------[0m
+[1m  Turn 9: [96m"I warn Mara Venn that the watch is at the door. She chooses to flee the Copper Finch immediately, taking nothing else."[0m
+[1m------------------------------------------------------------[0m
+2026-07-21 21:58:05 [info     ] ollama_raw_response            has_message_attr=True is_dict=False response_type=ChatResponse
+2026-07-21 21:58:05 [info     ] ollama_message_extracted       content_length=404 content_preview="- Mara reveals a fresh crescent scar on her palm caused by a wire trap in the reliquary sent to manipulate her curiosity about the Ash Gate, leading her to pledge full commitment to Kael's quest.\n\n- A" content_type=str has_thinking=False
+2026-07-21 21:58:05 [info     ] messages_condensed             campaign_id=aff357d6-0760-4650-9e52-c563cf572449 condensed_total=5 summaries_produced=2
+2026-07-21 21:58:08 [info     ] ollama_raw_response            has_message_attr=True is_dict=False response_type=ChatResponse
+2026-07-21 21:58:08 [info     ] ollama_message_extracted       content_length=1160 content_preview="- NPC: Kael Windrunner - Investigator who knows the trigger word 'now' for the reliquary and warns Mara about a guard outside; disposition shifts from wary ally to someone she respects but now flees w" content_type=str has_thinking=False
+2026-07-21 21:58:08 [info     ] periodic_facts_extracted       campaign_id=aff357d6-0760-4650-9e52-c563cf572449 new_facts_count=6 total_pinned_facts=14
+2026-07-21 21:58:08 [info     ] processing_action              action='I warn Mara Venn that the watch is at the door. Sh' player='Kael Windrunner'
+2026-07-21 21:58:09 [info     ] ollama_raw_response            has_message_attr=True is_dict=False response_type=ChatResponse
+2026-07-21 21:58:09 [info     ] ollama_message_extracted       content_length=128 content_preview='{\n    "action_type": "social",\n    "narrative_significance": "notable",\n    "resources_consumed": [],\n    "currency_spent": {}\n}' content_type=str has_thinking=False
+2026-07-21 21:58:09 [debug    ] triage_raw_response            content='{\n    "action_type": "social",\n    "narrative_significance": "notable",\n    "resources_consumed": [],\n    "currency_spent": {}\n}'
+2026-07-21 21:58:09 [info     ] triage_decision                action_type=social dc=None is_creature_target=False needs_roll=False reasoning= skill=None target_name=None
+2026-07-21 21:58:10 [debug    ] kg_context_injected            narrative_recalled=0 scene_seeds=4 seed_count=4 text_matches=2 vector_matches=0
+2026-07-21 21:58:10 [info     ] narrator_tier_selected         action_type=social definitely_standard=False forced=False in_combat=False is_opening=False significance=notable tier=premium
+2026-07-21 21:58:14 [info     ] deepseek_response              cache_hit_ratio=0.072459666006227 cache_hit_tokens=768 cache_miss_tokens=9831 content_length=985 content_preview='Mara is still staring at the sundered iron when you speak.\n\n*The watch is at the door.*\n\nHer head snaps up. For a half-second, something hard and calculating moves behind her eyes — weighing options, ' model=deepseek-v4-flash reasoning_length=0 thinking=False
+2026-07-21 21:58:17 [info     ] deepseek_response              cache_hit_ratio=0.9750612133853269 cache_hit_tokens=10752 cache_miss_tokens=275 content_length=0 content_preview= model=deepseek-v4-flash reasoning_length=0 thinking=False
+2026-07-21 21:58:17 [info     ] narrator_tool_followup         effects_count=5 tool_count=5
+2026-07-21 21:58:17 [debug    ] narrator_npc_reference         disposition=allied npc='Mara Venn'
+2026-07-21 21:58:21 [info     ] ollama_raw_response            has_message_attr=True is_dict=False response_type=ChatResponse
+2026-07-21 21:58:21 [info     ] ollama_message_extracted       content_length=601 content_preview='{\n  "new_connections": [\n    "back door",\n    "rear exit"\n  ],\n  "npc_updates": [\n    {\n      "id": "979d519d-4e72-4a7a-b188-51b4cf0c2362",\n      "location": "Copper Finch back door",\n      "descripti' content_type=str has_thinking=False
+2026-07-21 21:58:21 [info     ] state_delta_extracted          has_location=False has_time=False new_events=0 new_facts=2 new_npcs=0 npc_updates=1
+2026-07-21 21:58:21 [info     ] world_state_updated            facts_count=32 location='Copper Finch' npc_count=1 time=morning turn=9
+2026-07-21 21:58:21 [debug    ] delta_bridge_converted         op_count=10
+2026-07-21 21:58:21 [debug    ] kg_operations_applied          count=10 rejections=0
+2026-07-21 21:58:22 [info     ] memory_added                   campaign_id=aff357d6-0760-4650-9e52-c563cf572449 memory_id=narrative_50110782-4eaa-4c58-a8be-54b551e20378
+2026-07-21 21:58:22 [info     ] entity_referenced              alias_used=None dialogue_emotions=['urgent', 'direct'] dialogue_indices=[1, 2] entity_id=mara-venn entity_name='Mara Venn'
+2026-07-21 21:58:22 [info     ] effect_executed                effect_type=ref_entity idempotency_key=aff357d6-0760-4650-9e52-c563cf572449:discord:999999:turn-9:0 success=True
+2026-07-21 21:58:22 [info     ] effect_applied                 details={'entity_id': 'mara-venn', 'alias_used': None, 'found_in_scene': True, 'found_in_world': True, 'world_reference_type': 'npc'} effect_type=ref_entity was_duplicate=False
+2026-07-21 21:58:22 [info     ] entity_referenced              alias_used=None dialogue_emotions=[] dialogue_indices=[] entity_id=obsidian-key entity_name='obsidian key'
+2026-07-21 21:58:22 [info     ] effect_executed                effect_type=ref_entity idempotency_key=aff357d6-0760-4650-9e52-c563cf572449:discord:999999:turn-9:1 success=True
+2026-07-21 21:58:22 [info     ] effect_applied                 details={'entity_id': 'obsidian-key', 'alias_used': None, 'found_in_scene': True, 'found_in_world': True, 'world_reference_type': 'item'} effect_type=ref_entity was_duplicate=False
+2026-07-21 21:58:22 [info     ] entity_referenced              alias_used=None dialogue_emotions=[] dialogue_indices=[] entity_id=note-fragment entity_name='note fragment'
+2026-07-21 21:58:22 [info     ] effect_executed                effect_type=ref_entity idempotency_key=aff357d6-0760-4650-9e52-c563cf572449:discord:999999:turn-9:2 success=True
+2026-07-21 21:58:22 [info     ] effect_applied                 details={'entity_id': 'note-fragment', 'alias_used': None, 'found_in_scene': True, 'found_in_world': True, 'world_reference_type': 'item'} effect_type=ref_entity was_duplicate=False
+2026-07-21 21:58:22 [info     ] entity_updated_by_narrator     applied={'status': 'fled', 'description_appended': 'Fled the Copper Finch through the rear alley, leaving the reliquary wreckage behind.'} entity_id=mara-venn
+2026-07-21 21:58:22 [info     ] effect_executed                effect_type=update_entity idempotency_key=aff357d6-0760-4650-9e52-c563cf572449:discord:999999:turn-9:3 success=True
+2026-07-21 21:58:22 [info     ] effect_applied                 details={'entity_id': 'mara-venn', 'applied': {'status': 'fled', 'description_appended': 'Fled the Copper Finch through the rear alley, leaving the reliquary wreckage behind.'}, 'found_in_scene': True, 'found_in_world': True} effect_type=update_entity was_duplicate=False
+2026-07-21 21:58:22 [info     ] entity_removed                 id=34ab080c-6f53-4d20-b7ff-d1ecb94fe3f5 name='note fragment'
+2026-07-21 21:58:22 [info     ] effect_executed                effect_type=remove_entity idempotency_key=aff357d6-0760-4650-9e52-c563cf572449:discord:999999:turn-9:4 success=True
+2026-07-21 21:58:22 [info     ] effect_applied                 details={'entity_id': '34ab080c-6f53-4d20-b7ff-d1ecb94fe3f5', 'entity_name': 'note fragment', 'reason': 'Left behind on the table amid the destroyed reliquary wreckage when Mara fled.'} effect_type=remove_entity was_duplicate=False
+2026-07-21 21:58:22 [debug    ] effect_bridge_converted        op_count=3 promotion_count=0
+2026-07-21 21:58:22 [debug    ] kg_operations_applied          count=3 rejections=0
+2026-07-21 21:58:22 [info     ] message_processed              action_preview='I warn Mara Venn that the watch is at the door. Sh' combat_triggered=False has_mechanics=False scene_entities=3 session_id=3d986478-d972-4941-92fe-cf4c8c082dbf user=TestPlayer
+
+[1m[95m[NARRATION][0m 
+  Mara is still staring at the sundered iron when you speak. *The watch is at 
+  the door.* Her head snaps up. For a half-second, something hard and 
+  calculating moves behind her eyes — weighing options, exits, odds. Then she 
+  moves. No bag. No coat adjustment. No second glance at the wreckage on the 
+  table. She crosses to the back of the tavern in four quick strides, boots 
+  silent on the worn floorboards. Her hand finds the rear door's iron latch. 
+  She looks back at you. The rain-slicked alley waits beyond the crack of the 
+  door. "You coming?" No plea. No pressure. Just the question, flat and direct, 
+  the way someone asks a partner if they're ready to move. The front door of 
+  the Copper Finch rattles. A fist. A voice, muffled through wood. *"Mara Venn. 
+  Open up. Watch business."* Mara's eyes hold yours. The obsidian key is in 
+  your pack. The reliquary lies in pieces on the table. The Ash Gate waits, 
+  still sealed, still hungry. The alley breathes cold morning air behind her. 
+
+[2m  [18.8s][0m
+  [92mNo issues detected[0m
+  [2m[MEM] buffer=8, overflow=0, summary=no (0ch), scratchpad=0[0m
+
+[1m------------------------------------------------------------[0m
+[1m  Turn 10: [96m"I call out for Old Bram, though I know he died. I listen for no living answer and instead recall his last warning about the Ash Gate."[0m
+[1m------------------------------------------------------------[0m
+2026-07-21 21:58:23 [info     ] processing_action              action='I call out for Old Bram, though I know he died. I ' player='Kael Windrunner'
+2026-07-21 21:58:25 [info     ] ollama_raw_response            has_message_attr=True is_dict=False response_type=ChatResponse
+2026-07-21 21:58:25 [info     ] ollama_message_extracted       content_length=615 content_preview='{\n    "action_type": "roleplay",\n    "reasoning": "The player is performing a narrative beat: calling out to a deceased NPC (Old Bram) based on prior lore/warnings, then listening for silence and reca' content_type=str has_thinking=False
+2026-07-21 21:58:25 [debug    ] triage_raw_response            content='{\n    "action_type": "roleplay",\n    "reasoning": "The player is performing a narrative beat: calling out to a deceased NPC (Old Bram) based on prior lore/warnings, then listening for silence and reca'
+2026-07-21 21:58:25 [info     ] triage_decision                action_type=roleplay dc=None is_creature_target=False needs_roll=False reasoning='The player is performing a narrative beat: calling out to a deceased NPC (Old Bram) based on prior l' skill=None target_name=None
+2026-07-21 21:58:25 [debug    ] kg_context_injected            narrative_recalled=0 scene_seeds=2 seed_count=3 text_matches=1 vector_matches=0
+2026-07-21 21:58:25 [info     ] narrator_tier_selected         action_type=roleplay definitely_standard=False forced=False in_combat=False is_opening=False significance=routine tier=standard
+2026-07-21 21:58:31 [info     ] deepseek_response              cache_hit_ratio=0.07256921477841821 cache_hit_tokens=768 cache_miss_tokens=9815 content_length=1588 content_preview='You turn from the door. Face the empty tavern. The copper lamps. The scarred tables. The rain against glass.\n\n"Bram."\n\nThe name falls into the quiet. No echo — the tavern swallows it, damp and heavy.\n' model=deepseek-v4-flash reasoning_length=0 thinking=False
+2026-07-21 21:58:33 [info     ] deepseek_response              cache_hit_ratio=0.974561089215335 cache_hit_tokens=10880 cache_miss_tokens=284 content_length=0 content_preview= model=deepseek-v4-flash reasoning_length=0 thinking=False
+2026-07-21 21:58:33 [info     ] narrator_tool_followup         effects_count=4 tool_count=4
+2026-07-21 21:58:37 [info     ] ollama_raw_response            has_message_attr=True is_dict=False response_type=ChatResponse
+2026-07-21 21:58:37 [info     ] ollama_message_extracted       content_length=258 content_preview='{\n  "new_facts": [\n    "The front door has been rattled by someone demanding entry.",\n    "Mara Venn is holding the rear latch of the tavern."\n  ],\n  "flag_changes": {\n    "front_door_knocked_on": tru' content_type=str has_thinking=False
+2026-07-21 21:58:37 [info     ] state_delta_extracted          has_location=False has_time=False new_events=0 new_facts=2 new_npcs=0 npc_updates=0
+2026-07-21 21:58:37 [info     ] world_state_updated            facts_count=40 location='Copper Finch' npc_count=1 time=morning turn=10
+2026-07-21 21:58:37 [info     ] memory_added                   campaign_id=aff357d6-0760-4650-9e52-c563cf572449 memory_id=narrative_e8dbf6d1-d43a-44ba-b54f-0dc440118806
+2026-07-21 21:58:37 [info     ] entity_referenced              alias_used=None dialogue_emotions=['urgent'] dialogue_indices=[1] entity_id=mara-venn entity_name='Mara Venn'
+2026-07-21 21:58:37 [info     ] effect_executed                effect_type=ref_entity idempotency_key=aff357d6-0760-4650-9e52-c563cf572449:discord:999999:turn-10:0 success=True
+2026-07-21 21:58:37 [info     ] effect_applied                 details={'entity_id': 'mara-venn', 'alias_used': None, 'found_in_scene': True, 'found_in_world': True, 'world_reference_type': 'npc'} effect_type=ref_entity was_duplicate=False
+2026-07-21 21:58:37 [info     ] entity_referenced              alias_used=None dialogue_emotions=[] dialogue_indices=[] entity_id=obsidian-key entity_name='obsidian key'
+2026-07-21 21:58:37 [info     ] effect_executed                effect_type=ref_entity idempotency_key=aff357d6-0760-4650-9e52-c563cf572449:discord:999999:turn-10:1 success=True
+2026-07-21 21:58:37 [info     ] effect_applied                 details={'entity_id': 'obsidian-key', 'alias_used': None, 'found_in_scene': True, 'found_in_world': True, 'world_reference_type': 'item'} effect_type=ref_entity was_duplicate=False
+2026-07-21 21:58:37 [info     ] entity_referenced              alias_used=None dialogue_emotions=[] dialogue_indices=[] entity_id=brass-compass entity_name='brass compass'
+2026-07-21 21:58:37 [info     ] effect_executed                effect_type=ref_entity idempotency_key=aff357d6-0760-4650-9e52-c563cf572449:discord:999999:turn-10:2 success=True
+2026-07-21 21:58:37 [info     ] effect_applied                 details={'entity_id': 'brass-compass', 'alias_used': None, 'found_in_scene': True, 'found_in_world': False, 'world_reference_type': None} effect_type=ref_entity was_duplicate=False
+2026-07-21 21:58:37 [info     ] player_updated_by_narrator     applied={'items_granted': [{'name': 'obsidian key', 'quantity': 1}]} character_id=539f2236-8f69-448d-aede-44a31883528e persisted=True
+2026-07-21 21:58:37 [info     ] effect_executed                effect_type=update_player idempotency_key=aff357d6-0760-4650-9e52-c563cf572449:discord:999999:turn-10:3 success=True
+2026-07-21 21:58:37 [info     ] effect_applied                 details={'applied': {'items_granted': [{'name': 'obsidian key', 'quantity': 1}]}, 'narrator_authoritative': True, 'persisted': True} effect_type=update_player was_duplicate=False
+2026-07-21 21:58:37 [info     ] message_processed              action_preview='I call out for Old Bram, though I know he died. I ' combat_triggered=False has_mechanics=False scene_entities=3 session_id=3d986478-d972-4941-92fe-cf4c8c082dbf user=TestPlayer
+
+[1m[95m[NARRATION][0m 
+  You turn from the door. Face the empty tavern. The copper lamps. The scarred 
+  tables. The rain against glass. "Bram." The name falls into the quiet. No 
+  echo — the tavern swallows it, damp and heavy. Silence answers. The way 
+  silence always answers the dead. You don't wait for more. You *remember*. 
+  Three days ago. The ferry slip. Muddy water lapping at the pilings. Old 
+  Bram's body — still warm when you found him, sprawled on the wet boards, his 
+  ferryman's coat twisted, one hand open and empty. The other clenched so tight 
+  you had to pry the fingers apart. Nothing in them. But you remember what he 
+  said the last time you saw him alive. The evening before. Standing right 
+  here, at this very bar, a half-empty glass in his hand. His voice — gravel 
+  and weariness — cutting through the tavern murmur. *"That gate ain't just 
+  locked, boy. It's* watching. *Something on the other side's been listening. 
+  Waiting. You go near it after dark, you feel it breathing back at you through 
+  the keyhole."* He'd drained his glass. Set it down hard. *"I've ferried folk 
+  across that slip for twenty years. Never seen what's on the other side. But 
+  I've seen what comes* through. *And none of it was ever looking to shake 
+  hands."* Then he'd left. Walked out into the night. And by morning, he was 
+  dead on the slip, his key gone, the gate sealed. The front door rattles 
+  again. Harder. *"Last warning! Open the door!"* Mara's hand is still on the 
+  rear latch. The alley breathes cold air. The obsidian key weighs against your 
+  hip. Bram's warning hangs in the air between you and the empty tavern. 
+
+[2m  [14.8s][0m
+  [92mNo issues detected[0m
+  [2m[MEM] buffer=8, overflow=0, summary=no (0ch), scratchpad=0[0m
+
+[1m------------------------------------------------------------[0m
+[1m  Turn 11: [96m"I leave the Copper Finch and travel to the Ash Gate, arriving beneath its cracked black arch."[0m
+[1m------------------------------------------------------------[0m
+2026-07-21 21:58:39 [info     ] ollama_raw_response            has_message_attr=True is_dict=False response_type=ChatResponse
+2026-07-21 21:58:39 [info     ] ollama_message_extracted       content_length=598 content_preview="- Mara accepts two gold coins as payment for her full attention, outlining three critical objectives: locating Bram's missing key, monitoring a sealed gate where something recently emerged, and unders" content_type=str has_thinking=False
+2026-07-21 21:58:39 [info     ] messages_condensed             campaign_id=aff357d6-0760-4650-9e52-c563cf572449 condensed_total=8 summaries_produced=3
+2026-07-21 21:58:41 [info     ] ollama_raw_response            has_message_attr=True is_dict=False response_type=ChatResponse
+2026-07-21 21:58:41 [info     ] ollama_message_extracted       content_length=981 content_preview='{\n    "summary": "Kael Windrunner destroys the sealed reliquary by speaking its trigger word, revealing that Mara Venn was unknowingly part of a trap set against her. After warning her about the appro' content_type=str has_thinking=False
+2026-07-21 21:58:41 [info     ] incremental_summary_llm_response campaign_id=aff357d6-0760-4650-9e52-c563cf572449 raw_length=981 raw_preview='{\n    "summary": "Kael Windrunner destroys the sealed reliquary by speaking its trigger word, revealing that Mara Venn was unknowingly part of a trap set against her. After warning her about the appro'
+2026-07-21 21:58:42 [info     ] memory_added                   campaign_id=aff357d6-0760-4650-9e52-c563cf572449 memory_id=session_incremental_21
+2026-07-21 21:58:42 [info     ] incremental_summary_generated  campaign_id=aff357d6-0760-4650-9e52-c563cf572449 message_count=21
+2026-07-21 21:58:42 [info     ] processing_action              action='I leave the Copper Finch and travel to the Ash Gat' player='Kael Windrunner'
+2026-07-21 21:58:43 [info     ] ollama_raw_response            has_message_attr=True is_dict=False response_type=ChatResponse
+2026-07-21 21:58:43 [info     ] ollama_message_extracted       content_length=130 content_preview='{\n    "action_type": "movement",\n    "narrative_significance": "routine",\n    "resources_consumed": [],\n    "currency_spent": {}\n}' content_type=str has_thinking=False
+2026-07-21 21:58:43 [debug    ] triage_raw_response            content='{\n    "action_type": "movement",\n    "narrative_significance": "routine",\n    "resources_consumed": [],\n    "currency_spent": {}\n}'
+2026-07-21 21:58:43 [info     ] triage_decision                action_type=movement dc=None is_creature_target=False needs_roll=False reasoning= skill=None target_name=None
+2026-07-21 21:58:43 [debug    ] kg_context_injected            narrative_recalled=0 scene_seeds=2 seed_count=2 text_matches=1 vector_matches=0
+2026-07-21 21:58:43 [info     ] narrator_tier_selected         action_type=movement definitely_standard=False forced=False in_combat=False is_opening=False significance=routine tier=standard
+2026-07-21 21:58:50 [info     ] deepseek_response              cache_hit_ratio=0.06777866031241726 cache_hit_tokens=768 cache_miss_tokens=10563 content_length=1706 content_preview="You step past Mara into the alley. The latch clicks behind you. Rain catches your face — a thin, persistent drizzle that's been falling since before dawn.\n\nThe Copper Finch's back door disappears into" model=deepseek-v4-flash reasoning_length=0 thinking=False
+2026-07-21 21:58:52 [info     ] deepseek_response              cache_hit_ratio=0.9776733254994124 cache_hit_tokens=11648 cache_miss_tokens=266 content_length=0 content_preview= model=deepseek-v4-flash reasoning_length=0 thinking=False
+2026-07-21 21:58:52 [info     ] narrator_tool_followup         effects_count=4 tool_count=4
+2026-07-21 21:58:55 [info     ] ollama_raw_response            has_message_attr=True is_dict=False response_type=ChatResponse
+2026-07-21 21:58:55 [info     ] ollama_message_extracted       content_length=164 content_preview='{\n  "location_change": "Ash Gate",\n  "new_connections": [\n    "rear exit of Copper Finch tavern"\n  ],\n  "npc_updates": [],\n  "removed_npcs": [\n    "Mara Venn"\n  ]\n}' content_type=str has_thinking=False
+2026-07-21 21:58:55 [info     ] state_delta_extracted          has_location=True has_time=False new_events=0 new_facts=0 new_npcs=0 npc_updates=0
+2026-07-21 21:58:55 [info     ] entity_removed                 id=672de291-36f8-4f53-bc0f-409001347bc6 name='Mara Venn'
+2026-07-21 21:58:55 [info     ] world_state_updated            facts_count=40 location='Ash Gate' npc_count=1 time=morning turn=11
+2026-07-21 21:58:55 [debug    ] delta_bridge_converted         op_count=8
+2026-07-21 21:58:55 [debug    ] kg_operations_applied          count=8 rejections=0
+2026-07-21 21:58:56 [info     ] memory_added                   campaign_id=aff357d6-0760-4650-9e52-c563cf572449 memory_id=narrative_553209e6-cd32-4105-9f5d-ea912f0b89e8
+2026-07-21 21:58:56 [debug    ] ref_entity_known_off_scene     entity_id=mara-venn
+2026-07-21 21:58:56 [info     ] effect_executed                effect_type=ref_entity idempotency_key=aff357d6-0760-4650-9e52-c563cf572449:discord:999999:turn-11:0 success=True
+2026-07-21 21:58:56 [info     ] effect_applied                 details={'entity_id': 'mara-venn', 'alias_used': None, 'found_in_scene': False, 'found_in_world': True, 'world_reference_type': 'npc'} effect_type=ref_entity was_duplicate=False
+2026-07-21 21:58:56 [info     ] entity_referenced              alias_used=None dialogue_emotions=[] dialogue_indices=[] entity_id=obsidian-key entity_name='obsidian key'
+2026-07-21 21:58:56 [info     ] effect_executed                effect_type=ref_entity idempotency_key=aff357d6-0760-4650-9e52-c563cf572449:discord:999999:turn-11:1 success=True
+2026-07-21 21:58:56 [info     ] effect_applied                 details={'entity_id': 'obsidian-key', 'alias_used': None, 'found_in_scene': True, 'found_in_world': True, 'world_reference_type': 'item'} effect_type=ref_entity was_duplicate=False
+2026-07-21 21:58:56 [info     ] entity_referenced              alias_used=None dialogue_emotions=[] dialogue_indices=[] entity_id=brass-compass entity_name='brass compass'
+2026-07-21 21:58:56 [info     ] effect_executed                effect_type=ref_entity idempotency_key=aff357d6-0760-4650-9e52-c563cf572449:discord:999999:turn-11:2 success=True
+2026-07-21 21:58:56 [info     ] effect_applied                 details={'entity_id': 'brass-compass', 'alias_used': None, 'found_in_scene': True, 'found_in_world': False, 'world_reference_type': None} effect_type=ref_entity was_duplicate=False
+2026-07-21 21:58:56 [info     ] effect_executed                effect_type=change_location idempotency_key=aff357d6-0760-4650-9e52-c563cf572449:discord:999999:turn-11:3 success=True
+2026-07-21 21:58:56 [info     ] effect_applied                 details={'location_name': 'Ash Gate', 'location_description': 'A cracked black iron gate set into basalt at the dead end of a narrow lane, rust-streaked and seamless, with a single fracture running through the arch keystone. The keyhole is iron-rimmed and dark, surrounded by fresh scratch marks.', 'narrator_authoritative': True} effect_type=change_location was_duplicate=False
+2026-07-21 21:58:56 [info     ] entity_removed                 id=brass-compass name='brass compass'
+2026-07-21 21:58:56 [info     ] entity_removed                 id=b224e207-8a96-48ce-a0cf-2d526eff8f64 name='obsidian key'
+2026-07-21 21:58:56 [info     ] scene_registry_rescoped        location='Ash Gate' remaining=0 removed=2
+2026-07-21 21:58:56 [info     ] message_processed              action_preview='I leave the Copper Finch and travel to the Ash Gat' combat_triggered=False has_mechanics=False scene_entities=0 session_id=3d986478-d972-4941-92fe-cf4c8c082dbf user=TestPlayer
+
+[1m[95m[NARRATION][0m 
+  You step past Mara into the alley. The latch clicks behind you. Rain catches 
+  your face — a thin, persistent drizzle that's been falling since before dawn. 
+  The Copper Finch's back door disappears into the grey morning as you move. 
+  The streets of the dockside district are empty. Curtains drawn. Chimneys 
+  cold. The rain has scrubbed the cobblestones clean, leaving them dark and 
+  slick. Your boots find the path without thought — left at the chandler's, 
+  past the empty fish stalls, through the arch where the cobbles give way to 
+  packed earth. The buildings thin. The wharves fall behind. And then you see 
+  it. The Ash Gate rises at the dead end of a narrow lane, wedged between two 
+  tenement walls that have been left to crumble. It's old — older than the 
+  city, older than the stone around it. Black iron, streaked with rust that 
+  looks almost like dried blood, set into a frame of cracked basalt. The arch 
+  above it is split by a single fracture that runs from the keystone to the top 
+  curve, as if something on the other side once pushed hard enough to *almost* 
+  break through. No handle. No hinges visible. Just a dark sheet of iron, 
+  seamless and still, set into the stone like a scar. The keyhole is at waist 
+  height. Iron-rimmed. Dark. The obsidian key waits in your pack. Rain runs 
+  down the gate's surface in thin rivulets, tracing paths through the rust. Up 
+  close, you can see scratches around the keyhole — recent ones, from something 
+  metal and impatient. Someone's been here. Trying. Failing. The air around the 
+  gate is still. Colder than the morning around it. And if you press your ear 
+  close — if you *listen* — there's nothing. Silence so complete it feels like 
+  the gate is holding its breath. 
+
+[2m  [18.6s][0m
+  [92mNo issues detected[0m
+  [2m[MEM] buffer=8, overflow=0, summary=no (0ch), scratchpad=0[0m
+
+[1m------------------------------------------------------------[0m
+[1m  Turn 12: [96m"At the Ash Gate I meet a new, physically present courier named Sable Quill, introduce myself, and ask why she was waiting for me."[0m
+[1m------------------------------------------------------------[0m
+2026-07-21 21:58:58 [info     ] ollama_raw_response            has_message_attr=True is_dict=False response_type=ChatResponse
+2026-07-21 21:58:58 [info     ] ollama_message_extracted       content_length=667 content_preview='- NPC: Sable Quill - New physical courier who is currently waiting at the Ash Gate; disposition unknown but introduced to Kael Windrunner.\n- LOCATION: Ash Gate location (physical) - An old black iron ' content_type=str has_thinking=False
+2026-07-21 21:58:58 [info     ] periodic_facts_extracted       campaign_id=aff357d6-0760-4650-9e52-c563cf572449 new_facts_count=4 total_pinned_facts=18
+2026-07-21 21:58:58 [info     ] processing_action              action='At the Ash Gate I meet a new, physically present c' player='Kael Windrunner'
+2026-07-21 21:58:59 [info     ] ollama_raw_response            has_message_attr=True is_dict=False response_type=ChatResponse
+2026-07-21 21:58:59 [info     ] ollama_message_extracted       content_length=128 content_preview='{\n    "action_type": "social",\n    "narrative_significance": "routine",\n    "resources_consumed": [],\n    "currency_spent": {}\n}' content_type=str has_thinking=False
+2026-07-21 21:58:59 [debug    ] triage_raw_response            content='{\n    "action_type": "social",\n    "narrative_significance": "routine",\n    "resources_consumed": [],\n    "currency_spent": {}\n}'
+2026-07-21 21:58:59 [info     ] triage_decision                action_type=social dc=None is_creature_target=False needs_roll=False reasoning= skill=None target_name=None
+2026-07-21 21:58:59 [debug    ] kg_context_injected            narrative_recalled=0 scene_seeds=1 seed_count=1 text_matches=1 vector_matches=0
+2026-07-21 21:58:59 [info     ] narrator_tier_selected         action_type=social definitely_standard=False forced=False in_combat=False is_opening=False significance=routine tier=standard
+2026-07-21 21:59:04 [info     ] deepseek_response              cache_hit_ratio=0.0714618032939425 cache_hit_tokens=768 cache_miss_tokens=9979 content_length=1110 content_preview="A figure stands beneath the tenement wall to the left of the gate, sheltered from the worst of the rain.\n\nShe's young — early twenties, maybe. Lean. Dressed in a worn leather courier's jerkin over a d" model=deepseek-v4-flash reasoning_length=0 thinking=False
+2026-07-21 21:59:07 [info     ] deepseek_response              cache_hit_ratio=0.9760473670045752 cache_hit_tokens=10880 cache_miss_tokens=267 content_length=0 content_preview= model=deepseek-v4-flash reasoning_length=0 thinking=False
+2026-07-21 21:59:07 [info     ] narrator_tool_followup         effects_count=4 tool_count=4
+2026-07-21 21:59:11 [info     ] ollama_raw_response            has_message_attr=True is_dict=False response_type=ChatResponse
+2026-07-21 21:59:11 [info     ] ollama_message_extracted       content_length=528 content_preview='{\n  "new_npcs": [\n    {\n      "name": "courier",\n      "location": "Ash Gate",\n      "disposition": "neutral",\n      "description": "Young woman in a worn leather courier\'s jerkin with short dark hair' content_type=str has_thinking=False
+2026-07-21 21:59:11 [info     ] state_delta_extracted          has_location=False has_time=False new_events=0 new_facts=2 new_npcs=1 npc_updates=0
+2026-07-21 21:59:13 [info     ] ollama_raw_response            has_message_attr=True is_dict=False response_type=ChatResponse
+2026-07-21 21:59:13 [info     ] ollama_message_extracted       content_length=20 content_preview='{"action": "accept"}' content_type=str has_thinking=True
+2026-07-21 21:59:13 [info     ] entity_registered              disposition=neutral hostility=0 id=9ecd8f20-95f9-4e03-a2af-d524ace184ed monster_index=None name=courier type=npc
+2026-07-21 21:59:13 [info     ] world_state_updated            facts_count=42 location='Ash Gate' npc_count=2 time=morning turn=12
+2026-07-21 21:59:13 [debug    ] delta_bridge_converted         op_count=2
+2026-07-21 21:59:13 [debug    ] kg_operations_applied          count=2 rejections=0
+2026-07-21 21:59:14 [info     ] memory_added                   campaign_id=aff357d6-0760-4650-9e52-c563cf572449 memory_id=narrative_ced5d788-cdeb-4d60-9635-95323ca0f4f5
+2026-07-21 21:59:16 [info     ] ollama_raw_response            has_message_attr=True is_dict=False response_type=ChatResponse
+2026-07-21 21:59:16 [info     ] ollama_message_extracted       content_length=0 content_preview=EMPTY content_type=None has_thinking=True
+2026-07-21 21:59:16 [info     ] entity_registered              disposition=neutral hostility=0 id=c8baebf2-85e9-4fb2-81e3-caf963e1ccf8 monster_index=None name='Sable Quill' type=npc
+2026-07-21 21:59:16 [info     ] voice_catalog_seeded           changed=78
+2026-07-21 21:59:16 [info     ] voice_assigned                 detected_age=young detected_gender=female npc_id=272b8d06-e40a-4212-829c-4852717dbbde voice_id=EXAVITQu4vr4xnSDxMaL voice_name=Bella
+2026-07-21 21:59:16 [info     ] effect_executed                effect_type=add_npc idempotency_key=aff357d6-0760-4650-9e52-c563cf572449:discord:999999:turn-12:0 success=True
+2026-07-21 21:59:16 [info     ] effect_applied                 details={'entity_id': 'c8baebf2-85e9-4fb2-81e3-caf963e1ccf8', 'npc_name': 'Sable Quill', 'dialogue_indices': [1, 2], 'dialogue_emotions': ['flat', 'neutral']} effect_type=add_npc was_duplicate=False
+2026-07-21 21:59:16 [debug    ] ref_entity_known_off_scene     entity_id=ash-gate
+2026-07-21 21:59:16 [info     ] effect_executed                effect_type=ref_entity idempotency_key=aff357d6-0760-4650-9e52-c563cf572449:discord:999999:turn-12:1 success=True
+2026-07-21 21:59:16 [info     ] effect_applied                 details={'entity_id': 'ash-gate', 'alias_used': None, 'found_in_scene': False, 'found_in_world': True, 'world_reference_type': 'location'} effect_type=ref_entity was_duplicate=False
+2026-07-21 21:59:16 [info     ] entity_registered              disposition=neutral hostility=0 id=3a2e517c-2ec4-47fd-95a5-0474ab3f5a67 monster_index=None name='sealed envelope' type=object
+2026-07-21 21:59:16 [info     ] effect_executed                effect_type=spawn_object idempotency_key=aff357d6-0760-4650-9e52-c563cf572449:discord:999999:turn-12:2 success=True
+2026-07-21 21:59:16 [info     ] effect_applied                 details={'entity_id': '3a2e517c-2ec4-47fd-95a5-0474ab3f5a67', 'object_name': 'sealed envelope'} effect_type=spawn_object was_duplicate=False
+2026-07-21 21:59:16 [info     ] effect_executed                effect_type=change_location idempotency_key=aff357d6-0760-4650-9e52-c563cf572449:discord:999999:turn-12:3 success=True
+2026-07-21 21:59:16 [info     ] effect_applied                 details={'location_name': 'Ash Gate', 'location_description': 'A cracked black iron gate set into basalt at the dead end of a narrow lane, rust-streaked and seamless, with a single fracture running through the arch keystone. Rain runs down its surface in rivulets.', 'narrator_authoritative': True} effect_type=change_location was_duplicate=False
+2026-07-21 21:59:16 [debug    ] effect_bridge_converted        op_count=4 promotion_count=0
+2026-07-21 21:59:16 [debug    ] kg_operations_applied          count=4 rejections=0
+2026-07-21 21:59:17 [info     ] message_processed              action_preview='At the Ash Gate I meet a new, physically present c' combat_triggered=False has_mechanics=False scene_entities=3 session_id=3d986478-d972-4941-92fe-cf4c8c082dbf user=TestPlayer
+
+[1m[95m[NARRATION][0m 
+  A figure stands beneath the tenement wall to the left of the gate, sheltered 
+  from the worst of the rain. She's young — early twenties, maybe. Lean. 
+  Dressed in a worn leather courier's jerkin over a dark wool shirt, her boots 
+  scuffed and practical. A satchel hangs across her body, strap adjusted tight. 
+  Her hair is cropped short, dark and damp against her scalp. She's been 
+  waiting long enough that her shoulders have a slight hunch against the cold. 
+  When she sees you approach, she pushes off the wall. Straightens. Her eyes — 
+  quick, assessing — run over you once, then settle on your face. "Kael 
+  Windrunner." Not a question. She knows your name. She reaches into her 
+  satchel and pulls out a sealed envelope. Cream paper. No wax stamp. Just your 
+  name written across the front in a tight, angular hand. "I was paid to put 
+  this in your hand. That's all I know." She holds it out. "Job was 
+  straightforward — wait at the Ash Gate until a man matching your description 
+  arrived. Said you'd come this morning." Her eyes flick to the gate behind 
+  you. Then back. "You want it, or do I leave it on the cobbles?" 
+
+[2m  [21.1s][0m
+  [92mNo issues detected[0m
+  [2m[MEM] buffer=8, overflow=0, summary=no (0ch), scratchpad=1[0m
+2026-07-21 21:59:17 [debug    ] character_reconciled           character='Kael Windrunner' session_id=3d986478-d972-4941-92fe-cf4c8c082dbf
+2026-07-21 21:59:17 [info     ] npcs_synced                    count=2
+2026-07-21 21:59:17 [info     ] scene_cleared                  entities_removed=3
+2026-07-21 21:59:20 [info     ] ollama_raw_response            has_message_attr=True is_dict=False response_type=ChatResponse
+2026-07-21 21:59:20 [info     ] ollama_message_extracted       content_length=1073 content_preview='{\n    "summary": "Mara Venn flees the Copper Finch tavern after a confrontation with city watch, leaving Kael Windrunner behind to recall Old Bram\'s ominous warnings about the Ash Gate. Kael then trav' content_type=str has_thinking=False
+2026-07-21 21:59:20 [info     ] incremental_summary_llm_response campaign_id=aff357d6-0760-4650-9e52-c563cf572449 raw_length=1073 raw_preview='{\n    "summary": "Mara Venn flees the Copper Finch tavern after a confrontation with city watch, leaving Kael Windrunner behind to recall Old Bram\'s ominous warnings about the Ash Gate. Kael then trav'
+2026-07-21 21:59:20 [info     ] memory_added                   campaign_id=aff357d6-0760-4650-9e52-c563cf572449 memory_id=session_incremental_24
+2026-07-21 21:59:20 [info     ] incremental_summary_generated  campaign_id=aff357d6-0760-4650-9e52-c563cf572449 message_count=24
+2026-07-21 21:59:20 [debug    ] memory_state_saved             campaign_id=aff357d6-0760-4650-9e52-c563cf572449
+2026-07-21 21:59:20 [info     ] session_ended                  channel_id=999999 duration_minutes=3 session_id=3d986478-d972-4941-92fe-cf4c8c082dbf
+2026-07-21 21:59:20 [info     ] campaign_vectors_deleted       campaign_id=aff357d6-0760-4650-9e52-c563cf572449
+[1m[2m[CLEANUP][0m SQLite and vector data deleted
+
+[1m[96m============================================================[0m
+[1m[96m  MEMORY DIAGNOSTICS[0m
+[1m[96m============================================================[0m
+
+  Messages processed: 0
+  Buffer size: 0
+  Overflow waiting: 0
+  Running summary: NO (0 chars)
+  Scratchpad entries: 1
+
+[1m[96m============================================================[0m
+[1m[96m  TEST SUMMARY[0m
+[1m[96m============================================================[0m
+
+  Turns played: 12
+  Total issues: 0
+    [91mErrors: 0[0m
+    [93mWarnings: 0[0m
+
+  Log saved: data\test_logs\test_1784685560.json
+2026-07-21 21:59:20 [info     ] database_disconnected
+
+========================================================================
+TOOL RELIABILITY: PASS
+========================================================================
+effects: proposed=51 executed=51 rejected=0 reliability=100.0%
+families: {'ref_entity': 12, 'update_entity': 3, 'update_player': 6, 'spawn_object': 3, 'remove_entity': 2, 'change_location': 2, 'add_npc': 1}
+expected turns: 10/11
+followup turns=[2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] repair turns=[3, 5] structural errors=[3, 5]
+cost=$0.01385 elapsed=204.6s
+  PASS  all_turns_returned
+  PASS  effect_reliability_at_least_95pct
+  PASS  effect_accounting_balanced
+  PASS  at_least_six_effect_families
+  PASS  expected_turn_coverage_at_least_80pct
+  PASS  no_final_dead_npc_contradiction
+  PASS  no_dead_npc_state_reintroduction
+  PASS  no_harness_errors
+  PASS  ended_at_ash_gate
+artifact: data\tool_reliability\20260721_215920_deepseek_v4_flash_qwen9b.json

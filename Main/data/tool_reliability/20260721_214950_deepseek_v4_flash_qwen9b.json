@@ -1,0 +1,1090 @@
+{
+  "profile": "deepseek_v4_flash_qwen9b",
+  "session_id": "adda5dd8-9c8b-4486-961d-1bb2706242d3",
+  "turns": 12,
+  "elapsed_seconds": 228.14,
+  "usage": {
+    "calls": 57,
+    "prompt_tokens": 290562,
+    "completion_tokens": 10324,
+    "cache_read_tokens": 126336,
+    "cost_usd": 0.013867,
+    "cost_complete": true
+  },
+  "proposed_total": 35,
+  "executed_total": 38,
+  "rejected_total": 1,
+  "effect_reliability": 0.9714,
+  "effect_type_counts": {
+    "ref_entity": 12,
+    "update_player": 5,
+    "update_entity": 3,
+    "spawn_object": 1,
+    "remove_entity": 2,
+    "change_location": 2
+  },
+  "expected_turns_passed": 9,
+  "expected_turns_total": 11,
+  "tool_followup_turns": [
+    2,
+    3,
+    4,
+    5,
+    8,
+    9,
+    10,
+    11,
+    12
+  ],
+  "tool_repair_turns": [],
+  "structural_error_turns": [],
+  "continuity_repair_turns": [
+    6
+  ],
+  "continuity_failures": [],
+  "dead_state_reintroductions": [],
+  "errors": [],
+  "gates": {
+    "all_turns_returned": true,
+    "effect_reliability_at_least_95pct": true,
+    "at_least_six_effect_families": true,
+    "expected_turn_coverage_at_least_80pct": true,
+    "no_final_dead_npc_contradiction": true,
+    "no_dead_npc_state_reintroduction": true,
+    "no_harness_errors": true,
+    "ended_at_ash_gate": true
+  },
+  "turn_rows": [
+    {
+      "turn": 1,
+      "action": "I greet Mara Venn by name and ask what she has learned about the Ash Gate.",
+      "executed_types": [
+        "ref_entity"
+      ],
+      "proposed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "mara-venn"
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "sealed-reliquary"
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "brass-compass"
+        }
+      ],
+      "executed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "mara-venn",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "mara-venn",
+            "alias_used": null,
+            "found_in_scene": true,
+            "found_in_world": true,
+            "world_reference_type": "npc"
+          }
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "sealed-reliquary",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "sealed-reliquary",
+            "alias_used": null,
+            "found_in_scene": true,
+            "found_in_world": true,
+            "world_reference_type": "item"
+          }
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "brass-compass",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "brass-compass",
+            "alias_used": null,
+            "found_in_scene": true,
+            "found_in_world": false,
+            "world_reference_type": null
+          }
+        }
+      ],
+      "rejected": [],
+      "expected": [
+        "ref_entity"
+      ],
+      "expected_ok": true,
+      "narration_diagnostics": {
+        "streaming_buffered": false,
+        "continuity_violations": 0,
+        "continuity_repair_attempted": false,
+        "continuity_repair_succeeded": false,
+        "continuity_failed_closed": false,
+        "primary_effects": 3,
+        "primary_structural_errors": 0,
+        "tool_followup_attempted": false,
+        "tool_followup_for_mutation": false,
+        "tool_repair_attempted": false,
+        "tool_followup_structural_errors": 0,
+        "tool_repair_structural_errors": 0,
+        "tool_invalid_effects_dropped": 0,
+        "tool_repair_failed_closed": false,
+        "tool_followup_effects": 0,
+        "final_effects": 3
+      },
+      "narrative": "Mara Venn straightens from where she leans against the bar, a tin cup of something dark cradled between her fingers. The copper lamps throw shifting light across her charcoal coat.\n\nShe doesn't return the greeting. Instead, she watches you for a long moment \u2014 measuring.\n\n\"Kael.\" A nod. Then she sets the cup down and jerks her chin toward the shuttered window. The Ash Gate side.\n\n\"Learned enough to know I was right to come find you first.\"\n\nShe pulls a folded scrap of paper from her coat pocket and flattens it on the scarred tabletop. A rough sketch \u2014 the Gate's archway, notations in cramped script along the margins.\n\n\"Old Bram's skiff was found tied to the south pier at dusk. No sign of him. No blood. No struggle.\" She taps the sketch. \"The Gate's seal was intact when I arrived. But the ashes around the base \u2014 they're disturbed. Fresh footprints leading *in*. Not out.\"\n\nHer eyes lift to yours. \"Someone crossed three nights ago. And whoever they are, they didn't come back.\"\n\nShe waits. The tavern creaks. A log settles in the hearth.\n\n\"What do you make of that?\""
+    },
+    {
+      "turn": 2,
+      "action": "This is an uncontested item transfer with no roll: I hand my brass compass to Mara Venn, she accepts it, and it is now in her coat rather than my pack.",
+      "executed_types": [
+        "ref_entity"
+      ],
+      "proposed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "mara-venn"
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "brass-compass"
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "sealed-reliquary"
+        }
+      ],
+      "executed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "mara-venn",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "mara-venn",
+            "alias_used": null,
+            "found_in_scene": true,
+            "found_in_world": true,
+            "world_reference_type": "npc"
+          }
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "brass-compass",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "brass-compass",
+            "alias_used": null,
+            "found_in_scene": true,
+            "found_in_world": false,
+            "world_reference_type": null
+          }
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "sealed-reliquary",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "sealed-reliquary",
+            "alias_used": null,
+            "found_in_scene": true,
+            "found_in_world": true,
+            "world_reference_type": "item"
+          }
+        }
+      ],
+      "rejected": [],
+      "expected": [
+        "update_entity",
+        "update_player"
+      ],
+      "expected_ok": false,
+      "narration_diagnostics": {
+        "streaming_buffered": false,
+        "continuity_violations": 0,
+        "continuity_repair_attempted": false,
+        "continuity_repair_succeeded": false,
+        "continuity_failed_closed": false,
+        "primary_effects": 0,
+        "primary_structural_errors": 0,
+        "tool_followup_attempted": true,
+        "tool_followup_for_mutation": true,
+        "tool_repair_attempted": false,
+        "tool_followup_structural_errors": 0,
+        "tool_repair_structural_errors": 0,
+        "tool_invalid_effects_dropped": 0,
+        "tool_repair_failed_closed": false,
+        "tool_followup_effects": 3,
+        "final_effects": 3
+      },
+      "narrative": "You reach into your pack, fingers brushing past rations and cordage until they close around the familiar weight of the brass compass. It's warm from the morning's humidity, the metal casing slick against your palm as you pull it free.\n\nMara's eyes track the motion. She straightens slightly, her attention sharpening.\n\nYou hold it out to her. The compass swings gently on its lanyard, catching a glint of copper lamplight.\n\nBut Mara doesn't take it.\n\nHer gaze flicks from the compass to your face, and something shifts in her expression \u2014 a flicker of surprise, then calculation, then something almost like reluctance. She lets the moment stretch, the silence between you filling with the hiss of rain against the shutters.\n\n\"That's not a trinket, Kael.\" Her voice is lower now. \"That compass has been in your family longer than the Ash Gate has been sealed. You sure you want it out of your hands?\"\n\nShe hasn't moved to accept it. Her hands remain flat on the table, one still resting on the sketch of the Gate.\n\n\"I can keep it safe. I *will* keep it safe. But I need you to be certain. Because once it's in my coat, it's not something you can reach for in a hurry.\"\n\nThe tavern creaks around you. Through the floorboards, a draft carries the faint, acrid smell of ash.\n\nMara holds your gaze. \"So. Are you sure?\""
+    },
+    {
+      "turn": 3,
+      "action": "Mara reveals the fresh crescent scar beneath her glove and swears to become my ally in exposing the gate conspiracy.",
+      "executed_types": [
+        "ref_entity",
+        "update_entity",
+        "update_player"
+      ],
+      "proposed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "mara-venn"
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "brass-compass"
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "sealed-reliquary"
+        },
+        {
+          "type": "update_player"
+        },
+        {
+          "type": "update_entity"
+        }
+      ],
+      "executed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "mara-venn",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "mara-venn",
+            "alias_used": null,
+            "found_in_scene": true,
+            "found_in_world": true,
+            "world_reference_type": "npc"
+          }
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "brass-compass",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "brass-compass",
+            "alias_used": null,
+            "found_in_scene": true,
+            "found_in_world": false,
+            "world_reference_type": null
+          }
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "sealed-reliquary",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "sealed-reliquary",
+            "alias_used": null,
+            "found_in_scene": true,
+            "found_in_world": true,
+            "world_reference_type": "item"
+          }
+        },
+        {
+          "type": "update_player",
+          "was_duplicate": false,
+          "details": {
+            "applied": {
+              "items_removed": [
+                {
+                  "name": "brass compass",
+                  "quantity": 1
+                }
+              ]
+            },
+            "narrator_authoritative": true,
+            "persisted": true
+          }
+        },
+        {
+          "type": "update_entity",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "mara-venn",
+            "applied": {
+              "disposition": "allied",
+              "important": true,
+              "description_appended": "Has a fresh crescent scar on the back of her left hand, revealed beneath her glove",
+              "items_added": [
+                "brass compass"
+              ]
+            },
+            "found_in_scene": true,
+            "found_in_world": true
+          }
+        }
+      ],
+      "rejected": [],
+      "expected": [
+        "update_entity"
+      ],
+      "expected_ok": true,
+      "narration_diagnostics": {
+        "streaming_buffered": false,
+        "continuity_violations": 0,
+        "continuity_repair_attempted": false,
+        "continuity_repair_succeeded": false,
+        "continuity_failed_closed": false,
+        "primary_effects": 0,
+        "primary_structural_errors": 0,
+        "tool_followup_attempted": true,
+        "tool_followup_for_mutation": true,
+        "tool_repair_attempted": false,
+        "tool_followup_structural_errors": 0,
+        "tool_repair_structural_errors": 0,
+        "tool_invalid_effects_dropped": 0,
+        "tool_repair_failed_closed": false,
+        "tool_followup_effects": 5,
+        "final_effects": 5
+      },
+      "narrative": "The rain picks up, drumming harder against the shutters. Mara's hand hovers over the compass \u2014 still not taking it.\n\nThen she does something unexpected.\n\nShe pulls off her left glove.\n\nThe motion is slow, deliberate. The leather peels away, and beneath it \u2014 across the back of her hand, curving from knuckle to wrist \u2014 is a scar. Pale, puckered, fresh. A crescent shape, as though something with a curved blade caught her and *held*.\n\nShe holds her hand out, palm open, so you can see it clearly in the lamplight.\n\n\"This is what I found when I followed the footprints to the Gate's threshold.\" Her jaw tightens. \"Something reached *through* the seal, Kael. Not a hand. Not a claw. Something that shouldn't exist on this side of the stone.\"\n\nShe looks at you, and the measuring distance in her eyes is gone. Replaced by something harder. Something *committed*.\n\n\"I came here to find answers. But I came here alone because I didn't trust anyone else to survive the looking.\" She flexes her scarred hand. \"You handed me your family's compass without a second thought. That's not the act of a man who walks away.\"\n\nShe takes the compass. Her fingers close around it, and she tucks it into an inner pocket of her charcoal coat.\n\n\"Then we're in this together.\" Her voice is quiet, final. \"Whatever came through that Gate, whoever crossed three nights ago \u2014 we find them. We expose what's behind it. And we don't stop until the Ash Gate's secrets are ash themselves.\"\n\nShe meets your eyes. \"Sworn.\"\n\nA beat of silence. The hearth pops.\n\n\"Now. What do you want to know first?\""
+    },
+    {
+      "turn": 4,
+      "action": "This is an uncontested return with no roll: Mara Venn takes the brass compass from her coat, hands it back to me, and it is now in my pack rather than hers.",
+      "executed_types": [
+        "ref_entity",
+        "update_entity",
+        "update_player"
+      ],
+      "proposed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "mara-venn"
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "brass-compass"
+        },
+        {
+          "type": "update_player"
+        },
+        {
+          "type": "update_entity"
+        }
+      ],
+      "executed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "mara-venn",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "mara-venn",
+            "alias_used": null,
+            "found_in_scene": true,
+            "found_in_world": true,
+            "world_reference_type": "npc"
+          }
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "brass-compass",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "brass-compass",
+            "alias_used": null,
+            "found_in_scene": true,
+            "found_in_world": false,
+            "world_reference_type": null
+          }
+        },
+        {
+          "type": "update_player",
+          "was_duplicate": false,
+          "details": {
+            "applied": {
+              "items_granted": [
+                {
+                  "name": "brass compass",
+                  "quantity": 1
+                }
+              ]
+            },
+            "narrator_authoritative": true,
+            "persisted": true
+          }
+        },
+        {
+          "type": "update_entity",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "mara-venn",
+            "applied": {
+              "items_removed": [
+                "brass compass"
+              ]
+            },
+            "found_in_scene": true,
+            "found_in_world": true
+          }
+        }
+      ],
+      "rejected": [],
+      "expected": [
+        "update_entity",
+        "update_player"
+      ],
+      "expected_ok": true,
+      "narration_diagnostics": {
+        "streaming_buffered": false,
+        "continuity_violations": 0,
+        "continuity_repair_attempted": false,
+        "continuity_repair_succeeded": false,
+        "continuity_failed_closed": false,
+        "primary_effects": 0,
+        "primary_structural_errors": 0,
+        "tool_followup_attempted": true,
+        "tool_followup_for_mutation": true,
+        "tool_repair_attempted": false,
+        "tool_followup_structural_errors": 0,
+        "tool_repair_structural_errors": 0,
+        "tool_invalid_effects_dropped": 0,
+        "tool_repair_failed_closed": false,
+        "tool_followup_effects": 4,
+        "final_effects": 4
+      },
+      "narrative": "Mara holds your gaze for a long moment after the vow settles between you. Then, slowly, she reaches into her inner pocket.\n\nThe compass comes back out.\n\nShe doesn't place it on the table. She holds it \u2014 a beat longer than necessary \u2014 then extends it toward you, lanyard dangling.\n\n\"I took it to keep it safe,\" she says. \"But I've been thinking since the words left my mouth. If we're sworn to this \u2014 if we're walking into whatever's behind that Gate together \u2014 then that compass isn't a burden I carry for you.\"\n\nHer fingers brush yours as you close your hand around the familiar brass casing.\n\n\"It's a *tool*. And you might need it faster than I can pass it back.\"\n\nShe releases it. The weight settles into your palm, warm from her coat.\n\n\"I'll still guard it with my life. But it stays in *your* hands until we cross that threshold.\" She pulls her glove back on, working the leather tight over the crescent scar. \"You ready to see the Gate up close?\""
+    },
+    {
+      "turn": 5,
+      "action": "I pay Mara Venn exactly two gold pieces for her help, and she accepts them.",
+      "executed_types": [
+        "ref_entity",
+        "update_player"
+      ],
+      "proposed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "mara-venn"
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "brass-compass"
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "sealed-reliquary"
+        },
+        {
+          "type": "update_player"
+        }
+      ],
+      "executed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "mara-venn",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "mara-venn",
+            "alias_used": null,
+            "found_in_scene": true,
+            "found_in_world": true,
+            "world_reference_type": "npc"
+          }
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "brass-compass",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "brass-compass",
+            "alias_used": null,
+            "found_in_scene": true,
+            "found_in_world": false,
+            "world_reference_type": null
+          }
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "sealed-reliquary",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "sealed-reliquary",
+            "alias_used": null,
+            "found_in_scene": true,
+            "found_in_world": true,
+            "world_reference_type": "item"
+          }
+        },
+        {
+          "type": "update_player",
+          "was_duplicate": false,
+          "details": {
+            "applied": {
+              "currency_delta": {
+                "gp": -2
+              }
+            },
+            "narrator_authoritative": true,
+            "persisted": true
+          }
+        }
+      ],
+      "rejected": [],
+      "expected": [
+        "update_player"
+      ],
+      "expected_ok": true,
+      "narration_diagnostics": {
+        "streaming_buffered": false,
+        "continuity_violations": 0,
+        "continuity_repair_attempted": false,
+        "continuity_repair_succeeded": false,
+        "continuity_failed_closed": false,
+        "primary_effects": 0,
+        "primary_structural_errors": 0,
+        "tool_followup_attempted": true,
+        "tool_followup_for_mutation": true,
+        "tool_repair_attempted": false,
+        "tool_followup_structural_errors": 0,
+        "tool_repair_structural_errors": 0,
+        "tool_invalid_effects_dropped": 0,
+        "tool_repair_failed_closed": false,
+        "tool_followup_effects": 4,
+        "final_effects": 4
+      },
+      "narrative": "Mara's hand hovers over the table as she finishes pulling her glove tight. She's already half-turned toward the door, the conversation settling into motion \u2014 when you reach into your pouch.\n\nThe coins clink as you set them on the scarred wood. Two gold pieces, catching the copper lamp-light.\n\nShe stops. Looks down at them. Then back up at you, one eyebrow lifting a fraction.\n\n\"That's not necessary.\"\n\nBut she doesn't push them back. Her fingers tap once against the table's edge, considering.\n\nThen she scoops them up \u2014 a single, economical motion \u2014 and drops them into her coat pocket without counting.\n\n\"I'll buy the next round of information with it.\" A thin smile, the first crack in her severity since you sat down. \"But know this \u2014 I'd have done the work for free. The coin tells me you *value* what we're walking into. Good. You should.\"\n\nShe turns toward the door, one hand resting on the latch. The rain has softened to a drizzle, light filtering through the shutters' gaps.\n\n\"The Gate's a hundred paces east. Through the yard, past the old crane. I'll show you the footprints myself.\"\n\nShe cracks the door. A gust of damp air curls in, carrying the smell of wet stone and cold ash.\n\n\"Coming?\""
+    },
+    {
+      "turn": 6,
+      "action": "Mara Venn sets a newly revealed obsidian key on the table between us; it is a distinct object I can pick up.",
+      "executed_types": [
+        "ref_entity",
+        "update_player"
+      ],
+      "proposed": [],
+      "executed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "mara-venn",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "mara-venn",
+            "alias_used": null,
+            "found_in_scene": true,
+            "found_in_world": true,
+            "world_reference_type": "npc"
+          }
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "brass-compass",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "brass-compass",
+            "alias_used": null,
+            "found_in_scene": true,
+            "found_in_world": false,
+            "world_reference_type": null
+          }
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "sealed-reliquary",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "sealed-reliquary",
+            "alias_used": null,
+            "found_in_scene": true,
+            "found_in_world": true,
+            "world_reference_type": "item"
+          }
+        },
+        {
+          "type": "update_player",
+          "was_duplicate": false,
+          "details": {
+            "applied": {
+              "currency_delta": {
+                "gp": -2
+              }
+            },
+            "narrator_authoritative": true,
+            "persisted": true
+          }
+        }
+      ],
+      "rejected": [],
+      "expected": [
+        "spawn_object"
+      ],
+      "expected_ok": false,
+      "narration_diagnostics": {
+        "streaming_buffered": false,
+        "continuity_violations": 1,
+        "continuity_repair_attempted": true,
+        "continuity_repair_succeeded": true,
+        "continuity_failed_closed": true,
+        "primary_effects": 0,
+        "primary_structural_errors": 0,
+        "tool_followup_attempted": false,
+        "tool_followup_for_mutation": true,
+        "tool_repair_attempted": false,
+        "tool_followup_structural_errors": 0,
+        "tool_repair_structural_errors": 0,
+        "tool_invalid_effects_dropped": 0,
+        "tool_repair_failed_closed": false,
+        "tool_followup_effects": 0,
+        "final_effects": 0
+      },
+      "narrative": "The moment resolves without overturning established reality. Old Bram remains dead and cannot answer, move, or re-enter the scene."
+    },
+    {
+      "turn": 7,
+      "action": "I pick up the obsidian key from the table and put it in my pack.",
+      "executed_types": [
+        "ref_entity",
+        "spawn_object",
+        "update_player"
+      ],
+      "proposed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "mara-venn"
+        },
+        {
+          "type": "spawn_object",
+          "item": "obsidian key"
+        },
+        {
+          "type": "update_player"
+        }
+      ],
+      "executed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "mara-venn",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "mara-venn",
+            "alias_used": null,
+            "found_in_scene": true,
+            "found_in_world": true,
+            "world_reference_type": "npc"
+          }
+        },
+        {
+          "type": "spawn_object",
+          "item": "obsidian key",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "741224d0-b469-4baa-b35d-2f5e334166bb",
+            "object_name": "obsidian key"
+          }
+        },
+        {
+          "type": "update_player",
+          "was_duplicate": false,
+          "details": {
+            "applied": {
+              "items_granted": [
+                {
+                  "name": "obsidian key",
+                  "quantity": 1
+                }
+              ]
+            },
+            "narrator_authoritative": true,
+            "persisted": true
+          }
+        }
+      ],
+      "rejected": [],
+      "expected": [
+        "update_player"
+      ],
+      "expected_ok": true,
+      "narration_diagnostics": {
+        "streaming_buffered": false,
+        "continuity_violations": 0,
+        "continuity_repair_attempted": false,
+        "continuity_repair_succeeded": false,
+        "continuity_failed_closed": false,
+        "primary_effects": 3,
+        "primary_structural_errors": 0,
+        "tool_followup_attempted": false,
+        "tool_followup_for_mutation": false,
+        "tool_repair_attempted": false,
+        "tool_followup_structural_errors": 0,
+        "tool_repair_structural_errors": 0,
+        "tool_invalid_effects_dropped": 0,
+        "tool_repair_failed_closed": false,
+        "tool_followup_effects": 0,
+        "final_effects": 3
+      },
+      "narrative": "Mara's hand slips back into her coat \u2014 not the same pocket as the coins, but a smaller inner fold. Her fingers emerge pinching a thin leather cord. Dangling from it: a sliver of polished obsidian, roughly the length of her palm, carved into a long, tapered wedge. No markings. No adornment. Just black glass that drinks the lamplight.\n\nShe sets it on the table between you. It clicks against the wood \u2014 a dense, solid sound.\n\n\"Found it wedged in the crane's housing, near the Gate yard,\" she says. \"Could be a tool. Could be a key. Could be nothing.\" Her eyes stay on the black wedge. \"But nothing doesn't leave deliberate edges.\"\n\nShe doesn't touch it again. Doesn't push it toward you. Just leaves it there, an offering on the scarred oak.\n\nYour fingers close around it. The obsidian is cool, surprisingly heavy, and smooth as still water where it's been shaped. The cord is old \u2014 braided leather, stiff with age or weather. You loop it once, twice, and tuck it into your pack.\n\nWhen you look up, Mara is watching you with that sharp, measuring look \u2014 but softer at the edges now.\n\n\"Keep it close,\" she says. \"If it came from the Gate yard, it belongs to whatever crossed.\"\n\nShe turns back to the door, pushes it open. The drizzle hisses against the cobblestones outside. The Copper Finch's copper lamps gutter in the damp wind.\n\n\"Let's go see what else that yard has to say.\""
+    },
+    {
+      "turn": 8,
+      "action": "I do not touch or use the sealed reliquary. From across the room I say 'now,' the established trigger word. I watch its already-armed charge finish the countdown and destroy the reliquary completely.",
+      "executed_types": [
+        "ref_entity",
+        "remove_entity"
+      ],
+      "proposed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "mara-venn"
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "sealed-reliquary"
+        },
+        {
+          "type": "remove_entity"
+        }
+      ],
+      "executed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "mara-venn",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "mara-venn",
+            "alias_used": null,
+            "found_in_scene": true,
+            "found_in_world": true,
+            "world_reference_type": "npc"
+          }
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "sealed-reliquary",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "sealed-reliquary",
+            "alias_used": null,
+            "found_in_scene": true,
+            "found_in_world": true,
+            "world_reference_type": "item"
+          }
+        },
+        {
+          "type": "remove_entity",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "sealed-reliquary",
+            "entity_name": "sealed reliquary",
+            "reason": "destroyed by armed demolition charge triggered by the word 'now'"
+          }
+        }
+      ],
+      "rejected": [],
+      "expected": [
+        "remove_entity"
+      ],
+      "expected_ok": true,
+      "narration_diagnostics": {
+        "streaming_buffered": false,
+        "continuity_violations": 0,
+        "continuity_repair_attempted": false,
+        "continuity_repair_succeeded": false,
+        "continuity_failed_closed": false,
+        "primary_effects": 0,
+        "primary_structural_errors": 0,
+        "tool_followup_attempted": true,
+        "tool_followup_for_mutation": true,
+        "tool_repair_attempted": false,
+        "tool_followup_structural_errors": 0,
+        "tool_repair_structural_errors": 0,
+        "tool_invalid_effects_dropped": 0,
+        "tool_repair_failed_closed": false,
+        "tool_followup_effects": 3,
+        "final_effects": 3
+      },
+      "narrative": "The word hangs in the air.\n\n*Now.*\n\nFor a breath, nothing. The drizzle hisses. The copper lamps gutter. Mara's hand freezes on the door frame.\n\nThen the reliquary answers.\n\nA sharp *click* from inside the iron box \u2014 the demolition pin seating home. A split-second of silence stretched taut.\n\nThen the blast.\n\nIt's not a fireball. It's a *punch* \u2014 a concussive crack that slams through the tavern, rattling the shuttered windows, knocking a copper lamp from its hook. The iron reliquary shreds outward in a spray of black fragments and grey smoke. Shrapnel pocks the ceiling beams. The scarred tabletop where it sat is now a splintered crater, edges smoking.\n\nThe sound echoes off the walls, then fades into the dripping rain.\n\nSmoke curls upward, thin and acrid.\n\nMara stands half-turned, one hand braced against the door frame. Her eyes are wide, fixed on the wreckage. Then they slide to you.\n\nShe blinks once. Slowly.\n\n\"...Well.\" Her voice is flat, controlled \u2014 but there's a new edge underneath it. \"That's one way to close a door.\"\n\nShe looks at the smoking crater, then back at you.\n\n\"You knew what that word did. You've known since you sat down.\" Not an accusation. A statement. Her gaze sharpens. \"What else are you holding back?\""
+    },
+    {
+      "turn": 9,
+      "action": "I warn Mara Venn that the watch is at the door. She chooses to flee the Copper Finch immediately, taking nothing else.",
+      "executed_types": [
+        "ref_entity",
+        "remove_entity",
+        "update_entity"
+      ],
+      "proposed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "mara-venn"
+        },
+        {
+          "type": "update_entity"
+        },
+        {
+          "type": "remove_entity"
+        }
+      ],
+      "executed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "mara-venn",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "mara-venn",
+            "alias_used": null,
+            "found_in_scene": false,
+            "found_in_world": true,
+            "world_reference_type": "npc"
+          }
+        },
+        {
+          "type": "update_entity",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "mara-venn",
+            "applied": {
+              "disposition": "allied",
+              "status": "fled"
+            },
+            "found_in_scene": false,
+            "found_in_world": true
+          }
+        },
+        {
+          "type": "remove_entity",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "brass-compass",
+            "entity_name": "brass compass",
+            "reason": "carried off by Mara Venn when she fled"
+          }
+        }
+      ],
+      "rejected": [],
+      "expected": [
+        "update_entity"
+      ],
+      "expected_ok": true,
+      "narration_diagnostics": {
+        "streaming_buffered": false,
+        "continuity_violations": 0,
+        "continuity_repair_attempted": false,
+        "continuity_repair_succeeded": false,
+        "continuity_failed_closed": false,
+        "primary_effects": 0,
+        "primary_structural_errors": 0,
+        "tool_followup_attempted": true,
+        "tool_followup_for_mutation": true,
+        "tool_repair_attempted": false,
+        "tool_followup_structural_errors": 0,
+        "tool_repair_structural_errors": 0,
+        "tool_invalid_effects_dropped": 0,
+        "tool_repair_failed_closed": false,
+        "tool_followup_effects": 3,
+        "final_effects": 3
+      },
+      "narrative": "The smoke still curls from the crater. The tavern's silence rings in your ears, punctuated by the drip of rain through a cracked shutter.\n\nMara's eyes haven't left you. That sharp, recalibrating look \u2014 she's reevaluating everything you've said since you walked in.\n\nThen a sound cuts through the quiet.\n\nFootsteps. Heavy boots on wet cobblestones. Coming from the yard side of the tavern. Not casual. Paced. Purposeful.\n\nMara's head snaps toward the door. Her hand drops to her belt.\n\nAnother sound \u2014 a muffled voice outside. Low. A question asked, answered by someone she can't see.\n\nHer jaw tightens. She looks at the door, then back at the smoking ruin where the reliquary stood.\n\nThen at you.\n\nOne last look. Hard. Reading.\n\nShe doesn't speak.\n\nShe moves.\n\nA single fluid motion \u2014 she's through the back door before the latch finishes clicking. The door swings shut. Her footsteps don't pause on the other side \u2014 they fade, quick and deliberate, heading away from the approaching boots.\n\nShe's gone.\n\nThe drizzle continues. The copper lamps flicker. Outside, the footsteps grow closer.\n\nThe door creaks.\n\nYou're alone with the smoke and the splintered table and the weight of the obsidian key in your pack."
+    },
+    {
+      "turn": 10,
+      "action": "I call out for Old Bram, though I know he died. I listen for no living answer and instead recall his last warning about the Ash Gate.",
+      "executed_types": [
+        "ref_entity"
+      ],
+      "proposed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "obsidian-key"
+        }
+      ],
+      "executed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "obsidian-key",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "obsidian-key",
+            "alias_used": null,
+            "found_in_scene": true,
+            "found_in_world": true,
+            "world_reference_type": "item"
+          }
+        }
+      ],
+      "rejected": [],
+      "expected": [],
+      "expected_ok": true,
+      "narration_diagnostics": {
+        "streaming_buffered": false,
+        "continuity_violations": 0,
+        "continuity_repair_attempted": false,
+        "continuity_repair_succeeded": false,
+        "continuity_failed_closed": false,
+        "primary_effects": 0,
+        "primary_structural_errors": 0,
+        "tool_followup_attempted": true,
+        "tool_followup_for_mutation": false,
+        "tool_repair_attempted": false,
+        "tool_followup_structural_errors": 0,
+        "tool_repair_structural_errors": 0,
+        "tool_invalid_effects_dropped": 0,
+        "tool_repair_failed_closed": false,
+        "tool_followup_effects": 1,
+        "final_effects": 1
+      },
+      "narrative": "\"Old Bram.\"\n\nThe name falls into the empty tavern. No echo answers. Just the hiss of rain, the creak of cooling timbers, the soft drip from the cracked shutter.\n\nYou didn't expect a reply. You didn't want one.\n\nBut the name pulls something loose \u2014 a memory, rising through the smoke and the damp wood smell. You were young. The Ash Gate was just a story then, something older children whispered about after dark. But Old Bram had been real to you. A figure hunched at the end of the south pier, his skiff tied to the same post every evening, his eyes the colour of ash and river silt.\n\nYou'd asked him once, bold with youth, what lay beyond the Gate.\n\nHe'd looked at you. Long enough that you thought he wouldn't answer.\n\nThen he'd said: *\"Nothing that wants to be found.\"*\n\nHe'd spat into the water. And that was all.\n\nThe memory fades. The tavern is quiet. The door at the front groans \u2014 a boot testing the threshold.\n\nThrough the smoke, you see the crater where the reliquary stood. The obsidian key sits heavy in your pack.\n\n*Nothing that wants to be found.*\n\nBut someone crossed three nights ago. And they didn't come back."
+    },
+    {
+      "turn": 11,
+      "action": "I leave the Copper Finch and travel to the Ash Gate, arriving beneath its cracked black arch.",
+      "executed_types": [
+        "change_location",
+        "ref_entity"
+      ],
+      "proposed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "copper-finch"
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "obsidian-key"
+        },
+        {
+          "type": "change_location"
+        }
+      ],
+      "executed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "obsidian-key",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "obsidian-key",
+            "alias_used": null,
+            "found_in_scene": true,
+            "found_in_world": false,
+            "world_reference_type": null
+          }
+        },
+        {
+          "type": "change_location",
+          "was_duplicate": false,
+          "details": {
+            "location_name": "Ash Gate threshold",
+            "location_description": "A cracked black stone arch rising from a bed of disturbed grey ash, radiating faint warmth, with fresh footprints leading in but not out.",
+            "narrator_authoritative": true
+          }
+        }
+      ],
+      "rejected": [
+        {
+          "type": "ref_entity",
+          "ref_id": "copper-finch",
+          "stage": "execution",
+          "reason": "ref_entity target 'copper-finch' is not a known entity"
+        }
+      ],
+      "expected": [
+        "change_location"
+      ],
+      "expected_ok": true,
+      "narration_diagnostics": {
+        "streaming_buffered": false,
+        "continuity_violations": 0,
+        "continuity_repair_attempted": false,
+        "continuity_repair_succeeded": false,
+        "continuity_failed_closed": false,
+        "primary_effects": 0,
+        "primary_structural_errors": 0,
+        "tool_followup_attempted": true,
+        "tool_followup_for_mutation": true,
+        "tool_repair_attempted": false,
+        "tool_followup_structural_errors": 0,
+        "tool_repair_structural_errors": 0,
+        "tool_invalid_effects_dropped": 0,
+        "tool_repair_failed_closed": false,
+        "tool_followup_effects": 3,
+        "final_effects": 3
+      },
+      "narrative": "The back door swings shut behind you. The drizzle has softened to a mist, clinging to your coat and the cobblestones underfoot. The Copper Finch's copper lamps cast orange puddles through the rain, but you don't look back.\n\nThe yard stretches ahead \u2014 packed earth, puddled with standing water, flanked by an old stone wall on one side and a rusted crane on the other. Its arm juts skyward, pulley chain swaying in the damp breeze.\n\nYou cross the yard. Past the crane. Past a heap of broken masonry overgrown with moss. The ground slopes gently upward, then levels out.\n\nAnd there it is.\n\nThe Ash Gate.\n\nIt rises from a bed of disturbed ash, a cracked arch of black stone that seems to drink the morning light rather than reflect it. The arch is perhaps twelve feet tall, its inner surface smooth as polished jet \u2014 save for the fracture that runs from the keystone down the left pillar, a jagged seam where something *gave*.\n\nAshes surround its base in a wide circle. Grey. Fine. Like the remains of a fire that burned so hot it left nothing behind.\n\nAnd in those ashes \u2014 footprints. Fresh. Leading in. Not out.\n\nThe air is still here. The drizzle doesn't reach the arch. A faint warmth radiates from the stone, like a kiln that cooled hours ago.\n\nThe obsidian key in your pack seems heavier than before."
+    },
+    {
+      "turn": 12,
+      "action": "At the Ash Gate I meet a new, physically present courier named Sable Quill, introduce myself, and ask why she was waiting for me.",
+      "executed_types": [
+        "change_location",
+        "ref_entity"
+      ],
+      "proposed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "ash-gate"
+        },
+        {
+          "type": "add_npc",
+          "npc_name": "Sable Quill"
+        },
+        {
+          "type": "change_location"
+        }
+      ],
+      "executed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "ash-gate",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "ash-gate",
+            "alias_used": null,
+            "found_in_scene": false,
+            "found_in_world": true,
+            "world_reference_type": "location"
+          }
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "a67daeb0-2a6b-46c2-938a-d5c7d1506669",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "a67daeb0-2a6b-46c2-938a-d5c7d1506669",
+            "alias_used": null,
+            "found_in_scene": true,
+            "found_in_world": true,
+            "world_reference_type": "npc"
+          }
+        },
+        {
+          "type": "change_location",
+          "was_duplicate": false,
+          "details": {
+            "location_name": "Ash Gate threshold",
+            "location_description": "A cracked black stone arch rising from a bed of disturbed grey ash, radiating faint warmth, with fresh footprints leading in but not out.",
+            "narrator_authoritative": true
+          }
+        }
+      ],
+      "rejected": [],
+      "expected": [
+        "add_npc"
+      ],
+      "expected_ok": true,
+      "narration_diagnostics": {
+        "streaming_buffered": false,
+        "continuity_violations": 0,
+        "continuity_repair_attempted": false,
+        "continuity_repair_succeeded": false,
+        "continuity_failed_closed": false,
+        "primary_effects": 0,
+        "primary_structural_errors": 0,
+        "tool_followup_attempted": true,
+        "tool_followup_for_mutation": false,
+        "tool_repair_attempted": false,
+        "tool_followup_structural_errors": 0,
+        "tool_repair_structural_errors": 0,
+        "tool_invalid_effects_dropped": 0,
+        "tool_repair_failed_closed": false,
+        "tool_followup_effects": 3,
+        "final_effects": 3
+      },
+      "narrative": "The ash shifts beneath your boots as you approach the arch. The warmth radiates against your face.\n\nA figure detaches from the shadow of the crane's base, ten paces to your left.\n\nYou didn't hear her approach. You didn't see her arrive. She's just *there* \u2014 a young woman in a damp leather courier's coat, a satchel slung across her chest, her dark hair plastered to her temples by the mist. She holds a folded oilcloth in both hands, the way someone might carry a letter they haven't yet delivered.\n\nShe watches you with pale grey eyes. Unblinking. Patient.\n\nShe offers a slight nod.\n\n\"You're the one who triggered the blast.\"\n\nNot a question. A statement. Her voice is low, steady, the kind of calm that comes from being certain of her ground.\n\n\"Name's Sable Quill. Courier.\" She shifts the oilcloth in her hands. \"I was told you'd come here. Told to wait.\"\n\nShe pauses. The mist curls between you.\n\n\"You know what that key's for?\""
+    }
+  ]
+}

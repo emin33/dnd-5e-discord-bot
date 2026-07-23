@@ -282,6 +282,57 @@ class TestKnowledgeGraph:
         assert merged.properties["disposition"] == "hostile"
         assert merged.properties["description"] == "A gruff dwarf"
 
+    async def test_remove_specific_edge_keeps_other_targets(self, kg):
+        await kg.load()
+        await kg.apply_operations([
+            AddNode(entity=_make_entity("npc")),
+            AddNode(entity=_make_entity("loc-a", EntityType.LOCATION)),
+            AddNode(entity=_make_entity("loc-b", EntityType.LOCATION)),
+            AddEdge(relationship=_make_relationship(
+                "npc", "loc-a", RelationType.LOCATED_AT,
+            )),
+            AddEdge(relationship=_make_relationship(
+                "npc", "loc-b", RelationType.LOCATED_AT,
+            )),
+        ])
+
+        await kg.apply_operations([RemoveEdge(
+            source_id="npc",
+            target_id="loc-a",
+            relation_type=RelationType.LOCATED_AT,
+        )])
+
+        assert kg.edge_count() == 1
+        kg._repo.delete_edge.assert_awaited_once_with(
+            "test-campaign", "npc", "loc-a", "located_at",
+        )
+        kg._repo.delete_edges_by_source.assert_not_awaited()
+
+    async def test_remove_edge_empty_target_is_consistent_wildcard(self, kg):
+        await kg.load()
+        await kg.apply_operations([
+            AddNode(entity=_make_entity("npc")),
+            AddNode(entity=_make_entity("loc-a", EntityType.LOCATION)),
+            AddNode(entity=_make_entity("loc-b", EntityType.LOCATION)),
+            AddEdge(relationship=_make_relationship(
+                "npc", "loc-a", RelationType.LOCATED_AT,
+            )),
+            AddEdge(relationship=_make_relationship(
+                "npc", "loc-b", RelationType.LOCATED_AT,
+            )),
+        ])
+
+        await kg.apply_operations([RemoveEdge(
+            source_id="npc",
+            target_id="",
+            relation_type=RelationType.LOCATED_AT,
+        )])
+
+        assert kg.edge_count() == 0
+        kg._repo.delete_edges_by_source.assert_awaited_once_with(
+            "test-campaign", "npc", "located_at",
+        )
+
     async def test_get_all_names(self, kg):
         await kg.load()
         entity = _make_entity("grimjaw", name="Grimjaw")
@@ -342,6 +393,32 @@ class TestSubgraphRetrieval:
         # Grimjaw → Tavern → Barkeep (2 hops: 0.3 + 0.3 = 0.6, within radius)
         assert "Barkeep Thom" in names
 
+    async def test_one_radius_excludes_npc_beyond_adjacent_location(self):
+        """Narrator radius must not leak an NPC through a neighboring place."""
+        repo = _make_mock_repo()
+        kg = KnowledgeGraph("test-campaign", repo)
+        await kg.load()
+        alley = _make_entity("spoke-alley", EntityType.LOCATION, "Spoke Alley")
+        tavern = _make_entity("rusted-cog", EntityType.LOCATION, "Rusted Cog")
+        roran = _make_entity("roran", name="Roran Hale")
+        await kg.apply_operations([
+            AddNode(entity=alley),
+            AddNode(entity=tavern),
+            AddNode(entity=roran),
+            AddEdge(relationship=_make_relationship(
+                "spoke-alley", "rusted-cog", RelationType.CONNECTED_TO
+            )),
+            AddEdge(relationship=_make_relationship(
+                "roran", "rusted-cog", RelationType.LOCATED_AT
+            )),
+        ])
+
+        ambient = kg.get_context_subgraph(["spoke-alley"], radius=1.0)
+        explicit = kg.get_context_subgraph(["roran"], radius=1.0)
+
+        assert "Roran Hale" not in {entry["name"] for entry in ambient}
+        assert "Roran Hale" in {entry["name"] for entry in explicit}
+
     async def test_empty_seeds_returns_empty(self, populated_kg):
         result = populated_kg.get_context_subgraph([])
         assert result == []
@@ -353,6 +430,20 @@ class TestSubgraphRetrieval:
     async def test_max_entities_cap(self, populated_kg):
         result = populated_kg.get_context_subgraph(["grimjaw"], max_entities=2)
         assert len(result) <= 2
+
+    async def test_explicit_seed_order_survives_context_cap(self):
+        repo = _make_mock_repo()
+        kg = KnowledgeGraph("test-campaign", repo)
+        await kg.load()
+        seed_ids = ["zz-explicit"] + [f"ambient-{i:02d}" for i in range(20)]
+        await kg.apply_operations([
+            AddNode(entity=_make_entity(node_id)) for node_id in seed_ids
+        ])
+
+        result = kg.get_context_subgraph(seed_ids, max_entities=3)
+
+        assert result[0]["name"] == "Zz Explicit"
+        assert len(result) == 3
 
     async def test_yaml_output(self, populated_kg):
         yaml_str = populated_kg.to_context_yaml(["grimjaw"])
@@ -373,6 +464,7 @@ class TestSubgraphRetrieval:
     async def test_properties_in_output(self, populated_kg):
         result = populated_kg.get_context_subgraph(["grimjaw"])
         grimjaw = next(e for e in result if e["name"] == "Grimjaw")
+        assert grimjaw["id"] == "grimjaw"
         assert grimjaw.get("disposition") == "hostile"
 
 
@@ -632,16 +724,34 @@ class TestEntityNameMatcher:
         matcher = EntityNameMatcher(matcher_kg)
         assert matcher.scene_seeds(None) == []
 
-    async def test_scene_seeds_npc_sublocation(self, matcher_kg):
-        """NPCs at sub-locations (e.g. 'inside the tavern') should still seed."""
+    async def test_scene_seeds_npc_at_different_sublocation_is_excluded(self, matcher_kg):
+        """Free-form location similarity must not imply scene presence."""
         matcher = EntityNameMatcher(matcher_kg)
         ws = WorldState()
         ws.current_location = "Ironforge Tavern"
         npc = NPCState(id="grimjaw", name="Grimjaw", location="back room of the tavern")
         ws.npcs[npc.id] = npc
         seeds = matcher.scene_seeds(ws)
-        assert "grimjaw" in seeds
+        assert "grimjaw" not in seeds
         assert "ironforge-tavern" in seeds
+
+    async def test_scene_seeds_important_offscene_npc_and_history_excluded(self, matcher_kg):
+        matcher = EntityNameMatcher(matcher_kg)
+        ws = WorldState(
+            current_location="Ironforge Tavern",
+            connected_locations=["Goblin Caves"],
+        )
+        npc = NPCState(
+            id="grimjaw",
+            name="Grimjaw",
+            location="Distant Castle",
+            important=True,
+        )
+        ws.npcs[npc.id] = npc
+
+        seeds = matcher.scene_seeds(ws)
+
+        assert seeds == ["ironforge-tavern"]
 
     async def test_scene_seeds_dead_npc_excluded(self, matcher_kg):
         """Dead NPCs should not be seeded."""
@@ -672,6 +782,55 @@ class TestEntityNameMatcher:
         assert "grimjaw" in result
         mock_store.search_entities.assert_called_once()
 
+    async def test_vector_match_requires_distinctive_lexical_grounding(self, matcher_kg):
+        matcher = EntityNameMatcher(matcher_kg)
+        mock_store = MagicMock()
+        mock_store.search_entities.return_value = [
+            {"node_id": "grimjaw", "name": "Grimjaw", "distance": 0.8}
+        ]
+
+        result = matcher.vector_match(
+            "I meet the man's wary gaze and ask about the mark",
+            "test-campaign",
+            mock_store,
+        )
+
+        assert result == []
+
+    async def test_vector_match_rejects_single_description_word_overlap(self, matcher_kg):
+        entity = matcher_kg.get_entity("grimjaw")
+        entity.properties["description"] = "A scarred dwarf with one clouded eye"
+        matcher = EntityNameMatcher(matcher_kg)
+        mock_store = MagicMock()
+        mock_store.search_entities.return_value = [
+            {"node_id": "grimjaw", "name": "Grimjaw", "distance": 0.8}
+        ]
+
+        result = matcher.vector_match(
+            "I offer one note fragment to the nearest guard",
+            "test-campaign",
+            mock_store,
+        )
+
+        assert result == []
+
+    async def test_vector_match_accepts_two_description_anchors(self, matcher_kg):
+        entity = matcher_kg.get_entity("grimjaw")
+        entity.properties["description"] = "A scarred dwarf in a crimson coat"
+        matcher = EntityNameMatcher(matcher_kg)
+        mock_store = MagicMock()
+        mock_store.search_entities.return_value = [
+            {"node_id": "grimjaw", "name": "Grimjaw", "distance": 0.8}
+        ]
+
+        result = matcher.vector_match(
+            "I approach the scarred stranger wearing crimson",
+            "test-campaign",
+            mock_store,
+        )
+
+        assert result == ["grimjaw"]
+
     async def test_vector_match_filters_missing_nodes(self, matcher_kg):
         matcher = EntityNameMatcher(matcher_kg)
         mock_store = MagicMock()
@@ -685,6 +844,16 @@ class TestEntityNameMatcher:
         matcher = EntityNameMatcher(matcher_kg)
         mock_store = MagicMock()
         assert matcher.vector_match("", "test-campaign", mock_store) == []
+
+    async def test_graph_reference_resolves_unique_human_readable_slug(self, matcher_kg):
+        assert matcher_kg.resolve_entity_reference("old_grim").node_id == "grimjaw"
+
+    async def test_graph_reference_abstains_on_ambiguous_alias(self, matcher_kg):
+        other = _make_entity("other-dwarf", name="Other Dwarf")
+        other.aliases = ["the dwarf"]
+        await matcher_kg.apply_operations([AddNode(entity=other)])
+
+        assert matcher_kg.resolve_entity_reference("the-dwarf") is None
 
 
 # ======================================================================

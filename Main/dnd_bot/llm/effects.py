@@ -80,6 +80,10 @@ class ProposedEffect(BaseModel):
     npc_name: Optional[str] = None
     npc_description: Optional[str] = None
     npc_disposition: Optional[str] = None   # friendly, neutral, hostile
+    # Production-only anchor for a durable off-scene NPC returning through
+    # add_npc. Narrator schemas never expose this field; the orchestrator
+    # resolves it against the campaign graph before execution.
+    npc_canonical_id: Optional[str] = None
     monster_index: Optional[str] = None     # SRD monster index if applicable
 
     # For transfer_item
@@ -220,6 +224,7 @@ class EffectValidator:
         # _validate_default deliberately — the exhaustiveness test keeps
         # an explicit allowlist of those.
         self._validators = {
+            EffectType.REF_ENTITY: self._validate_ref_entity,
             EffectType.SPAWN_OBJECT: self._validate_spawn_object,
             EffectType.ADD_NPC: self._validate_add_npc,
             EffectType.TRANSFER_ITEM: self._validate_transfer_item,
@@ -241,6 +246,172 @@ class EffectValidator:
         validator = self._validators.get(effect.effect_type, self._validate_default)
         return validator(effect)
 
+    def _validate_ref_entity(self, effect: ProposedEffect) -> EffectValidationResult:
+        """Reject structurally incomplete roster references before execution."""
+        if not effect.ref_entity_id or not effect.ref_entity_id.strip():
+            return EffectValidationResult(
+                effect=effect,
+                valid=False,
+                rejection_reason="ref_entity requires entity_id from the roster",
+            )
+        if not self._is_known_entity(effect.ref_entity_id):
+            return EffectValidationResult(
+                effect=effect,
+                valid=False,
+                rejection_reason=(
+                    f"ref_entity target '{effect.ref_entity_id}' is not a known entity"
+                ),
+            )
+        conflict = self._alias_canonical_conflict(
+            effect.ref_entity_id, (effect.ref_alias_used or "").strip()
+        )
+        if conflict:
+            return EffectValidationResult(
+                effect=effect,
+                valid=False,
+                rejection_reason=(
+                    f"ref_entity alias '{effect.ref_alias_used}' is the "
+                    f"canonical name of a different entity ('{conflict}'); "
+                    "reference that entity_id instead or drop the alias"
+                ),
+            )
+        return EffectValidationResult(effect=effect, valid=True)
+
+    def _alias_canonical_conflict(
+        self, entity_id: str, alias: str
+    ) -> Optional[str]:
+        """Return the id of a DIFFERENT NPC whose canonical name is *alias*.
+
+        This is the production form of the long-form audit's
+        ``tool_reference_identity_grounding`` gate: a narrator ref that
+        addresses one roster id while displaying another entity's proper
+        name splits one person across two identities (the ``Lyra <- Elara``
+        misbinding). Conservative on every axis — generic labels, aliases
+        the target itself owns, and ambiguous ownership all abstain.
+        """
+        from ..game.identity import identity_keys, is_generic_npc_label
+
+        if not alias or is_generic_npc_label(alias):
+            return None
+        alias_keys = identity_keys(alias)
+        if not alias_keys:
+            return None
+
+        # Collect the ref target's own ids and labels; an alias the target
+        # already owns (name, prior alias, promoted name) is never a
+        # conflict.
+        target_ids: set[str] = {entity_id}
+        target_keys: set[str] = set(identity_keys(entity_id))
+        targets = []
+        if self.scene_registry is not None:
+            targets.append(self.scene_registry.get_by_id(entity_id))
+            targets.append(self.scene_registry.get_by_name(entity_id))
+        world_state = (
+            getattr(self.session, "world_state", None) if self.session else None
+        )
+        if world_state is None and self.session is not None:
+            world_store = getattr(self.session, "world_store", None)
+            world_state = getattr(world_store, "state", None)
+        if world_state is not None:
+            targets.append(
+                world_state.npcs.get(entity_id)
+                or world_state._find_npc(entity_id)
+            )
+        graph = (
+            getattr(self.session, "knowledge_graph", None)
+            if self.session
+            else None
+        )
+        if graph is not None:
+            target = graph.get_entity(entity_id)
+            if target is None:
+                resolver = getattr(graph, "resolve_entity_reference", None)
+                target = resolver(entity_id) if callable(resolver) else None
+            targets.append(target)
+        for target in targets:
+            if target is None:
+                continue
+            for id_attr in ("id", "node_id"):
+                value = str(getattr(target, id_attr, "") or "").strip()
+                if value:
+                    target_ids.add(value)
+            for label in (
+                getattr(target, "name", ""),
+                *(getattr(target, "aliases", None) or []),
+            ):
+                target_keys.update(identity_keys(str(label or "")))
+        if alias_keys & target_keys:
+            return None
+
+        # Canonical owners of the alias, matched on NAME only (alias-to-alias
+        # matching would over-reject once pollution exists).
+        owners: set[str] = set()
+        if world_state is not None:
+            for npc_id, npc in world_state.npcs.items():
+                if identity_keys(npc.name) & alias_keys:
+                    owners.add(npc_id)
+        if graph is not None:
+            for node in (getattr(graph, "_entities", {}) or {}).values():
+                node_type = getattr(
+                    getattr(node, "entity_type", None), "value", ""
+                )
+                if node_type != "npc":
+                    continue
+                if identity_keys(str(getattr(node, "name", "") or "")) & alias_keys:
+                    owners.add(str(getattr(node, "node_id", "") or ""))
+        owners -= target_ids
+        owners.discard("")
+        if len(owners) == 1:
+            return owners.pop()
+        return None
+
+    def _is_known_entity(self, entity_id: str) -> bool:
+        """Resolve an entity across the live scene, WorldState, and campaign KG.
+
+        A validator constructed without live collaborators remains a structural
+        validator (used by NarrationStrategy before execution). The orchestrator
+        injects both collaborators, so invented roster IDs fail at validation
+        instead of reaching the executor.
+        """
+        if self.scene_registry is None and self.session is None:
+            return True
+
+        if self.scene_registry is not None:
+            if self.scene_registry.get_by_id(entity_id):
+                return True
+            if self.scene_registry.get_by_name(entity_id):
+                return True
+
+        world_state = getattr(self.session, "world_state", None) if self.session else None
+        if world_state is None and self.session is not None:
+            world_store = getattr(self.session, "world_store", None)
+            world_state = getattr(world_store, "state", None)
+        if world_state is not None:
+            if entity_id in world_state.npcs or world_state._find_npc(entity_id):
+                return True
+            from ..game.knowledge.models import slugify
+
+            query_slug = slugify(entity_id)
+            if any(
+                entity_id == item_id or (query_slug and query_slug == slugify(item_id))
+                for item_id in world_state.scene_items
+            ):
+                return True
+
+        dead_npcs = getattr(self.session, "campaign_dead_npcs", {}) if self.session else {}
+        if entity_id in dead_npcs:
+            return True
+
+        graph = getattr(self.session, "knowledge_graph", None) if self.session else None
+        if graph is not None:
+            entity = graph.get_entity(entity_id)
+            if entity is None:
+                resolver = getattr(graph, "resolve_entity_reference", None)
+                entity = resolver(entity_id) if callable(resolver) else None
+            if entity is not None:
+                return True
+        return False
+
     def _validate_spawn_object(self, effect: ProposedEffect) -> EffectValidationResult:
         """Validate spawn_object effect."""
         if not effect.object_name:
@@ -259,6 +430,39 @@ class EffectValidator:
                 valid=False,
                 rejection_reason="add_npc requires npc_name",
             )
+        from ..game.identity import is_generic_npc_label
+
+        if is_generic_npc_label(effect.npc_name):
+            return EffectValidationResult(
+                effect=effect,
+                valid=False,
+                rejection_reason=(
+                    "add_npc requires a proper established name; generic roles "
+                    f"must enter through StateDelta placeholders ({effect.npc_name!r})"
+                ),
+            )
+        if self.session:
+            from ..game.identity import resolve_unique_identity
+
+            dead_npcs = []
+            world_state = getattr(self.session, "world_state", None)
+            if world_state is not None:
+                dead_npcs.extend(
+                    npc for npc in world_state.npcs.values() if not npc.alive
+                )
+            dead_npcs.extend(
+                getattr(self.session, "campaign_dead_npcs", {}).values()
+            )
+            dead = resolve_unique_identity(effect.npc_name, dead_npcs)
+            if dead is not None:
+                return EffectValidationResult(
+                    effect=effect,
+                    valid=False,
+                    rejection_reason=(
+                        f"Dead NPC '{dead.name}' cannot be reintroduced with "
+                        "add_npc; an authoritative resurrection mechanic is required"
+                    ),
+                )
         return EffectValidationResult(effect=effect, valid=True)
 
     def _validate_transfer_item(self, effect: ProposedEffect) -> EffectValidationResult:
@@ -407,6 +611,14 @@ class EffectValidator:
                 valid=False,
                 rejection_reason="update_entity requires entity_id",
             )
+        if not self._is_known_entity(effect.update_entity_id):
+            return EffectValidationResult(
+                effect=effect,
+                valid=False,
+                rejection_reason=(
+                    f"update_entity target '{effect.update_entity_id}' is not a known entity"
+                ),
+            )
 
         # At least one change field must be present
         has_change = any([
@@ -454,6 +666,27 @@ class EffectValidator:
                         f"not in {valid_status}"
                     ),
                 )
+
+            # Narrator tools describe changes; they do not authorize a
+            # resurrection transition. Keep that capability behind the
+            # deterministic game mechanic (WorldState.revive_npc).
+            if effect.update_status.lower() == "alive" and self.session:
+                world_state = getattr(self.session, "world_state", None)
+                npc = None
+                if world_state is not None:
+                    npc = (
+                        world_state.npcs.get(effect.update_entity_id)
+                        or world_state._find_npc(effect.update_entity_id)
+                    )
+                if npc is not None and not npc.alive:
+                    return EffectValidationResult(
+                        effect=effect,
+                        valid=False,
+                        rejection_reason=(
+                            f"Dead NPC '{npc.name}' cannot be revived by narrator "
+                            "tool; an authoritative resurrection mechanic is required"
+                        ),
+                    )
 
         return EffectValidationResult(effect=effect, valid=True)
 
@@ -752,6 +985,7 @@ class EffectExecutor:
                 name=effect.npc_name or "Unknown",
                 disposition=effect.npc_disposition or "neutral",
                 description=effect.npc_description or "",
+                canonical_id=effect.npc_canonical_id,
             )
             canonical_id = npc_state.id
 
@@ -825,6 +1059,25 @@ class EffectExecutor:
 
         removed = self.scene_registry.remove_by_name(target)
         if removed is None:
+            # Scene rescoping may legitimately evict a tracked object from
+            # the transient registry before a later authoritative destruction
+            # call.  If the durable WorldState still knows the item, accept
+            # the effect so the store sync can remove that projection.  Do
+            # not extend this to off-scene NPCs: their lifecycle belongs to
+            # update_entity, and REMOVE_ENTITY does not delete durable NPCs.
+            world_reference = self._resolve_known_world_reference(target)
+            if world_reference and world_reference[0] == "item":
+                return EffectExecutionResult(
+                    effect=effect,
+                    success=True,
+                    details={
+                        "entity_id": target,
+                        "entity_name": world_reference[1],
+                        "reason": effect.reason,
+                        "found_in_scene": False,
+                        "found_in_world": True,
+                    },
+                )
             return EffectExecutionResult(
                 effect=effect,
                 success=False,
@@ -1026,8 +1279,19 @@ class EffectExecutor:
 
         # Try to find entity in scene registry by slug ID
         entity = None
+        alias = (effect.ref_alias_used or "").strip()
         if self.scene_registry:
             entity = self.scene_registry.get_by_name(entity_id)
+            if entity is None and alias:
+                entity = self.scene_registry.get_by_name(alias)
+        world_reference = self._resolve_known_world_reference(entity_id)
+        if world_reference is None and alias:
+            # The tool contract carries the exact display name used in prose.
+            # Models sometimes pluralize or punctuate the roster slug while
+            # still returning a correct canonical alias.  Resolve that alias
+            # only through known state/graph catalogs; never trust it as a new
+            # entity declaration.
+            world_reference = self._resolve_known_world_reference(alias)
 
         if entity:
             # Update mention tracking
@@ -1036,7 +1300,6 @@ class EffectExecutor:
             entity.last_mentioned_at = datetime.utcnow()
 
             # Record alias if provided and different from canonical
-            alias = effect.ref_alias_used
             if alias and alias.lower() != entity.name.lower():
                 if not hasattr(entity, 'aliases') or entity.aliases is None:
                     entity.aliases = []
@@ -1051,19 +1314,25 @@ class EffectExecutor:
                 dialogue_indices=effect.dialogue_indices,
                 dialogue_emotions=effect.dialogue_emotions,
             )
-        else:
-            _logger.debug(
-                "ref_entity_not_in_scene",
-                entity_id=entity_id,
+        elif world_reference is None:
+            _logger.warning("ref_entity_target_not_found", entity_id=entity_id)
+            return EffectExecutionResult(
+                effect=effect,
+                success=False,
+                error=f"ref_entity target '{entity_id}' is not a known entity",
             )
+        else:
+            _logger.debug("ref_entity_known_off_scene", entity_id=entity_id)
 
         return EffectExecutionResult(
             effect=effect,
             success=True,
             details={
                 "entity_id": entity_id,
-                "alias_used": effect.ref_alias_used,
+                "alias_used": alias or None,
                 "found_in_scene": entity is not None,
+                "found_in_world": world_reference is not None,
+                "world_reference_type": world_reference[0] if world_reference else None,
             },
         )
 
@@ -1079,15 +1348,20 @@ class EffectExecutor:
         _logger = structlog.get_logger()
 
         entity_id = effect.update_entity_id
-        if not entity_id or not self.scene_registry:
+        if not entity_id:
             return EffectExecutionResult(
                 effect=effect,
                 success=False,
-                error="update_entity needs entity_id and scene_registry",
+                error="update_entity needs entity_id",
             )
 
-        entity = self.scene_registry.get_by_name(entity_id)
-        if entity is None:
+        entity = (
+            self.scene_registry.get_by_name(entity_id)
+            if self.scene_registry
+            else None
+        )
+        world_npc = self._resolve_known_world_npc(entity_id)
+        if entity is None and world_npc is None:
             _logger.warning(
                 "update_entity_target_not_found",
                 entity_id=entity_id,
@@ -1095,28 +1369,38 @@ class EffectExecutor:
             return EffectExecutionResult(
                 effect=effect,
                 success=False,
-                error=f"update_entity target '{entity_id}' not in scene registry",
+                error=f"update_entity target '{entity_id}' is not a known entity",
             )
 
         applied: dict = {}
 
         if effect.update_disposition is not None:
-            entity.disposition = effect.update_disposition.lower()
-            applied["disposition"] = entity.disposition
+            # Pydantic does not validate ordinary attribute assignment by
+            # default. Assigning the raw tool string here poisoned the typed
+            # SceneEntity and caused the next turn's ``.value`` access to
+            # crash. Preserve the model invariant at the mutation boundary.
+            from ..models.npc import Disposition
+            disposition = Disposition(effect.update_disposition.lower())
+            if entity is not None:
+                entity.disposition = disposition
+            applied["disposition"] = disposition.value
 
         if effect.update_status is not None:
-            entity.status = effect.update_status.lower()
+            if entity is not None:
+                entity.status = effect.update_status.lower()
             applied["status"] = effect.update_status.lower()
 
         if effect.update_importance is not None:
-            entity.important = bool(effect.update_importance)
+            if entity is not None:
+                entity.important = bool(effect.update_importance)
             applied["important"] = bool(effect.update_importance)
 
         if effect.update_description_addition:
             existing = getattr(entity, "description", "") or ""
             addition = effect.update_description_addition.strip()
             if addition and addition not in existing:
-                entity.description = (existing + " " + addition).strip()
+                if entity is not None:
+                    entity.description = (existing + " " + addition).strip()
                 applied["description_appended"] = addition
 
         # Inventory deltas are recorded here for the log; the actual NPCState
@@ -1137,8 +1421,124 @@ class EffectExecutor:
         return EffectExecutionResult(
             effect=effect,
             success=True,
-            details={"entity_id": entity_id, "applied": applied},
+            details={
+                "entity_id": entity_id,
+                "applied": applied,
+                "found_in_scene": entity is not None,
+                "found_in_world": world_npc is not None,
+            },
         )
+
+    def _resolve_known_world_npc(self, entity_id: str):
+        """Resolve a durable NPC after its scene-scoped view has departed.
+
+        This establishes identity only. The orchestrator's WorldStateStore
+        remains the sole writer for the authoritative world projection, and
+        DeltaBridge owns graph mutation. A graph-only match therefore makes
+        ``update_entity`` executable without incorrectly rematerializing an
+        off-screen NPC into the current scene.
+        """
+        world_state = (
+            getattr(self.session, "world_state", None)
+            if self.session
+            else None
+        )
+        if world_state is None:
+            world_store = (
+                getattr(self.session, "world_store", None)
+                if self.session
+                else None
+            )
+            world_state = getattr(world_store, "state", None)
+        if world_state is not None:
+            world_npc = (
+                world_state.npcs.get(entity_id)
+                or world_state._find_npc(entity_id)
+            )
+            if world_npc is not None:
+                return world_npc
+
+        knowledge_graph = (
+            getattr(self.session, "knowledge_graph", None)
+            if self.session
+            else None
+        )
+        if knowledge_graph is None:
+            return None
+        graph_entity = knowledge_graph.get_entity(entity_id)
+        if graph_entity is None:
+            resolver = getattr(
+                knowledge_graph,
+                "resolve_entity_reference",
+                None,
+            )
+            if callable(resolver):
+                graph_entity = resolver(entity_id)
+        entity_type = getattr(
+            getattr(graph_entity, "entity_type", None),
+            "value",
+            None,
+        )
+        return graph_entity if graph_entity is not None and entity_type == "npc" else None
+
+    def _resolve_known_world_reference(self, entity_id: str):
+        """Resolve a canonical NPC, current location, or active scene item."""
+        npc = self._resolve_known_world_npc(entity_id)
+        if npc is not None:
+            return ("npc", npc)
+
+        world_state = (
+            getattr(self.session, "world_state", None)
+            if self.session
+            else None
+        )
+        if world_state is None:
+            world_store = (
+                getattr(self.session, "world_store", None)
+                if self.session
+                else None
+            )
+            world_state = getattr(world_store, "state", None)
+        if world_state is None:
+            return None
+
+        from ..game.knowledge.models import slugify
+
+        query_slug = slugify(entity_id)
+        location = (world_state.current_location or "").strip()
+        if location and query_slug == slugify(location):
+            return ("location", location)
+        # Historical/adjacent locations are not ambient prompt seeds, but an
+        # explicit narrator reference to a known place is still legitimate.
+        for known_location in world_state.connected_locations:
+            if query_slug and query_slug == slugify(known_location):
+                return ("location", known_location)
+        for name in world_state.scene_items:
+            if entity_id == name or (query_slug and query_slug == slugify(name)):
+                return ("item", name)
+
+        # Explicit references may resolve through the durable campaign graph
+        # after an entity leaves scene-scoped WorldState. This lookup does not
+        # make it an ambient prompt seed.
+        knowledge_graph = (
+            getattr(self.session, "knowledge_graph", None)
+            if self.session
+            else None
+        )
+        if knowledge_graph is not None:
+            graph_entity = knowledge_graph.get_entity(entity_id)
+            if graph_entity is None:
+                resolver = getattr(
+                    knowledge_graph, "resolve_entity_reference", None
+                )
+                if callable(resolver):
+                    graph_entity = resolver(entity_id)
+            if graph_entity is not None:
+                graph_type = getattr(
+                    getattr(graph_entity, "entity_type", None), "value", None
+                ) or str(getattr(graph_entity, "entity_type", "entity"))
+                return (graph_type, graph_entity)
+        return None
 
     def _resolve_update_player_character(self):
         """Resolve the LIVE session Character object an update_player targets.

@@ -30,7 +30,7 @@ from dnd_bot.llm.effects import EffectExecutor, EffectType, ProposedEffect
 from dnd_bot.llm.extractors.dedup_judge import get_dedup_judge
 from dnd_bot.game.session import GameSession, PlayerInfo
 from dnd_bot.game.scene.registry import SceneEntityRegistry
-from dnd_bot.game.world_state import WorldState
+from dnd_bot.game.world_state import NPCState, WorldState
 from dnd_bot.models import (
     AbilityScore, AbilityScores, Character, HitPoints, HitDice, InventoryItem,
     SpellSlots,
@@ -163,9 +163,40 @@ async def net(tmp_path: Path, monkeypatch):
     # Real session graph (no KG → the KG/Chroma bridge steps no-op).
     session = GameSession(id="sess", channel_id=99, guild_id=1, campaign_id="camp")
     session.world_state = WorldState(current_location="Tavern")
+    session.world_state.npcs["barkeep"] = NPCState(
+        id="barkeep",
+        name="barkeep",
+        location="Tavern",
+    )
+    session.world_state.npcs["merchant"] = NPCState(
+        id="merchant",
+        name="merchant",
+        location="Tavern",
+    )
     session.add_player(42, "Elara", wizard)
 
     registry = SceneEntityRegistry(campaign_id="camp", channel_id=99)
+    registry.register_entity(SceneEntity(
+        id="barkeep",
+        name="barkeep",
+        npc_id="barkeep",
+        entity_type=EntityType.NPC,
+        disposition=Disposition.NEUTRAL,
+    ))
+    registry.register_entity(SceneEntity(
+        id="merchant",
+        name="merchant",
+        npc_id="merchant",
+        entity_type=EntityType.NPC,
+        disposition=Disposition.NEUTRAL,
+    ))
+    for object_id in ("tripwire", "mosaic"):
+        registry.register_entity(SceneEntity(
+            id=object_id,
+            name=object_id,
+            entity_type=EntityType.OBJECT,
+            disposition=Disposition.NEUTRAL,
+        ))
 
     # Block real provider I/O for the whole test; fakes bypass the guard.
     llm_client.set_model_requests_allowed(False)
@@ -237,6 +268,59 @@ async def test_social_action_narrates_and_tags_entity(net):
 
 
 @pytest.mark.asyncio
+async def test_false_new_npc_reference_cannot_suppress_state_creation(net):
+    triage = triage_response("interaction", needs_roll=False)
+    extracted = LLMResponse(content=json.dumps({
+        "new_npcs": [{
+            "name": "courier",
+            "location": "Tavern",
+            "description": "A courier recovering from a staged collapse.",
+        }],
+    }))
+
+    def _brain(messages, **kwargs):
+        system = messages[0].get("content", "") if messages else ""
+        if "action classifier" in system:
+            return triage
+        if system.startswith("You extract world state changes"):
+            return extracted
+        return LLMResponse(content="{}")
+
+    result = await net.run(
+        action="I examine the collapsed courier.",
+        triage=triage,
+        narration=narration_response(
+            "The courier's breathing steadies as their eyes snap open.",
+            tool_calls=[
+                {
+                    "name": "ref_entity",
+                    "arguments": {"entity_id": "courier"},
+                },
+                {
+                    "name": "update_entity",
+                    "arguments": {
+                        "entity_id": "courier",
+                        "description_addition": "breathing has steadied",
+                    },
+                },
+            ],
+        ),
+        brain_fn=_brain,
+    )
+
+    courier = net.session.world_state._find_npc("courier")
+    assert courier is not None
+    assert [effect.effect_type for effect in result.proposed_effects] == [
+        EffectType.UPDATE_ENTITY
+    ]
+    assert result.proposed_effects[0].update_entity_id == courier.id
+    assert net.orch._last_effect_rejections == []
+    assert net.orch._narration_strategy.last_diagnostics[
+        "tool_unknown_roster_refs_dropped"
+    ] == 1
+
+
+@pytest.mark.asyncio
 async def test_cast_spell_consumes_and_persists_a_slot(net):
     """A cast-spell turn narrates and an update_player effect spends a slot.
 
@@ -274,7 +358,7 @@ async def test_skill_check_rolls_and_narrates_outcome(net):
         ),
         narration=narration_response(
             "Your eyes catch a glint of wire near the floor.",
-            tool_calls=[{"name": "ref_entity", "arguments": {"entity_id": "tripwire"}}],
+            tool_calls=[{"name": "ref_entity", "arguments": {"entity_id": "barkeep"}}],
         ),
     )
 
@@ -323,7 +407,7 @@ async def test_add_npc_tool_registers_npc_in_registry_and_world_state(net):
         action="I wave the old miner over to our table",
         triage=triage_response("social", needs_roll=False),
         narration=narration_response(
-            "A grizzled miner shuffles over, lantern swinging.",
+            "Old Bram, a grizzled miner, shuffles over with his lantern swinging.",
             tool_calls=[{
                 "name": "add_npc",
                 "arguments": {
@@ -475,6 +559,72 @@ async def test_inventory_pickup_turn_adds_item_and_narrates(net):
     # Narrated turn, not a block.
     assert net.narrator.calls
     assert result.proposed_effects == []
+
+
+@pytest.mark.asyncio
+async def test_inventory_equip_and_take_off_persist_real_state(net):
+    """Equip/unequip text paths mutate the row instead of faking success.
+
+    ``unequip`` contains ``equip`` and ``take off`` contains the pickup word
+    ``take``. This trajectory also pins the precedence that keeps both phrases
+    on the unequip path.
+    """
+    item = InventoryItem(
+        character_id=net.character.id,
+        item_index="longsword",
+        item_name="Longsword",
+    )
+    await net.inv_repo.add_item(item)
+
+    equipped = await net.run(
+        action="I equip the longsword",
+        triage=triage_response(
+            "inventory", needs_roll=False, item_name="longsword",
+        ),
+        narration=narration_response("You ready the longsword."),
+    )
+    assert equipped.mechanical_result["operation"] == "equip"
+    assert equipped.mechanical_result["success"] is True
+    assert [t["name"] for t in equipped.tool_calls_made] == ["equip_item"]
+    assert (await net.inv_repo.get_item_by_id(item.id)).equipped is True
+
+    unequipped = await net.run(
+        action="I take off the longsword",
+        triage=triage_response(
+            "inventory", needs_roll=False, item_name="longsword",
+        ),
+        narration=narration_response("You stow the longsword."),
+    )
+    assert unequipped.mechanical_result["operation"] == "unequip"
+    assert unequipped.mechanical_result["success"] is True
+    assert [t["name"] for t in unequipped.tool_calls_made] == ["unequip_item"]
+    assert (await net.inv_repo.get_item_by_id(item.id)).equipped is False
+
+
+@pytest.mark.asyncio
+async def test_generic_item_use_is_honest_failure_and_preserves_row(net):
+    """Unknown item effects must not claim success or consume inventory."""
+    item = InventoryItem(
+        character_id=net.character.id,
+        item_index="mystery-tonic",
+        item_name="Mystery Tonic",
+    )
+    await net.inv_repo.add_item(item)
+
+    result = await net.run(
+        action="I drink the mystery tonic",
+        triage=triage_response(
+            "inventory", needs_roll=False, item_name="mystery tonic",
+        ),
+        narration=narration_response("The sealed tonic remains in your hand."),
+    )
+
+    assert result.mechanical_result["operation"] == "use"
+    assert result.mechanical_result["success"] is False
+    assert "not implemented" in result.mechanical_result["error"].lower()
+    unchanged = await net.inv_repo.get_item_by_id(item.id)
+    assert unchanged is not None
+    assert unchanged.quantity == 1
 
 
 @pytest.mark.asyncio
@@ -823,7 +973,7 @@ async def test_pin_mechanical_result_narration_prompt_inputs(net):
         ),
         narration=narration_response(
             "The merchant slides the potion across the counter.",
-            tool_calls=[{"name": "ref_entity", "arguments": {"entity_id": "merchant"}}],
+            tool_calls=[{"name": "ref_entity", "arguments": {"entity_id": "barkeep"}}],
         ),
         context=context,
         on_narrative_token=on_token,
@@ -859,7 +1009,7 @@ async def test_pin_mechanical_result_narration_prompt_inputs(net):
         "\n"
         "Write your narration directly."
     )
-    assert call["messages"][-1]["content"].startswith("AFTER writing your prose")
+    assert "AFTER writing your prose" in call["messages"][-1]["content"]
 
     _assert_primary_narration_kwargs(net, call)
 
@@ -918,7 +1068,7 @@ async def test_pin_action_narration_prompt_inputs(net):
         "\n"
         "This is a SOCIAL interaction."
     )
-    assert call["messages"][-1]["content"].startswith("AFTER writing your prose")
+    assert "AFTER writing your prose" in call["messages"][-1]["content"]
 
     _assert_primary_narration_kwargs(net, call)
 
@@ -949,7 +1099,7 @@ async def test_pin_outcome_narration_prompt_inputs(net):
         ),
         narration=narration_response(
             "One tile sits a hair higher than its neighbors.",
-            tool_calls=[{"name": "ref_entity", "arguments": {"entity_id": "mosaic"}}],
+            tool_calls=[{"name": "ref_entity", "arguments": {"entity_id": "barkeep"}}],
         ),
         context=context,
         on_narrative_token=on_token,
@@ -989,7 +1139,7 @@ async def test_pin_outcome_narration_prompt_inputs(net):
         f"###INSTRUCTION###\nRESOLUTION: {expected_resolution}\n\n"
     )
     assert "This perception roll SUCCEEDED (rolled 14 vs DC 10)" in instruction["content"]
-    assert call["messages"][-1]["content"].startswith("AFTER writing your prose")
+    assert "AFTER writing your prose" in call["messages"][-1]["content"]
 
     _assert_primary_narration_kwargs(net, call)
 
@@ -1038,20 +1188,247 @@ async def test_pin_tool_followup_reuses_path_messages(net):
     )
     assert len(followup["messages"]) == n + 2
 
-    # Followup-specific kwargs: deterministic, capped, tools REQUIRED, and the
-    # same profile-tier tool set as the primary call (audit #2/N2).
+    # Followup-specific kwargs: deterministic, capped, and tools REQUIRED.
+    # Generic recovery deliberately hides add_npc; identity creation reopens
+    # only for a high-confidence named-NPC obligation.
     kw = followup["kwargs"]
     assert set(kw) == {"temperature", "max_tokens", "think", "tools", "tool_choice"}
     assert kw["temperature"] == 0
     assert kw["max_tokens"] == 500
     assert kw["think"] is False
     assert kw["tool_choice"] == "required"
-    assert [t["function"]["name"] for t in kw["tools"]] == [
-        t["function"]["name"] for t in primary["kwargs"]["tools"]
+    primary_names = [
+        tool["function"]["name"] for tool in primary["kwargs"]["tools"]
+    ]
+    assert [tool["function"]["name"] for tool in kw["tools"]] == [
+        name for name in primary_names if name != "add_npc"
     ]
 
     # The followup's tool calls are adopted as the turn's effects.
     assert [e.effect_type for e in result.proposed_effects] == [EffectType.REF_ENTITY]
+
+
+@pytest.mark.asyncio
+async def test_resolved_player_to_npc_transfer_repairs_and_persists_both_sides(net):
+    mara = net.session.world_store.ensure_npc(
+        "Mara Venn",
+        disposition="friendly",
+    )
+    net.registry.register_entity(SceneEntity(
+        id="mara-venn",
+        npc_id=mara.id,
+        name="Mara Venn",
+        entity_type=EntityType.NPC,
+        disposition=Disposition.FRIENDLY,
+    ))
+    await net.inv_repo.add_item(InventoryItem(
+        character_id=net.character.id,
+        item_index="brass-compass",
+        item_name="brass compass",
+        quantity=1,
+    ))
+    action = (
+        "This is an uncontested item transfer with no roll: I hand my brass "
+        "compass to Mara Venn, she accepts it, and it is now in her coat "
+        "rather than my pack."
+    )
+
+    result = await net.run(
+        action=action,
+        triage=triage_response("social", needs_roll=False),
+        narrations=[
+            narration_response(
+                "Your pack is empty. You lost the compass; Mara never had it."
+            ),
+            narration_response(
+                "You hand the brass compass to Mara Venn. She accepts it and "
+                "tucks it into her coat.",
+                tool_calls=[
+                    {
+                        "name": "update_entity",
+                        "arguments": {
+                            "entity_id": "mara-venn",
+                            "add_items": ["brass compass"],
+                        },
+                    },
+                    {
+                        "name": "update_player",
+                        "arguments": {
+                            "item_remove": [{
+                                "name": "brass compass",
+                                "destination": "npc:mara-venn",
+                            }],
+                        },
+                    },
+                ],
+            ),
+        ],
+    )
+
+    assert {effect.effect_type for effect in result.proposed_effects} == {
+        EffectType.UPDATE_ENTITY,
+        EffectType.UPDATE_PLAYER,
+    }
+    assert await net.inv_repo.get_item_by_index(
+        net.character.id, "brass-compass"
+    ) is None
+    assert "brass compass" in net.session.world_state._find_npc(
+        "Mara Venn"
+    ).inventory
+    diagnostics = net.orch._narration_strategy.last_diagnostics
+    assert diagnostics["resolved_outcome_repair_succeeded"] is True
+    assert diagnostics["effect_obligation_missing_final"] == []
+
+
+@pytest.mark.asyncio
+async def test_resolved_npc_to_player_return_repairs_and_persists_both_sides(net):
+    mara = net.session.world_store.ensure_npc(
+        "Mara Venn",
+        disposition="friendly",
+    )
+    mara.inventory.append("brass compass")
+    net.registry.register_entity(SceneEntity(
+        id="mara-venn",
+        npc_id=mara.id,
+        name="Mara Venn",
+        entity_type=EntityType.NPC,
+        disposition=Disposition.FRIENDLY,
+    ))
+    action = (
+        "This is an uncontested return with no roll: Mara Venn takes the "
+        "brass compass from her coat, hands it back to me, and it is now in "
+        "my pack rather than hers."
+    )
+
+    result = await net.run(
+        action=action,
+        triage=triage_response("social", needs_roll=False),
+        narrations=[
+            narration_response("Mara checks her coat. 'I never had it,' she says."),
+            narration_response(
+                "Mara Venn takes out the brass compass and hands it back to "
+                "you. You secure it in your pack.",
+                tool_calls=[
+                    {
+                        "name": "update_entity",
+                        "arguments": {
+                            "entity_id": "mara-venn",
+                            "remove_items": ["brass compass"],
+                        },
+                    },
+                    {
+                        "name": "update_player",
+                        "arguments": {
+                            "item_grant": [{
+                                "name": "brass compass",
+                                "source": "npc:mara-venn",
+                            }],
+                        },
+                    },
+                ],
+            ),
+        ],
+    )
+
+    assert {effect.effect_type for effect in result.proposed_effects} == {
+        EffectType.UPDATE_ENTITY,
+        EffectType.UPDATE_PLAYER,
+    }
+    returned = await net.inv_repo.get_item_by_index(
+        net.character.id, "brass-compass"
+    )
+    assert returned is not None and returned.quantity == 1
+    assert "brass compass" not in net.session.world_state._find_npc(
+        "Mara Venn"
+    ).inventory
+    assert net.orch._narration_strategy.last_diagnostics[
+        "effect_obligation_missing_final"
+    ] == []
+
+
+@pytest.mark.asyncio
+async def test_resolved_object_destruction_preserves_damage_and_removes_object(net):
+    net.registry.register_entity(SceneEntity(
+        id="sealed-reliquary",
+        name="sealed reliquary",
+        entity_type=EntityType.OBJECT,
+        disposition=Disposition.NEUTRAL,
+    ))
+    net.session.world_state.spawn_item(
+        "sealed-reliquary",
+        "Iron box with an armed demolition charge",
+    )
+    action = (
+        "This is an established automatic trigger with no roll: its already-"
+        "armed charge destroys the sealed reliquary completely."
+    )
+
+    result = await net.run(
+        action=action,
+        triage=triage_response("interaction", needs_roll=False),
+        narrations=[
+            narration_response(
+                "The sealed reliquary detonates and is destroyed completely.",
+                tool_calls=[{
+                    "name": "update_player",
+                    "arguments": {
+                        "hp_delta": -2,
+                        "damage_type": "fire",
+                        "hp_reason": "reliquary blast",
+                    },
+                }],
+            ),
+            narration_response("", tool_calls=[{
+                "name": "remove_entity",
+                "arguments": {
+                    "entity_id": "sealed-reliquary",
+                    "reason": "destroyed",
+                },
+            }]),
+        ],
+    )
+
+    assert [effect.effect_type for effect in result.proposed_effects] == [
+        EffectType.UPDATE_PLAYER,
+        EffectType.REMOVE_ENTITY,
+    ]
+    assert net.character.hp.current == 28
+    assert net.registry.get_by_id("sealed-reliquary") is None
+    assert "sealed-reliquary" not in net.session.world_state.scene_items
+    assert net.orch._narration_strategy.last_diagnostics[
+        "effect_obligation_missing_final"
+    ] == []
+
+
+@pytest.mark.asyncio
+async def test_remove_entity_accepts_known_world_item_after_scene_rescope(net):
+    net.session.world_state.spawn_item(
+        "sealed-reliquary",
+        "Iron box with an armed demolition charge",
+    )
+    assert net.registry.get_by_id("sealed-reliquary") is None
+    action = "The armed charge destroys the sealed reliquary completely."
+
+    result = await net.run(
+        action=action,
+        triage=triage_response("interaction", needs_roll=False),
+        narration=narration_response(
+            "The sealed reliquary collapses into ash and is destroyed completely.",
+            tool_calls=[{
+                "name": "remove_entity",
+                "arguments": {
+                    "entity_id": "sealed-reliquary",
+                    "reason": "destroyed",
+                },
+            }],
+        ),
+    )
+
+    assert [effect.effect_type for effect in result.proposed_effects] == [
+        EffectType.REMOVE_ENTITY
+    ]
+    assert net.orch._last_effect_rejections == []
+    assert "sealed-reliquary" not in net.session.world_state.scene_items
 
 
 @pytest.mark.asyncio

@@ -16,10 +16,12 @@ boundary owns relocating these DTOs.
 """
 
 from typing import TYPE_CHECKING, Iterable, Optional
+import uuid
 
 import structlog
 
 from .world_state import NPCState, NPCUpdate, StateDelta, WorldState
+from .identity import locations_equivalent, resolve_unique_identity
 from ..llm.effects import EffectType, ProposedEffect
 
 if TYPE_CHECKING:
@@ -155,6 +157,28 @@ class WorldStateStore:
         appended_updates: list = []
 
         for proposed in delta.new_npcs:
+            deterministic = resolve_unique_identity(
+                proposed.name or "",
+                world_state.npcs.values(),
+            )
+            if deterministic is not None:
+                alias = (proposed.name or "").strip()
+                appended_updates.append(NPCUpdate(
+                    id=deterministic.id,
+                    add_aliases=(
+                        [alias]
+                        if alias
+                        and alias.casefold() != deterministic.name.casefold()
+                        else None
+                    ),
+                ))
+                logger.info(
+                    "extractor_dedup_deterministic_rewrite",
+                    proposed_name=proposed.name,
+                    target_id=deterministic.id,
+                )
+                continue
+
             try:
                 decision = await judge.judge_add_npc(
                     proposed_name=proposed.name or "",
@@ -227,6 +251,34 @@ class WorldStateStore:
         ):
             return effect
 
+        deterministic = resolve_unique_identity(
+            effect.npc_name,
+            world_state.npcs.values(),
+        )
+        if deterministic is not None:
+            alias = (effect.npc_name or "").strip()
+            if (
+                alias
+                and alias.casefold() != deterministic.name.casefold()
+                and alias not in deterministic.aliases
+            ):
+                deterministic.aliases.append(alias)
+            logger.info(
+                "dedup_deterministic_rewrite",
+                original_name=effect.npc_name,
+                target_id=deterministic.id,
+                existing_name=deterministic.name,
+            )
+            return ProposedEffect(
+                effect_type=EffectType.REF_ENTITY,
+                ref_entity_id=deterministic.id,
+                ref_alias_used=(
+                    alias if alias.casefold() != deterministic.name.casefold() else None
+                ),
+                dialogue_indices=list(effect.dialogue_indices),
+                dialogue_emotions=list(effect.dialogue_emotions),
+            )
+
         try:
             from ..llm.extractors.dedup_judge import get_dedup_judge
         except Exception as e:
@@ -293,6 +345,7 @@ class WorldStateStore:
         *,
         disposition: str = "neutral",
         description: str = "",
+        canonical_id: str | None = None,
     ) -> NPCState:
         """Find-or-mint the canonical NPCState for ``name`` and return it.
 
@@ -308,7 +361,10 @@ class WorldStateStore:
         existing = self._state._find_npc(name)
         if existing is not None:
             return existing
+        if canonical_id and canonical_id in self._state.npcs:
+            return self._state.npcs[canonical_id]
         npc = NPCState(
+            id=canonical_id or str(uuid.uuid4()),
             name=name,
             location=self._state.current_location,
             disposition=disposition or "neutral",
@@ -427,7 +483,9 @@ class WorldStateStore:
                 # AFTER this, so a spawn_object/add_npc for the new scene
                 # survives; a restated same location (the extractor already
                 # applied this move earlier in the turn) never re-rescopes.
-                if previous_location and previous_location.lower() != new_loc.lower():
+                if previous_location and not locations_equivalent(
+                    previous_location, new_loc
+                ):
                     world_state.rescope_scene()
 
         elif etype == EffectType.REF_ENTITY:

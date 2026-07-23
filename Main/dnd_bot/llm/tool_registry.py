@@ -319,13 +319,15 @@ register(NarratorToolSpec(
                 "entity recall and dialogue routing in sync. Do NOT call for the "
                 "player or party PCs (they are not roster entries), for entities "
                 "you are introducing for the first time (use add_npc), or for "
-                "objects (use spawn_object). If the entity speaks quoted dialogue, "
+                "objects (use spawn_object). If you cannot copy a non-empty "
+                "roster ID exactly, omit the call rather than sending empty "
+                "arguments. If the entity speaks quoted dialogue, "
                 "list which quotes by order of appearance (1-indexed) and the "
                 "delivery emotion for each.\n\n"
                 "Example calls:\n"
                 "- After 'Marta nods grimly': {entity_id: 'marta'}\n"
-                "- After 'Kael whispers \"They\\'re inside\"': "
-                "{entity_id: 'kael', dialogue_indices: [1], "
+                "- After 'Marta whispers \"They\\'re inside\"': "
+                "{entity_id: 'marta', dialogue_indices: [1], "
                 "dialogue_emotions: ['whispering']}"
             ),
             "parameters": {
@@ -333,6 +335,7 @@ register(NarratorToolSpec(
                 "properties": {
                     "entity_id": {
                         "type": "string",
+                        "minLength": 1,
                         "description": "The ID from the roster [id: ...] tag",
                     },
                     "alias_used": {
@@ -366,18 +369,24 @@ register(NarratorToolSpec(
         "function": {
             "name": "add_npc",
             "description": (
-                "Introduce a NEW NPC into the scene for the first time. Call "
-                "this when your prose brings an unnamed character on stage — "
-                "a merchant greeting the party, a guard stopping them, a "
-                "stranger at the bar. Do NOT call for entities already in "
+                "Introduce a NEW, PROPERLY NAMED NPC into the scene for the "
+                "first time. Call only when the visible prose or current "
+                "player action gives that on-stage character a proper name, "
+                "and the narration treats them as a real character. If both leave "
+                "someone anonymous ('the merchant', 'a guard', 'the cloaked "
+                "woman'), make NO add_npc call for them and do not invent a "
+                "tool-only name. Do NOT call for entities already in "
                 "the roster (use ref_entity), for objects/items (use "
                 "spawn_object), for the player or party PCs, or for purely "
                 "atmospheric mentions ('a few patrons sit in the corner') "
                 "where no specific named NPC is meant to be tracked. Every "
-                "NPC must have a proper invented name — never generic roles "
-                "like 'Merchant' or 'Old Woman'.\n\n"
-                "Example call after 'A burly dwarf behind the forge looks up "
-                "as you enter, soot covering his missing left eye': "
+                "NPC must have a proper established name — never generic roles "
+                "like 'Merchant' or 'Old Woman'. The exact name passed to "
+                "this tool must appear verbatim in your visible narration or "
+                "the current player action; "
+                "never create a different tool-only name.\n\n"
+                "Example call after 'Korin Ironeye, a burly dwarf behind the "
+                "forge, looks up as you enter; soot covers his missing left eye': "
                 "{npc_id: 'blacksmith_1', name: 'Korin Ironeye', "
                 "disposition: 'neutral', gender: 'male', description: 'A burly "
                 "dwarven blacksmith with soot-covered arms and a missing left eye'}"
@@ -387,10 +396,12 @@ register(NarratorToolSpec(
                 "properties": {
                     "npc_id": {
                         "type": "string",
+                        "minLength": 1,
                         "description": "Short ID (e.g. merchant_1, guard_2)",
                     },
                     "name": {
                         "type": "string",
+                        "minLength": 1,
                         "description": "Proper name for the NPC (e.g. 'Grom', 'Elara Swiftblade', 'Captain Voss'). NEVER use generic roles like 'Merchant' or descriptions like 'Old Woman'.",
                     },
                     "disposition": {
@@ -400,6 +411,7 @@ register(NarratorToolSpec(
                     },
                     "description": {
                         "type": "string",
+                        "minLength": 1,
                         "description": "Physical appearance, role, and personality (e.g. 'A burly dwarven blacksmith with soot-covered arms and a missing left eye')",
                     },
                     "gender": {
@@ -453,10 +465,12 @@ register(NarratorToolSpec(
                 "properties": {
                     "object_id": {
                         "type": "string",
+                        "minLength": 1,
                         "description": "Short snake_case ID unique to this scene (e.g. 'jade_dagger_1', 'chest_1', 'guard_corpse').",
                     },
                     "name": {
                         "type": "string",
+                        "minLength": 1,
                         "description": "Short display name as the player would refer to it (e.g. 'jade dagger', 'iron chest').",
                     },
                     "description": {
@@ -816,6 +830,7 @@ register(NarratorToolSpec(
                 "properties": {
                     "location_name": {
                         "type": "string",
+                        "minLength": 1,
                         "description": (
                             "Short canonical name for the location, 2-4 words. "
                             "Use a proper name when one exists ('Thornfield', "
@@ -889,6 +904,7 @@ register(NarratorToolSpec(
                 "properties": {
                     "entity_id": {
                         "type": "string",
+                        "minLength": 1,
                         "description": (
                             "ID of the existing entity from the roster "
                             "[id: ...] tag. Required."

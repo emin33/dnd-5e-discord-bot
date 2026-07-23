@@ -1,0 +1,916 @@
+{
+  "profile": "deepseek_v4_flash_qwen9b",
+  "session_id": "0788daf7-64a0-4e0b-b4a7-b9664f282a14",
+  "turns": 12,
+  "elapsed_seconds": 179.18,
+  "usage": {
+    "calls": 62,
+    "prompt_tokens": 315467,
+    "completion_tokens": 10973,
+    "cache_read_tokens": 153472,
+    "cost_usd": 0.013658,
+    "cost_complete": true
+  },
+  "proposed_total": 34,
+  "executed_total": 32,
+  "rejected_total": 2,
+  "effect_reliability": 0.9412,
+  "effect_type_counts": {
+    "ref_entity": 10,
+    "update_player": 4,
+    "update_entity": 1,
+    "spawn_object": 3,
+    "remove_entity": 1,
+    "change_location": 2,
+    "add_npc": 1
+  },
+  "expected_turns_passed": 8,
+  "expected_turns_total": 11,
+  "tool_followup_turns": [
+    2,
+    3,
+    4,
+    5,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12
+  ],
+  "tool_repair_turns": [
+    3,
+    8
+  ],
+  "structural_error_turns": [],
+  "continuity_repair_turns": [
+    6
+  ],
+  "continuity_failures": [],
+  "errors": [],
+  "gates": {
+    "all_turns_returned": true,
+    "effect_reliability_at_least_95pct": false,
+    "at_least_six_effect_families": true,
+    "expected_turn_coverage_at_least_80pct": false,
+    "no_final_dead_npc_contradiction": true,
+    "no_harness_errors": true,
+    "ended_at_ash_gate": false
+  },
+  "turn_rows": [
+    {
+      "turn": 1,
+      "action": "I greet Mara Venn by name and ask what she has learned about the Ash Gate.",
+      "executed_types": [
+        "ref_entity"
+      ],
+      "proposed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "mara-venn"
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "sealed-reliquary"
+        }
+      ],
+      "executed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "mara-venn",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "mara-venn",
+            "alias_used": null,
+            "found_in_scene": true
+          }
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "sealed-reliquary",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "sealed-reliquary",
+            "alias_used": null,
+            "found_in_scene": true
+          }
+        }
+      ],
+      "rejected": [],
+      "expected": [
+        "ref_entity"
+      ],
+      "expected_ok": true,
+      "narration_diagnostics": {
+        "streaming_buffered": false,
+        "continuity_violations": 0,
+        "continuity_repair_attempted": false,
+        "continuity_repair_succeeded": false,
+        "continuity_failed_closed": false,
+        "primary_effects": 2,
+        "primary_structural_errors": 0,
+        "tool_followup_attempted": false,
+        "tool_repair_attempted": false,
+        "tool_followup_effects": 0,
+        "final_effects": 2
+      },
+      "narrative": "The Copper Finch breathes. A low fire pops in the hearth. Rain drums against the shuttered windows. Mara Venn sits hunched over a scarred table, her charcoal coat dripping onto the floorboards. The iron reliquary sits between them, a squat shadow catching lamplight.\n\nShe looks up at Kael's voice. A thin smile.\n\n\"There you are.\" She gestures to the empty chair across. \"Was beginning to think you'd slept through dawn.\"\n\nShe pushes a cup of cold tea aside, leans forward. Her voice drops.\n\n\"The Ash Gate. Right.\" She taps the table once. \"I've spent three days watching that thing. Talking to the night watch. Digging through the wardens' old logs.\"\n\nA pause. She holds his gaze.\n\n\"It's not just locked, Kael. It's *sealed*. Properly. Iron bands, warding glyphs, a counterweight lock \u2014 the kind of work that says 'we never want this open again.'\" She nods at the reliquary. \"That's what the pin is for. The demolition pin fits a breach point in the gate's primary seal.\"\n\nShe leans back. \"But here's what I haven't figured out.\" She taps her own temple. \"The wardens' logs mention a name. Old Bram. He was the ferryman on the other side. Died about a week ago \u2014 found face-down in his own boat. No one's been through the gate since.\"\n\nShe watches him. \"You know that name?\""
+    },
+    {
+      "turn": 2,
+      "action": "I hand my brass compass to Mara Venn. She accepts it and tucks it safely into her coat.",
+      "executed_types": [
+        "ref_entity",
+        "update_entity",
+        "update_player"
+      ],
+      "proposed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "mara-venn"
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "brass-compass"
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "sealed-reliquary"
+        },
+        {
+          "type": "update_player"
+        },
+        {
+          "type": "update_entity"
+        }
+      ],
+      "executed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "mara-venn",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "mara-venn",
+            "alias_used": null,
+            "found_in_scene": true
+          }
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "brass-compass",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "brass-compass",
+            "alias_used": null,
+            "found_in_scene": true
+          }
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "sealed-reliquary",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "sealed-reliquary",
+            "alias_used": null,
+            "found_in_scene": true
+          }
+        },
+        {
+          "type": "update_player",
+          "was_duplicate": false,
+          "details": {
+            "applied": {
+              "items_removed": [
+                {
+                  "name": "brass compass",
+                  "quantity": 1
+                }
+              ]
+            },
+            "narrator_authoritative": true,
+            "persisted": true
+          }
+        },
+        {
+          "type": "update_entity",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "mara-venn",
+            "applied": {
+              "items_added": [
+                "brass compass"
+              ]
+            }
+          }
+        }
+      ],
+      "rejected": [],
+      "expected": [
+        "update_entity",
+        "update_player"
+      ],
+      "expected_ok": true,
+      "narration_diagnostics": {
+        "streaming_buffered": false,
+        "continuity_violations": 0,
+        "continuity_repair_attempted": false,
+        "continuity_repair_succeeded": false,
+        "continuity_failed_closed": false,
+        "primary_effects": 0,
+        "primary_structural_errors": 0,
+        "tool_followup_attempted": true,
+        "tool_repair_attempted": false,
+        "tool_followup_effects": 5,
+        "final_effects": 5
+      },
+      "narrative": "Mara's eyebrows lift as the compass crosses the table. She catches it, turns it over in her palm \u2014 brass worn smooth by years of touch. Her thumb traces the dented rim.\n\nShe looks up, a question in her eyes.\n\n\"That's...\" She stops. Shakes her head. Tucks it into an inner pocket of her charcoal coat. The fabric settles.\n\n\"Alright.\" She pats the pocket once. \"I'll hold it safe. But you're trusting me with something that matters.\" Her voice is quieter now. \"Why?\""
+    },
+    {
+      "turn": 3,
+      "action": "Mara reveals the fresh crescent scar beneath her glove and swears to become my ally in exposing the gate conspiracy.",
+      "executed_types": [],
+      "proposed": [
+        {
+          "type": "ref_entity",
+          "ref_id": ""
+        }
+      ],
+      "executed": [],
+      "rejected": [
+        {
+          "type": "ref_entity",
+          "ref_id": "",
+          "stage": "validation",
+          "reason": "ref_entity requires entity_id from the roster"
+        }
+      ],
+      "expected": [
+        "update_entity"
+      ],
+      "expected_ok": false,
+      "narration_diagnostics": {
+        "streaming_buffered": false,
+        "continuity_violations": 0,
+        "continuity_repair_attempted": false,
+        "continuity_repair_succeeded": false,
+        "continuity_failed_closed": false,
+        "primary_effects": 0,
+        "primary_structural_errors": 0,
+        "tool_followup_attempted": true,
+        "tool_repair_attempted": true,
+        "tool_followup_effects": 1,
+        "final_effects": 1
+      },
+      "narrative": "Mara's jaw tightens. She doesn't look away.\n\nSlowly \u2014 deliberately \u2014 she peels back the edge of her right glove. A crescent scar, still pink and puckered, curves across the heel of her palm. Recent. Angry.\n\nShe holds it there for you to see. Then pulls the glove back into place.\n\n\"Three nights ago. I was out past the Ash Gate's approach \u2014 the old watchtower, where the wardens used to post a lookout.\" Her voice is flat. Controlled. \"Someone didn't want me asking questions.\"\n\nShe lets that sit.\n\nThen she extends her hand across the table, palm open. The same hand with the scar beneath.\n\n\"I don't know who sealed that gate. I don't know who killed Old Bram. But I know someone wants it buried.\" Her eyes lock on yours. \"So I'm with you. Whatever this is \u2014 whoever's behind it \u2014 I'm in. You have my word.\"\n\nHer hand stays out, waiting."
+    },
+    {
+      "turn": 4,
+      "action": "Mara Venn takes the brass compass from her coat, hands it back to me, and I stow it in my pack.",
+      "executed_types": [
+        "ref_entity"
+      ],
+      "proposed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "mara-venn"
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "brass-compass"
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "sealed-reliquary"
+        }
+      ],
+      "executed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "mara-venn",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "mara-venn",
+            "alias_used": null,
+            "found_in_scene": true
+          }
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "brass-compass",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "brass-compass",
+            "alias_used": null,
+            "found_in_scene": true
+          }
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "sealed-reliquary",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "sealed-reliquary",
+            "alias_used": null,
+            "found_in_scene": true
+          }
+        }
+      ],
+      "rejected": [],
+      "expected": [
+        "update_entity",
+        "update_player"
+      ],
+      "expected_ok": false,
+      "narration_diagnostics": {
+        "streaming_buffered": false,
+        "continuity_violations": 0,
+        "continuity_repair_attempted": false,
+        "continuity_repair_succeeded": false,
+        "continuity_failed_closed": false,
+        "primary_effects": 0,
+        "primary_structural_errors": 0,
+        "tool_followup_attempted": true,
+        "tool_repair_attempted": false,
+        "tool_followup_effects": 3,
+        "final_effects": 3
+      },
+      "narrative": "Mara's hand dips into her coat pocket. She pauses. Frowns. Patts the pocket once, then twice.\n\nHer fingers come out empty.\n\nShe looks down at her coat, brow furrowed. Opens the flap and peers inside. A slow search \u2014 then she meets your eyes, something between embarrassment and unease crossing her face.\n\n\"It's... not here.\" She pats her other pockets, checks the inner lining. Nothing. \"Kael, I swear I tucked it in \u2014 I remember the weight of it going in \u2014 but it's gone.\"\n\nShe stands abruptly, checks the chair she was sitting on, runs a hand beneath the table edge. Nothing.\n\nA beat of silence. The fire pops.\n\n\"I'm not playing you,\" she says quietly, and her voice has an edge now \u2014 not anger, but something closer to alarm. \"I felt it go into my pocket. I *felt* it.\""
+    },
+    {
+      "turn": 5,
+      "action": "I pay Mara Venn exactly two gold pieces for her help, and she accepts them.",
+      "executed_types": [
+        "ref_entity",
+        "update_player"
+      ],
+      "proposed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "mara-venn"
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "brass-compass"
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "sealed-reliquary"
+        },
+        {
+          "type": "update_player"
+        }
+      ],
+      "executed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "mara-venn",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "mara-venn",
+            "alias_used": null,
+            "found_in_scene": true
+          }
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "brass-compass",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "brass-compass",
+            "alias_used": null,
+            "found_in_scene": true
+          }
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "sealed-reliquary",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "sealed-reliquary",
+            "alias_used": null,
+            "found_in_scene": true
+          }
+        },
+        {
+          "type": "update_player",
+          "was_duplicate": false,
+          "details": {
+            "applied": {
+              "currency_delta": {
+                "gp": -2
+              }
+            },
+            "narrator_authoritative": true,
+            "persisted": true
+          }
+        }
+      ],
+      "rejected": [],
+      "expected": [
+        "update_player"
+      ],
+      "expected_ok": true,
+      "narration_diagnostics": {
+        "streaming_buffered": false,
+        "continuity_violations": 0,
+        "continuity_repair_attempted": false,
+        "continuity_repair_succeeded": false,
+        "continuity_failed_closed": false,
+        "primary_effects": 0,
+        "primary_structural_errors": 0,
+        "tool_followup_attempted": true,
+        "tool_repair_attempted": false,
+        "tool_followup_effects": 4,
+        "final_effects": 4
+      },
+      "narrative": "Mara is still frowning at her empty pockets when you set two gold coins on the scarred table between you. They catch the firelight \u2014 dull gold against dark wood.\n\nShe looks down at them. Then up at you. The alarm in her eyes cools into something steadier.\n\n\"Two gold.\" She picks them up, one in each hand, and turns them over once before slipping them into a different pocket \u2014 the inner left, buttoned. \"That's... fair. More than fair, given I just lost your compass.\"\n\nShe sits back down heavily. Rubs her face with both hands.\n\n\"Alright.\" She drops her hands. \"You've paid me. So I'll earn it.\"\n\nShe jerks her chin toward the shuttered window \u2014 toward the Ash Gate, somewhere beyond the rain.\n\n\"Old Bram's boat is still moored on the canal side. No one's touched it since they found him. If someone wanted to hide what happened to him \u2014 or what he was carrying \u2014 they might have missed something.\" She holds your gaze. \"I can get us to it. But we go before the wardens change their watch rotation. That's in...\" She glances at the hearth clock. \"About an hour.\"\n\nShe waits for your answer."
+    },
+    {
+      "turn": 6,
+      "action": "Mara Venn sets a newly revealed obsidian key on the table between us; it is a distinct object I can pick up.",
+      "executed_types": [
+        "ref_entity",
+        "spawn_object",
+        "update_player"
+      ],
+      "proposed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "mara-venn"
+        },
+        {
+          "type": "spawn_object",
+          "item": "obsidian key fragment"
+        },
+        {
+          "type": "update_player"
+        }
+      ],
+      "executed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "mara-venn",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "mara-venn",
+            "alias_used": null,
+            "found_in_scene": true
+          }
+        },
+        {
+          "type": "spawn_object",
+          "item": "obsidian key fragment",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "5c1da746-7540-4424-a766-14bb5763319d",
+            "object_name": "obsidian key fragment"
+          }
+        },
+        {
+          "type": "update_player",
+          "was_duplicate": false,
+          "details": {
+            "applied": {
+              "items_granted": [
+                {
+                  "name": "obsidian key fragment",
+                  "quantity": 1
+                }
+              ]
+            },
+            "narrator_authoritative": true,
+            "persisted": true
+          }
+        }
+      ],
+      "rejected": [],
+      "expected": [
+        "spawn_object"
+      ],
+      "expected_ok": true,
+      "narration_diagnostics": {
+        "streaming_buffered": false,
+        "continuity_violations": 1,
+        "continuity_repair_attempted": true,
+        "continuity_repair_succeeded": true,
+        "continuity_failed_closed": false,
+        "primary_effects": 0,
+        "primary_structural_errors": 0,
+        "tool_followup_attempted": false,
+        "tool_repair_attempted": false,
+        "tool_followup_effects": 0,
+        "final_effects": 3
+      },
+      "narrative": "Mara's hand goes to her belt pouch \u2014 not the coat pocket where the compass vanished, but a small leather pouch tucked under her belt. She works the knot loose with her teeth, then tips it.\n\nA sliver of polished obsidian slides onto the table between you. It's about the length of your smallest finger, faceted along one edge, smooth on the other. A key. No \u2014 more like a fragment of one, as if broken from a larger whole.\n\nShe taps it once with her fingertip.\n\n\"I found that in the old ferryman's boat the day after they pulled him out. Wedged between two planks in the hull, like he dropped it.\" Her voice drops. \"I didn't tell the wardens. Didn't tell anyone.\"\n\nThe firelight slides across its black surface. It catches no reflection \u2014 the obsidian seems to drink the light.\n\nShe watches you as you reach for it. The key is cool to the touch, heavier than it looks. The faceted edge fits against your thumb like it was meant to be held.\n\n\"Whatever was on the other side of that gate,\" Mara says quietly, \"Bram died trying to lock it \u2014 or unlock it. I haven't figured out which yet.\"\n\nShe lets the question hang. The hearth clock ticks. Somewhere outside, rain drums against the shuttered windows."
+    },
+    {
+      "turn": 7,
+      "action": "I pick up the obsidian key from the table and put it in my pack.",
+      "executed_types": [
+        "ref_entity",
+        "update_player"
+      ],
+      "proposed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "mara-venn"
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "obsidian-key-fragment"
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "brass-compass"
+        },
+        {
+          "type": "update_player"
+        }
+      ],
+      "executed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "mara-venn",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "mara-venn",
+            "alias_used": null,
+            "found_in_scene": true
+          }
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "obsidian-key-fragment",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "obsidian-key-fragment",
+            "alias_used": null,
+            "found_in_scene": true
+          }
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "brass-compass",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "brass-compass",
+            "alias_used": null,
+            "found_in_scene": true
+          }
+        },
+        {
+          "type": "update_player",
+          "was_duplicate": false,
+          "details": {
+            "applied": {
+              "items_granted": [
+                {
+                  "name": "obsidian key fragment",
+                  "quantity": 1
+                }
+              ]
+            },
+            "narrator_authoritative": true,
+            "persisted": true
+          }
+        }
+      ],
+      "rejected": [],
+      "expected": [
+        "update_player"
+      ],
+      "expected_ok": true,
+      "narration_diagnostics": {
+        "streaming_buffered": false,
+        "continuity_violations": 0,
+        "continuity_repair_attempted": false,
+        "continuity_repair_succeeded": false,
+        "continuity_failed_closed": false,
+        "primary_effects": 0,
+        "primary_structural_errors": 0,
+        "tool_followup_attempted": true,
+        "tool_repair_attempted": false,
+        "tool_followup_effects": 4,
+        "final_effects": 4
+      },
+      "narrative": "Your fingers close around the obsidian key. It's cool and dense \u2014 heavier than a shard that size has any right to be \u2014 and for half a heartbeat, the faceted edge presses against your palm like it's settling into place.\n\nYou slip it into your pack. The leather pouch accepts it without a sound.\n\nAcross the table, Mara lets out a breath she didn't know she was holding. Her shoulders drop a fraction.\n\n\"Good,\" she says quietly. \"Keep it close. I don't know what it opens \u2014 or if it's even a whole key \u2014 but someone killed Bram for it. That makes it worth something.\"\n\nShe scrapes her chair back and stands, shrugging into her charcoal coat. She buttons the inner pocket \u2014 the one with the two gold coins \u2014 and checks the other pockets by habit.\n\nStill no compass.\n\nShe shakes it off.\n\n\"We've got less than an hour before the wardens switch watch at the gate approach. If we're going to search Bram's boat, we go now.\" She tilts her head toward the Copper Finch's back door. \"There's a service alley behind the kitchens. Takes us to the canal without crossing the main square. Fewer eyes.\"\n\nShe pauses at the table's edge.\n\n\"Coming?\""
+    },
+    {
+      "turn": 8,
+      "action": "I pull the bronze demolition pin already fitted to the sealed reliquary, destroying the reliquary completely.",
+      "executed_types": [
+        "ref_entity",
+        "remove_entity"
+      ],
+      "proposed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "mara-venn"
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "sealed-reliquary"
+        },
+        {
+          "type": "remove_entity"
+        }
+      ],
+      "executed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "mara-venn",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "mara-venn",
+            "alias_used": null,
+            "found_in_scene": true
+          }
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "sealed-reliquary",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "sealed-reliquary",
+            "alias_used": null,
+            "found_in_scene": true
+          }
+        },
+        {
+          "type": "remove_entity",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "sealed-reliquary",
+            "entity_name": "sealed reliquary",
+            "reason": "destroyed by pulling the bronze demolition pin"
+          }
+        }
+      ],
+      "rejected": [],
+      "expected": [
+        "remove_entity"
+      ],
+      "expected_ok": true,
+      "narration_diagnostics": {
+        "streaming_buffered": false,
+        "continuity_violations": 0,
+        "continuity_repair_attempted": false,
+        "continuity_repair_succeeded": false,
+        "continuity_failed_closed": false,
+        "primary_effects": 0,
+        "primary_structural_errors": 0,
+        "tool_followup_attempted": true,
+        "tool_repair_attempted": true,
+        "tool_followup_effects": 3,
+        "final_effects": 3
+      },
+      "narrative": "Your hand closes around the bronze demolition pin. It's cold, ridged with age, seated firmly in the iron casing. Mara's eyes snap to you as you grip it \u2014 her mouth opens, a warning half-formed \u2014 but you've already committed.\n\nYou pull.\n\nThe pin shears cleanly from the iron casing with a loud metallic snap \u2014 a sound like a crossbow release, sharp and final. The reliquary's seal breaks instantly.\n\nAnd then a burst of magical energy erupts from the ruptured container \u2014 a concussion of silver-white light and force that throws your arm back, rattles the table, and sends a shockwave rippling through the Copper Finch's common room. Glasses tremble on their shelves. The hearth flame gutters. Across the table, Mara flinches hard, one hand flying to her coat collar.\n\nThen silence. The light dies.\n\nThe reliquary lies open on the table \u2014 cracked, smoking faintly, its iron casing split along the seam where the pin held it shut. Whatever was inside... it's gone. Released. The container is empty.\n\nAcross the table, Mara stares at the wreckage, then slowly lifts her gaze to yours.\n\nHer voice is flat. Controlled.\n\n\"...What did you just do?\""
+    },
+    {
+      "turn": 9,
+      "action": "I warn Mara Venn that the watch is at the door. She chooses to flee the Copper Finch immediately, taking nothing else.",
+      "executed_types": [
+        "ref_entity"
+      ],
+      "proposed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "mara-venn"
+        },
+        {
+          "type": "update_entity"
+        }
+      ],
+      "executed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "mara-venn",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "mara-venn",
+            "alias_used": null,
+            "found_in_scene": false
+          }
+        }
+      ],
+      "rejected": [
+        {
+          "type": "update_entity",
+          "stage": "execution",
+          "reason": "update_entity target 'mara-venn' not in scene registry"
+        }
+      ],
+      "expected": [
+        "update_entity"
+      ],
+      "expected_ok": false,
+      "narration_diagnostics": {
+        "streaming_buffered": false,
+        "continuity_violations": 0,
+        "continuity_repair_attempted": false,
+        "continuity_repair_succeeded": false,
+        "continuity_failed_closed": false,
+        "primary_effects": 0,
+        "primary_structural_errors": 0,
+        "tool_followup_attempted": true,
+        "tool_repair_attempted": false,
+        "tool_followup_effects": 2,
+        "final_effects": 2
+      },
+      "narrative": "You don't answer her question. There's no time.\n\nFootsteps outside. Heavy. Booted. Multiple sets, crossing the rain-slicked street toward the Copper Finch's front door. The brass handle rattles.\n\nMara hears it too. Her head whips toward the front of the tavern, then back to you. Her eyes go hard and sharp \u2014 the look of someone who's made a hundred snap decisions in the dark.\n\nShe doesn't argue. Doesn't grab her things. Doesn't even glance at the cracked reliquary.\n\nShe moves.\n\nIn one fluid motion she's around the table, past the hearth, and through the back door into the service alley. The door swings shut behind her \u2014 a soft click of the latch, nothing more \u2014 and she's gone.\n\nThe front door of the Copper Finch creaks open. A voice, low and official: \"Innkeep. We're looking for a woman in a charcoal coat.\""
+    },
+    {
+      "turn": 10,
+      "action": "I call out for Old Bram, though I know he died. I listen for no living answer and instead recall his last warning about the Ash Gate.",
+      "executed_types": [
+        "ref_entity"
+      ],
+      "proposed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "warden"
+        }
+      ],
+      "executed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "warden",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "warden",
+            "alias_used": null,
+            "found_in_scene": true
+          }
+        }
+      ],
+      "rejected": [],
+      "expected": [],
+      "expected_ok": true,
+      "narration_diagnostics": {
+        "streaming_buffered": false,
+        "continuity_violations": 0,
+        "continuity_repair_attempted": false,
+        "continuity_repair_succeeded": false,
+        "continuity_failed_closed": false,
+        "primary_effects": 0,
+        "primary_structural_errors": 0,
+        "tool_followup_attempted": true,
+        "tool_repair_attempted": false,
+        "tool_followup_effects": 1,
+        "final_effects": 1
+      },
+      "narrative": "The name leaves your throat before you can stop it \u2014 rough, half-broken, a call meant for a dead man.\n\n\"Old Bram.\"\n\nNo answer. Of course.\n\nThe Copper Finch holds its breath. The hearth fire pops. Rain whispers against the shutters. Somewhere in the back, a floorboard settles.\n\nSilence.\n\nYou didn't expect a reply. You didn't want one. But you needed to say it \u2014 to speak his name into the air he last breathed, to mark the space he left behind.\n\nAnd as the silence stretches, something stirs in your memory. Not a voice. Not quite. A feeling \u2014 the shape of a warning you heard once, in passing, from a gray-bearded ferryman with canal water on his boots.\n\n*\"The gate don't just keep things out, lad. It keeps things in. And the ones who built it? They had reasons. Good reasons. Bad reasons. Don't matter which \u2014 reasons is reasons, and reasons got teeth.\"*\n\nHe'd spat into the canal after that, wiped his mouth, and refused to say another word on the subject.\n\nThe front door of the Copper Finch is open now. Heavy boots cross the threshold. A voice \u2014 the Warden \u2014 calls out again, closer this time.\n\n\"Innkeep. The woman in the charcoal coat. Where is she?\""
+    },
+    {
+      "turn": 11,
+      "action": "I leave the Copper Finch and travel to the Ash Gate, arriving beneath its cracked black arch.",
+      "executed_types": [
+        "change_location",
+        "ref_entity",
+        "spawn_object"
+      ],
+      "proposed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "warden"
+        },
+        {
+          "type": "change_location"
+        },
+        {
+          "type": "spawn_object",
+          "item": "Old Bram's boat"
+        }
+      ],
+      "executed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "warden",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "warden",
+            "alias_used": null,
+            "found_in_scene": false
+          }
+        },
+        {
+          "type": "change_location",
+          "was_duplicate": false,
+          "details": {
+            "location_name": "Ash Gate approach",
+            "location_description": "A cracked black obsidian arch sealed with iron bands, warding glyphs, and a counterweight mechanism, standing at the end of a canal-side stone platform littered with debris. Beyond the arch, a wall of still mist. Old Bram's boat is moored at the platform's edge.",
+            "narrator_authoritative": true
+          }
+        },
+        {
+          "type": "spawn_object",
+          "item": "Old Bram's boat",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "efd7e8dd-40f8-46d5-b59c-c59d52975993",
+            "object_name": "Old Bram's boat"
+          }
+        }
+      ],
+      "rejected": [],
+      "expected": [
+        "change_location"
+      ],
+      "expected_ok": true,
+      "narration_diagnostics": {
+        "streaming_buffered": false,
+        "continuity_violations": 0,
+        "continuity_repair_attempted": false,
+        "continuity_repair_succeeded": false,
+        "continuity_failed_closed": false,
+        "primary_effects": 0,
+        "primary_structural_errors": 0,
+        "tool_followup_attempted": true,
+        "tool_repair_attempted": false,
+        "tool_followup_effects": 3,
+        "final_effects": 3
+      },
+      "narrative": "You move.\n\nPast the hearth. Past the shuttered window. Past the cracked reliquary still smoking on the scarred table. The Warden's voice is at the bar now \u2014 \"She came through here, the innkeep's already talking\" \u2014 but you're already at the back door, the same service alley Mara took, and you step through into rain and shadow.\n\nThe alley winds behind the kitchens, past stacked crates and a reeking midden, and opens onto a narrow canal-side lane. Cobblestones slick with wet. The canal itself: black water, slow-moving, reflecting the grey sky like a strip of polished iron.\n\nYou follow the canal north.\n\nThe city thins. Warehouses give way to wharfs, wharfs to reeds and rubble. The buildings grow older, more crooked, their upper stories leaning toward one another like drunks sharing a secret. And then the canal bends, and you see it.\n\nThe Ash Gate.\n\nIt rises from the earth at the canal's end \u2014 a cracked black arch of stone so dark it drinks the morning light. No mortar. No joints. The arch looks carved from a single slab of obsidian, fissured with age, its inner surface traced with faint warding glyphs that seem to shift when you're not looking directly at them. Iron bands wrap the gate at three heights \u2014 waist, chest, crown \u2014 each bolted into the stone with rivets the size of a child's fist. A counterweight mechanism hangs from the crown: chains, gears, a leaden block the shape of a tombstone.\n\nBeyond the arch: nothing but a wall of mist. Impenetrable. Still. It does not billow or drift. It simply *waits*.\n\nThe approach is a stone platform, cracked and weed-choked, littered with the debris of neglect \u2014 a rusted lantern, a frayed coil of rope, a scatter of dead leaves. Old Bram's boat is moored at the platform's edge, listing slightly, a few inches of rainwater pooled in its hull.\n\nYou stand beneath the cracked black arch.\n\nThe glyphs on the stone are dark. Dormant. But they catch the light as you shift \u2014 as if watching you.\n\nThe Ash Gate is sealed. Silent. Waiting.\n\nWhat do you do?"
+    },
+    {
+      "turn": 12,
+      "action": "At the Ash Gate I meet a new, physically present courier named Sable Quill, introduce myself, and ask why she was waiting for me.",
+      "executed_types": [
+        "add_npc",
+        "change_location",
+        "spawn_object"
+      ],
+      "proposed": [
+        {
+          "type": "add_npc",
+          "npc_name": "Sable Quill"
+        },
+        {
+          "type": "spawn_object",
+          "item": "sealed letter"
+        },
+        {
+          "type": "change_location"
+        }
+      ],
+      "executed": [
+        {
+          "type": "add_npc",
+          "npc_name": "Sable Quill",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "80ef5e4c-b16e-4506-83fe-fa8179c48fbd",
+            "npc_name": "Sable Quill",
+            "dialogue_indices": [
+              1,
+              2,
+              3
+            ],
+            "dialogue_emotions": [
+              "steady",
+              "sarcastic",
+              "shrugging"
+            ]
+          }
+        },
+        {
+          "type": "spawn_object",
+          "item": "sealed letter",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "2227e964-c20d-48c4-9bf3-0efc3c1739ea",
+            "object_name": "sealed letter"
+          }
+        },
+        {
+          "type": "change_location",
+          "was_duplicate": false,
+          "details": {
+            "location_name": "Ash Gate approach",
+            "location_description": "A cracked black obsidian arch sealed with iron bands, warding glyphs, and a counterweight mechanism, standing at the end of a canal-side stone platform littered with debris. Beyond the arch, a wall of still mist. Old Bram's boat is moored at the platform's edge.",
+            "narrator_authoritative": true
+          }
+        }
+      ],
+      "rejected": [],
+      "expected": [
+        "add_npc"
+      ],
+      "expected_ok": true,
+      "narration_diagnostics": {
+        "streaming_buffered": false,
+        "continuity_violations": 0,
+        "continuity_repair_attempted": false,
+        "continuity_repair_succeeded": false,
+        "continuity_failed_closed": false,
+        "primary_effects": 0,
+        "primary_structural_errors": 0,
+        "tool_followup_attempted": true,
+        "tool_repair_attempted": false,
+        "tool_followup_effects": 3,
+        "final_effects": 3
+      },
+      "narrative": "The mist beyond the gate breathes. Slow. Patient.\n\nAnd then \u2014 a sound behind you. Light footsteps on wet stone.\n\nYou turn.\n\nA figure stands at the edge of the platform where the canal-side lane meets the Ash Gate's approach. Young woman, maybe early twenties. Leather satchel slung across her chest, damp hair plastered to her temples by the morning rain. She's been standing in the shadow of a collapsed watchtower arch \u2014 waiting.\n\nShe steps forward when she sees you've noticed her. No hesitation. No weapon drawn. Just a courier's practiced ease, one hand raised in a half-wave.\n\n\"You're Kael, yeah?\" Her voice is steady, a little hoarse from the damp air. \"Took you long enough. Been standing here since before sun-up.\"\n\nShe reaches into her satchel and pulls out a sealed letter \u2014 cream paper, black wax, no seal pressed into it. Just a blank, smooth surface.\n\n\"Name's Sable Quill. I was paid to bring this to you at the Ash Gate. Paid well. Didn't ask questions.\" She holds the letter out, but doesn't release it yet. \"Guy who hired me said you'd be coming. Said to tell you: *'The ferryman's last fare wasn't a passenger.'*\"\n\nShe lets that hang. Then she shrugs, offers the letter properly.\n\n\"You want it, or do I toss it in the canal and keep the coin?\""
+    }
+  ]
+}
