@@ -344,10 +344,14 @@ class EffectValidator:
             return None
 
         # Canonical owners of the alias, matched on NAME only (alias-to-alias
-        # matching would over-reject once pollution exists).
+        # matching would over-reject once pollution exists). Only a
+        # PROPER-named NPC can claim ownership: "the apothecary" must not
+        # veto an alias of "apothecary" on the shop she works in.
         owners: set[str] = set()
         if world_state is not None:
             for npc_id, npc in world_state.npcs.items():
+                if is_generic_npc_label(npc.name):
+                    continue
                 if identity_keys(npc.name) & alias_keys:
                     owners.add(npc_id)
         if graph is not None:
@@ -357,7 +361,10 @@ class EffectValidator:
                 )
                 if node_type != "npc":
                     continue
-                if identity_keys(str(getattr(node, "name", "") or "")) & alias_keys:
+                node_name = str(getattr(node, "name", "") or "")
+                if is_generic_npc_label(node_name):
+                    continue
+                if identity_keys(node_name) & alias_keys:
                     owners.add(str(getattr(node, "node_id", "") or ""))
         owners -= target_ids
         owners.discard("")

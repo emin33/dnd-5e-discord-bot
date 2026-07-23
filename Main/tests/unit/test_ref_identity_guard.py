@@ -99,6 +99,41 @@ class TestAliasMisbindingGuard:
         assert result.valid is False
         assert "graph-elara-id" in result.rejection_reason
 
+    def test_generic_role_named_npc_cannot_claim_ownership(self):
+        """Live false positive from run 20260723_002014 turn 9.
+
+        A ref to the location "Elara Venn's apothecary" with alias
+        "apothecary" must not be vetoed by the NPC generically labeled
+        "the apothecary" — role labels are not canonical proper names.
+        """
+        shopkeeper = NPCState(name="the apothecary")
+
+        class _EntityType:
+            value = "location"
+
+        shop = SimpleNamespace(
+            node_id="elara-venns-apothecary",
+            name="Elara Venn's apothecary",
+            aliases=[],
+            entity_type=_EntityType(),
+        )
+        graph = SimpleNamespace(
+            _entities={"elara-venns-apothecary": shop},
+            get_entity=lambda entity_id: (
+                shop if entity_id == "elara-venns-apothecary" else None
+            ),
+        )
+        validator = EffectValidator(
+            session=SimpleNamespace(
+                world_state=_world_with(shopkeeper),
+                knowledge_graph=graph,
+            )
+        )
+        result = validator.validate(
+            _ref("elara-venns-apothecary", "apothecary")
+        )
+        assert result.valid is True
+
     def test_ambiguous_ownership_abstains(self):
         lyra = NPCState(name="Lyra")
         elara_one = NPCState(name="Elara")

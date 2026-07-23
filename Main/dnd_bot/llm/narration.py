@@ -1596,7 +1596,9 @@ class NarrationStrategy:
         self.last_diagnostics["state_followup_signals"] = [
             signal.instruction for signal in signals
         ]
-        allowed = {signal.tool_name for signal in signals}
+        allowed = {
+            name for signal in signals for name in signal.tool_names
+        }
         tools = [
             tool
             for tool in self._get_tools()

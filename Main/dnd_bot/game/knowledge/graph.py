@@ -261,19 +261,31 @@ class KnowledgeGraph:
         seed_ids: list[str],
         radius: float = 2.0,
         max_entities: int = 15,
+        no_expand_ids: set[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Retrieve entities within BFS radius of seed nodes.
 
         Returns a list of entity dicts with their relationships, ready
         for YAML serialization and narrator injection.
+
+        ``no_expand_ids`` marks seeds that are included verbatim but do NOT
+        expand a BFS neighborhood. Speculative retrieval (vector similarity)
+        earns the matched node only; hopping to its neighbors is how an
+        off-screen NPC leaked into an unrelated prompt through a
+        semantically similar item (soak 20260722_230128, turn 55).
         """
         if not seed_ids:
             return []
+
+        frozen = set(no_expand_ids or [])
 
         # Union BFS neighborhoods from all seeds
         combined_nodes: set[str] = set()
         for sid in seed_ids:
             if sid not in self._graph:
+                continue
+            if sid in frozen:
+                combined_nodes.add(sid)
                 continue
             try:
                 sub = nx.ego_graph(self._graph, sid, radius=radius, distance="weight", undirected=True)
@@ -346,9 +358,12 @@ class KnowledgeGraph:
         seed_ids: list[str],
         radius: float = 2.0,
         max_entities: int = 15,
+        no_expand_ids: set[str] | None = None,
     ) -> str:
         """Serialize relevant subgraph as YAML for narrator context injection."""
-        subgraph = self.get_context_subgraph(seed_ids, radius, max_entities)
+        subgraph = self.get_context_subgraph(
+            seed_ids, radius, max_entities, no_expand_ids=no_expand_ids
+        )
         if not subgraph:
             return ""
         return yaml.dump(
