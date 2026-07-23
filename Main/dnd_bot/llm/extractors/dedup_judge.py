@@ -190,6 +190,11 @@ Decide. Output one JSON object."""
                 temperature=0.1,
                 max_tokens=200,
                 json_mode=True,
+                # A thinking brain can spend the whole 200-token budget on
+                # thinking and return EMPTY content, which this judge treats
+                # as fail-open accept — that duplicated a returning NPC in
+                # soak 20260722_230128 (turn 56).
+                think=False,
             )
         except Exception as e:
             logger.warning("dedup_judge_call_failed", error=str(e), exc_info=True)

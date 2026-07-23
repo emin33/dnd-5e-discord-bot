@@ -1196,6 +1196,19 @@ def evaluate_tool_omission_signals(
         proposed = (record.get("effects") or {}).get("proposed") or []
         narration = str((record.get("narrator_response") or {}).get("raw") or "")
         normalized_narration = f" {_normalized_entity_label(narration)} "
+        # Updates the single-writer store REJECTED (typically "NPC not found"
+        # for a background figure that was never tracked) mutated nothing, so
+        # they owe no narrator tool.
+        rejected_update_labels: set[str] = set()
+        for rejection in (record.get("state_delta") or {}).get("rejections") or []:
+            match = re.search(
+                r"not found for update: id=(\S+) name='([^']*)'", str(rejection)
+            )
+            if match:
+                for value in match.groups():
+                    normalized = _normalized_entity_label(value)
+                    if normalized and normalized != "none":
+                        rejected_update_labels.add(normalized)
         proposed_types = Counter(
             str(effect.get("type") or effect.get("effect_type") or "")
             for effect in proposed
@@ -1371,6 +1384,8 @@ def evaluate_tool_omission_signals(
             update_target = _normalized_entity_label(
                 update.get("new_name") or update.get("name") or update.get("id")
             )
+            if update_target and update_target in rejected_update_labels:
+                continue
             # The extractor may enrich an NPC that add_npc established earlier
             # in this same turn.  add_npc already persisted its initial state;
             # requiring a redundant update_entity call would be a false alarm.

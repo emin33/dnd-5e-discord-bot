@@ -39,7 +39,7 @@ class TestLocationSignal:
             narrative="You step out into the grey light of the Tallow Rows.",
         )
         assert [s.kind for s in signals] == ["location"]
-        assert signals[0].tool_name == "change_location"
+        assert signals[0].tool_names[0] == "change_location"
         assert '"Tallow Rows"' in signals[0].instruction
 
     def test_sub_scene_refinement_abstains(self):
@@ -100,7 +100,7 @@ class TestNewNpcSignal:
             world=world,
         )
         assert [s.kind for s in signals] == ["new_npc"]
-        assert signals[0].tool_name == "ref_entity"
+        assert signals[0].tool_names[0] == "ref_entity"
         assert npc.id in signals[0].instruction
 
     def test_generic_label_abstains(self):
@@ -200,7 +200,7 @@ class TestNpcUpdateSignal:
             world=_world({npc.id: npc}),
         )
         assert [s.kind for s in signals] == ["npc_update"]
-        assert signals[0].tool_name == "update_entity"
+        assert signals[0].tool_names[0] == "update_entity"
         assert npc.id in signals[0].instruction
 
     def test_covered_by_proposed_update(self):
@@ -259,6 +259,74 @@ class TestNpcUpdateSignal:
             narrative="Lena Harker takes the ledger.",
             effects=[add],
             world=_world({npc.id: npc}),
+        )
+        assert signals == []
+
+
+class TestUnnamedIdentitySignal:
+    def test_possessive_cue_untracked_name_fires(self):
+        """Live case (run 20260723_002014, T8): 'Elara Venn's eyes narrow'
+        while she is tracked only as 'the apothecary'."""
+        shopkeeper = NPCState(name="the apothecary")
+        delta = StateDelta()
+        signals = _signals(
+            delta,
+            narrative="Elara Venn's eyes narrow. She steps past you.",
+            world=_world({shopkeeper.id: shopkeeper}),
+        )
+        assert [s.kind for s in signals] == ["unnamed_identity"]
+        assert set(signals[0].tool_names) == {
+            "add_npc", "update_entity", "ref_entity"
+        }
+        assert "Elara Venn" in signals[0].instruction
+
+    def test_known_roster_name_abstains(self):
+        elara = NPCState(name="Elara Venn")
+        signals = _signals(
+            StateDelta(),
+            narrative="Elara Venn's eyes narrow.",
+            world=_world({elara.id: elara}),
+        )
+        assert signals == []
+
+    def test_graph_known_label_abstains(self):
+        signals = uncovered_state_signals(
+            StateDelta(),
+            before_location="",
+            narrative="Elara Venn's eyes narrow.",
+            proposed_effects=[],
+            world_state=_world(),
+            known_entity_labels=["Elara Venn"],
+        )
+        assert signals == []
+
+    def test_covered_by_ref_alias_abstains(self):
+        ref = ProposedEffect(
+            effect_type=EffectType.REF_ENTITY,
+            ref_entity_id="some-id",
+            ref_alias_used="Elara Venn",
+        )
+        signals = _signals(
+            StateDelta(),
+            narrative="Elara Venn's eyes narrow.",
+            effects=[ref],
+        )
+        assert signals == []
+
+    def test_player_name_abstains(self):
+        signals = _signals(
+            StateDelta(),
+            narrative="Kael's hands tremble on the bowstring.",
+            player="Kael Windrunner",
+        )
+        assert signals == []
+
+    def test_plain_mention_without_cue_abstains(self):
+        # Only strong grammatical cues fire; a bare name mention is left to
+        # the extractor channel.
+        signals = _signals(
+            StateDelta(),
+            narrative="You think about what Elara Venn said yesterday.",
         )
         assert signals == []
 
@@ -324,7 +392,7 @@ class TestTargetedStateFollowupMethod:
         signals = [
             StateFollowupSignal(
                 kind="location",
-                tool_name="change_location",
+                tool_names=("change_location",),
                 instruction=(
                     'The party moved to "Tallow Rows". Call '
                     'change_location(location_name="Tallow Rows").'

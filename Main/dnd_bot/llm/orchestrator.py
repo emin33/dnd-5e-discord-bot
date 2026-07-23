@@ -1604,18 +1604,28 @@ class DMOrchestrator:
                     # prompts. A 1.0 weighted radius still includes directly
                     # related co-located entities (LOCATED_AT = 0.3) while
                     # requiring explicit text/vector retrieval for NPCs beyond
-                    # the immediate graph neighborhood.
+                    # the immediate graph neighborhood. Vector-fallback seeds
+                    # are speculative: they appear themselves but do not
+                    # expand a neighborhood (a similar-looking item otherwise
+                    # drags its owner NPC into an unrelated scene).
                     context.kg_context_yaml = _cap_kg_context_yaml(
-                        kg.to_context_yaml(_kg_seed_ids, radius=1.0)
+                        kg.to_context_yaml(
+                            _kg_seed_ids,
+                            radius=1.0,
+                            no_expand_ids=set(_kg_vector_match_seeds),
+                        )
                     )
 
-                    # Narrative recall is triggered only by entities resolved
-                    # from the player's action (exact or vector fallback).
-                    # Ambient scene membership supplies current graph context,
-                    # but must not continuously reactivate old episodes.
+                    # Narrative recall is triggered only by entities the
+                    # player's action named EXACTLY. Ambient scene membership
+                    # and speculative vector matches supply current graph
+                    # context, but must not reactivate old episodes — a
+                    # topically similar chunk can carry an unrelated NPC's
+                    # name into the prompt (validation 20260722_232549,
+                    # turn 21).
                     try:
                         vs = get_vector_store()
-                        recall_seed_ids = list(text_seeds)
+                        recall_seed_ids = list(_kg_text_match_seeds)
                         seed_names = [
                             kg.get_entity(s).name
                             for s in recall_seed_ids
@@ -1778,6 +1788,17 @@ class DMOrchestrator:
             if delta:
                 try:
                     from .state_followup import uncovered_state_signals
+                    _kg_npc_labels: list[str] = []
+                    if kg is not None:
+                        for _node in (kg._entities or {}).values():
+                            if getattr(
+                                getattr(_node, "entity_type", None), "value", ""
+                            ) != "npc":
+                                continue
+                            _kg_npc_labels.append(str(_node.name or ""))
+                            _kg_npc_labels.extend(
+                                str(a) for a in (_node.aliases or [])
+                            )
                     _followup_signals = uncovered_state_signals(
                         delta,
                         before_location=pre_delta_location,
@@ -1785,6 +1806,7 @@ class DMOrchestrator:
                         proposed_effects=proposed_effects,
                         world_state=world_state,
                         player_name=context.player_name,
+                        known_entity_labels=_kg_npc_labels,
                     )
                     if _followup_signals:
                         _turn_record.start_stage("state_followup")

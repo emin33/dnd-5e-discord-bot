@@ -49,6 +49,7 @@ _GENERIC_NPC_TERMS = {
     "a",
     "acolyte",
     "an",
+    "apothecary",
     "archer",
     "bartender",
     "beggar",

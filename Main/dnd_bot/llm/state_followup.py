@@ -51,9 +51,32 @@ _DISPOSITION_SHIFT_RE = (
 class StateFollowupSignal:
     """One missing tool call, with the exact instruction to request it."""
 
-    kind: str  # "location" | "new_npc" | "npc_update"
-    tool_name: str
+    kind: str  # "location" | "new_npc" | "npc_update" | "unnamed_identity"
+    tool_names: tuple[str, ...]
     instruction: str
+
+
+# Grammatical cues that very strongly imply a proper-named person is on
+# stage ("Elara Venn's eyes narrow"). Mirrors the long-form audit observer.
+_NPC_POSSESSIVE_CUE_RE = re.compile(
+    r"\b([A-Z][A-Za-z'-]*(?:\s+[A-Z][A-Za-z'-]*){0,2})['’]s\s+"
+    r"(?:eyes?|gaze|voice|face|hands?|brow|jaw|shoulders?|expression|"
+    r"smile|fingers?|head|lips?|breath|posture)\b"
+)
+_LEADING_NAME_NOISE = {"And", "As", "But", "Then", "When", "While", "Yet"}
+
+
+def strong_npc_name_cues(text: str) -> set[str]:
+    """Extract only cues that very strongly imply a proper-named NPC."""
+    names: set[str] = set()
+    for match in _NPC_POSSESSIVE_CUE_RE.finditer(text or ""):
+        tokens = match.group(1).split()
+        while tokens and tokens[0] in _LEADING_NAME_NOISE:
+            tokens.pop(0)
+        candidate = " ".join(tokens)
+        if _looks_like_proper_npc_name(candidate):
+            names.add(candidate)
+    return names
 
 
 def _normalized_label(value: object) -> str:
@@ -140,8 +163,14 @@ def uncovered_state_signals(
     proposed_effects: Iterable[ProposedEffect],
     world_state: "WorldState",
     player_name: str = "",
+    known_entity_labels: Iterable[str] = (),
 ) -> list[StateFollowupSignal]:
-    """Detect applied delta mutations with no matching narrator tool."""
+    """Detect applied delta mutations with no matching narrator tool.
+
+    ``known_entity_labels`` extends the roster with durable labels the
+    caller already tracks elsewhere (knowledge-graph NPC names/aliases), so
+    a prose-cue name is only flagged when NO store knows the person.
+    """
     effects = [e for e in proposed_effects if isinstance(e, ProposedEffect)]
     normalized_narration = f" {_normalized_label(narrative)} "
     signals: list[StateFollowupSignal] = []
@@ -167,7 +196,7 @@ def uncovered_state_signals(
         ):
             signals.append(StateFollowupSignal(
                 kind="location",
-                tool_name="change_location",
+                tool_names=("change_location",),
                 instruction=(
                     f'The party moved to "{location}"'
                     + (f' (from "{before_location}")' if before_location else "")
@@ -207,7 +236,7 @@ def uncovered_state_signals(
             continue
         signals.append(StateFollowupSignal(
             kind="new_npc",
-            tool_name="ref_entity",
+            tool_names=("ref_entity",),
             instruction=(
                 f'Your narration introduced "{name}" '
                 f'(roster id "{roster_id}"). Call '
@@ -248,11 +277,50 @@ def uncovered_state_signals(
         display = label or roster_id
         signals.append(StateFollowupSignal(
             kind="npc_update",
-            tool_name="update_entity",
+            tool_names=("update_entity",),
             instruction=(
                 f'"{display}" (roster id "{roster_id}") {summary} this turn. '
                 f'Call update_entity(entity_id="{roster_id}") with the '
                 f"matching arguments."
+            ),
+        ))
+
+    # A strongly-cued proper name no store knows ("Elara Venn's eyes
+    # narrow") is an identity event: either a new person on stage, or an
+    # existing generically-labeled entity being named for the first time.
+    # The narrator sees the roster and decides which; every resulting call
+    # still passes the normal validators and the add_npc dedup judge.
+    known_labels: list[str] = []
+    for npc in world_state.npcs.values():
+        known_labels.append(npc.name)
+        known_labels.extend(npc.aliases)
+    known_labels.extend(str(label or "") for label in known_entity_labels)
+    if player_name:
+        known_labels.append(player_name)
+    for candidate in sorted(strong_npc_name_cues(narrative)):
+        # Token-subset overlap, matching the audit observer: the cue "Kael"
+        # is already covered by roster/player label "Kael Windrunner".
+        if any(_labels_overlap(candidate, label) for label in known_labels):
+            continue
+        if any(
+            _labels_overlap(candidate, proposed_name)
+            for proposed_name in proposed_npc_names
+        ) or any(
+            _labels_overlap(candidate, ref.ref_alias_used)
+            for ref in proposed_refs
+        ):
+            continue
+        signals.append(StateFollowupSignal(
+            kind="unnamed_identity",
+            tool_names=("add_npc", "update_entity", "ref_entity"),
+            instruction=(
+                f'Your narration names "{candidate}", who is not tracked '
+                f"under any roster name. If this is a NEW person on stage, "
+                f'call add_npc(name="{candidate}"). If this names an '
+                f"existing roster entity currently under a generic label, "
+                f"call update_entity with that entity_id and "
+                f'new_name="{candidate}" instead. Skip the call if '
+                f'"{candidate}" is not an on-stage person.'
             ),
         ))
 

@@ -207,3 +207,48 @@ gate — four fail-closed rejections of invented update_entity ids
 (`courier`, `living-brass-compass` x3). Correct behavior, small-N gate
 sensitivity; consider an id-resolution assist ("living-brass-compass" →
 roster "brass-compass") only with exact-suffix conservatism.
+
+## 2026-07-23 iteration: retrieval scoping + guard refinements + the naming-promotion root cause
+
+Fixes landed and validated across runs 20260723_002014 / 20260723_003823:
+
+- Vector-fallback KG seeds no longer amplify: they appear in context without
+  BFS expansion (`get_context_subgraph(no_expand_ids=...)`) and no longer
+  trigger narrative-episode recall (exact text matches only).
+  `kg_kept_seed_out_of_irrelevant_context` passed in both validation runs
+  after failing in the soak and the first validation run.
+- `tool_omission_signal_coverage` passed in both runs (targeted followup
+  active: change_location, ref bindings, update_entity all recovered live).
+- Dedup judge runs with `think=False` (empty-thinking fail-open closed).
+- Misbinding guard refined after a live false positive: only proper-named
+  NPCs claim canonical ownership ("the apothecary" cannot veto an alias on
+  the shop location); "apothecary" added to generic role terms.
+- Omission gate skips store-rejected npc_updates ("NPC not found" for
+  untracked background figures owes no narrator tool).
+- New `unnamed_identity` followup signal: a strongly-cued proper name no
+  store knows ("Elara Venn's eyes narrow") asks the narrator to resolve it
+  (add_npc new person vs update_entity rename of a generic-labeled entity).
+
+**Root cause now isolated — cross-store naming promotion.** Both remaining
+identity failures (Elara Venn / "the apothecary"; Orris / "the older
+woman") are the same event: a generic-labeled person acquires a proper
+name. The scene registry resolves it correctly (merges, records alias).
+The state extractor instead emits a NEW npc under the proper name; the
+dedup judge accepts it (names look distinct); the graph gains a parallel
+node; when the narrator's ref later legitimately promotes the generic node
+("the older woman" -> "Orris"), `canonical_npc_identity_unique` collides.
+Needed (design-level, next session):
+1. Extractor-apply should consult the scene registry's identity resolution
+   (it already merged the proper name onto the generic entity) before
+   accepting a new_npc whose name the registry maps to an existing entity.
+2. `kg.promote_entity_name` and DeltaBridge AddNode should enforce the
+   proper-name uniqueness invariant at the write seam: a promotion or add
+   that would create a second durable npc node with the same proper name
+   must merge or abstain, never silently collide.
+3. The dedup judge prompt should receive the scene registry's alias map as
+   evidence, not just raw roster names.
+
+Remaining known-noisy gate: `tool_structural_failure_budget` (5.7% and
+8.3% vs 5% on ~110-effect runs) — the OLD generic followup leg's refs
+without entity_id / non-verbatim aliases. Pre-existing model sloppiness,
+worth revisiting once the targeted leg fully replaces the generic one.

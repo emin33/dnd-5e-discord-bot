@@ -584,6 +584,41 @@ def test_tool_omission_audit_skips_sub_scene_location_refinement():
     assert "T25 change_location(Tallow Rows)" in coverage.detail
 
 
+def test_tool_omission_audit_skips_store_rejected_updates():
+    """A delta update the store rejected mutated nothing and owes no tool.
+
+    Live case (run 20260723_002014, T26): the extractor emitted inventory
+    updates for "the baker", a background vendor never present in the
+    roster; both updates were rejected with "NPC not found for update".
+    """
+    records = [
+        (26, {
+            "narrator_response": {"raw": (
+                "The baker gives you a short nod, pockets the wax sliver, "
+                "and returns to her work."
+            )},
+            "state_delta": {
+                "delta": {"npc_updates": [
+                    {"name": "the baker", "remove_inventory": ["wax sliver"]},
+                    {"new_name": "the baker", "remove_inventory": ["crumb"]},
+                ]},
+                "rejections": [
+                    "NPC not found for update: id=None name='the baker'",
+                    "NPC not found for update: id=None name=''",
+                ],
+            },
+            "effects": {"proposed": [{"type": "ref_entity", "ref_id": "x",
+                                      "ref_alias": "baker"}]},
+        }),
+    ]
+
+    results = evaluate_tool_omission_signals(records)
+    coverage = next(
+        r for r in results if r.name == "tool_omission_signal_coverage"
+    )
+    assert "update_entity" not in coverage.detail
+
+
 def test_tool_omission_audit_defers_to_ref_identity_and_ignores_inferred_importance():
     records = [
         (3, {

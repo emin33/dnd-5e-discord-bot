@@ -419,6 +419,43 @@ class TestSubgraphRetrieval:
         assert "Roran Hale" not in {entry["name"] for entry in ambient}
         assert "Roran Hale" in {entry["name"] for entry in explicit}
 
+    async def test_no_expand_seed_included_without_neighbors(self):
+        """A speculative (vector-matched) seed must not drag in its owner NPC.
+
+        Models the soak 20260722_230128 turn-55 leak: examining a parchment
+        vector-matched a stale note whose 1-hop neighborhood contained the
+        washed-out seed NPC.
+        """
+        repo = _make_mock_repo()
+        kg = KnowledgeGraph("test-campaign", repo)
+        await kg.load()
+        note = _make_entity("crumpled-note", EntityType.ITEM, "crumpled note")
+        sera = _make_entity("sera", name="Sera Vellik")
+        await kg.apply_operations([
+            AddNode(entity=note),
+            AddNode(entity=sera),
+            AddEdge(relationship=_make_relationship(
+                "sera", "crumpled-note", RelationType.OWNS
+            )),
+        ])
+
+        frozen = kg.get_context_subgraph(
+            ["crumpled-note"], radius=1.0, no_expand_ids={"crumpled-note"}
+        )
+        expanded = kg.get_context_subgraph(["crumpled-note"], radius=1.0)
+
+        assert {entry["name"] for entry in frozen} == {"crumpled note"}
+        assert "Sera Vellik" in {entry["name"] for entry in expanded}
+
+    async def test_no_expand_only_freezes_named_seeds(self, populated_kg):
+        """Seeds outside no_expand_ids keep their normal BFS neighborhood."""
+        result = populated_kg.get_context_subgraph(
+            ["grimjaw"], no_expand_ids={"unrelated-seed"}
+        )
+        names = {entry["name"] for entry in result}
+        assert "Grimjaw" in names
+        assert "The Tavern" in names
+
     async def test_empty_seeds_returns_empty(self, populated_kg):
         result = populated_kg.get_context_subgraph([])
         assert result == []
