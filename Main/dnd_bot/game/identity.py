@@ -184,6 +184,20 @@ def explicit_npc_naming_link(
     return bool(confirmation_cue.search(normalized_prose))
 
 
+def name_is_fragment_of(candidate: str, existing: str) -> bool:
+    """Return whether *candidate* adds no identity words beyond *existing*.
+
+    'Choir' is a fragment of 'a Choir acolyte'; 'Orina' is not a fragment
+    of 'the woman'. A narrator alias that merely excerpts the current
+    descriptive label is a reference to the entity, not a newly revealed
+    name — renaming onto it hijacks whatever the excerpted word denotes
+    (a faction, a role) and orphans the rest of the label.
+    """
+    candidate_words = set(_normalized_words(candidate))
+    existing_words = set(_normalized_words(existing))
+    return bool(candidate_words) and candidate_words <= existing_words
+
+
 def entity_identity_keys(entity: Any) -> frozenset[str]:
     """Return exact identity keys from an object's name and aliases."""
     keys: set[str] = set()

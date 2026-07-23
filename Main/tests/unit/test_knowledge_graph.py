@@ -1323,3 +1323,33 @@ class TestProperNameUniquenessSeam:
         entity = kg.get_entity("uuid-hooded")
         assert entity.name == "Orris"
         assert "the hooded stranger" in entity.aliases
+
+    async def test_promotion_abstains_on_label_fragment(self, kg):
+        """'Choir' offered as the new name for 'a Choir acolyte' is an
+        excerpt of the descriptive label (the faction's name), not a
+        newly revealed personal name (live case: run 20260723_120152
+        T15 renamed the acolyte node to 'Choir', misbinding T16's
+        legitimate 'the acolyte' ref)."""
+        await kg.load()
+        await kg.apply_operations([
+            AddNode(entity=_make_entity("uuid-acolyte", name="a Choir acolyte")),
+        ])
+
+        promoted = await kg.promote_entity_name("uuid-acolyte", "Choir")
+
+        assert promoted is False
+        assert kg.get_entity("uuid-acolyte").name == "a Choir acolyte"
+
+    async def test_promotion_accepts_name_extension(self, kg):
+        """Gaining words is a real naming event ('Elara' -> 'Elara Venn')."""
+        await kg.load()
+        await kg.apply_operations([
+            AddNode(entity=_make_entity("uuid-elara", name="Elara")),
+        ])
+
+        promoted = await kg.promote_entity_name("uuid-elara", "Elara Venn")
+
+        assert promoted is True
+        entity = kg.get_entity("uuid-elara")
+        assert entity.name == "Elara Venn"
+        assert "Elara" in entity.aliases

@@ -18,7 +18,12 @@ from .models import (
     UpdateNode,
 )
 from .repository import KnowledgeGraphRepository
-from ..identity import entity_identity_keys, identity_keys, is_generic_npc_label
+from ..identity import (
+    entity_identity_keys,
+    identity_keys,
+    is_generic_npc_label,
+    name_is_fragment_of,
+)
 
 logger = structlog.get_logger()
 
@@ -297,6 +302,19 @@ class KnowledgeGraph:
         """
         entity = self._entities.get(node_id)
         if not entity:
+            return False
+
+        # A "new name" whose every word already sits in the current label is
+        # an excerpt, not a naming event ('Choir' offered as an alias for
+        # 'a Choir acolyte' is the faction's name, not the person's) —
+        # promoting it hijacks the excerpted word's identity. Abstain.
+        if name_is_fragment_of(new_name, entity.name):
+            logger.info(
+                "entity_name_promotion_fragment_abstained",
+                node_id=node_id,
+                current_name=entity.name,
+                new_name=new_name,
+            )
             return False
 
         if entity.entity_type == EntityType.NPC:
