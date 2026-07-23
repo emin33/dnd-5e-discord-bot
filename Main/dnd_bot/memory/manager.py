@@ -4,6 +4,7 @@ Uses a three-gate consolidation pattern (inspired by agentic orchestration
 systems) to avoid wasting LLM calls on rapid-fire exchanges like combat.
 """
 
+import asyncio
 import time
 from typing import Any, Optional
 from datetime import datetime
@@ -593,8 +594,10 @@ class MemoryManager:
 
                 self._session_summaries.append(summary)
 
-                # Store in vector DB for RAG
-                self.vector_store.add_session_summary(
+                # Store in vector DB for RAG. Chroma embeds synchronously;
+                # keep the per-summary embed off the event loop.
+                await asyncio.to_thread(
+                    self.vector_store.add_session_summary,
                     campaign_id=self.campaign_id,
                     session_id=summary.session_id,
                     summary=summary.summary,

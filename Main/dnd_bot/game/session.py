@@ -1017,7 +1017,7 @@ class GameSessionManager:
             store.reconcile_phase(session.state == SessionState.COMBAT)
 
         # Build context with acting player's character data
-        context = self._build_context(
+        context = await self._build_context(
             session, memory, content,
             player_character=player.character,
         )
@@ -1145,7 +1145,7 @@ class GameSessionManager:
                 self.orchestrator.set_session(None)
                 self.orchestrator.set_scene_registry(None)
 
-    def _build_context(
+    async def _build_context(
         self,
         session: GameSession,
         memory: MemoryManager,
@@ -1209,8 +1209,12 @@ class GameSessionManager:
             if roster:
                 scene_context += f"\n\n{roster}"
 
-        # Build full context from memory
-        memory_context = memory.build_context(current_input)
+        # Build full context from memory. RAG recall embeds the query with
+        # Chroma synchronously; run it off the event loop so long histories
+        # cannot stall the Discord heartbeat.
+        memory_context = await asyncio.to_thread(
+            memory.build_context, current_input
+        )
 
         # Get recent messages
         # Feed more history to narrator — models support 32K-200K context,
