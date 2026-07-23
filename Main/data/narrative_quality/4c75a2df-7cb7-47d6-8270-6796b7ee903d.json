@@ -1,0 +1,158 @@
+{
+  "turn_log": "data\\turn_logs\\4c75a2df-7cb7-47d6-8270-6796b7ee903d.jsonl",
+  "judge_model": "gemini-2.5-flash",
+  "verdict": "PASS",
+  "overall_average": 4.64,
+  "dimension_means": {
+    "continuity": 4.8,
+    "contradiction_free": 4.8,
+    "npc_voice": 4.4,
+    "prose_freshness": 4.2,
+    "player_agency": 5.0
+  },
+  "gates": [
+    {
+      "name": "judge_coverage_complete",
+      "passed": true,
+      "detail": "windows graded=5; failed=0"
+    },
+    {
+      "name": "overall_average",
+      "passed": true,
+      "detail": "avg=4.64 (gate >= 4.0)"
+    },
+    {
+      "name": "no_dimension_below_minimum",
+      "passed": true,
+      "detail": "means={'continuity': 4.8, 'contradiction_free': 4.8, 'npc_voice': 4.4, 'prose_freshness': 4.2, 'player_agency': 5.0} (gate >= 3.0)"
+    },
+    {
+      "name": "zero_severe_contradictions",
+      "passed": true,
+      "detail": "severe=[]"
+    },
+    {
+      "name": "prose_repetition_bounded",
+      "passed": true,
+      "detail": "worst 8-gram repeat ratio=0.003 (gate <= 0.35)"
+    }
+  ],
+  "worst_repeat_ratio": 0.003,
+  "opening_bigrams": {
+    "the woman's": 7,
+    "your fingers": 2,
+    "the spiral": 2,
+    "the words": 2,
+    "the courier's": 1,
+    "you fold": 1,
+    "you step": 1,
+    "you pick": 1
+  },
+  "windows": [
+    {
+      "turns": [
+        1,
+        6
+      ],
+      "scores": {
+        "continuity": 4,
+        "contradiction_free": 4,
+        "npc_voice": 4,
+        "prose_freshness": 4,
+        "player_agency": 5
+      },
+      "contradictions": [
+        {
+          "turn": 5,
+          "severity": "minor",
+          "detail": "The NPC states 'The Archive opens at dawn' immediately after the DM established in Turn 2 that 'The half-hour mark before dawn' was just tolled, and in Turn 3, 'The half-hour bell fades into silence.' This implies dawn is still some time away, making 'opens at dawn' slightly premature or confusing given the established timeline."
+        }
+      ],
+      "flags": [
+        "T1: The description of the courier's body being 'lighter than you expect' feels like an unnecessary detail that doesn't add much to the scene or player understanding.",
+        "T2: The phrase 'The sealed letter remains inside the satchel, where you first saw it' is a bit clunky and could be streamlined. The player didn't 'see' it first, they were told it was there.",
+        "T3: The description 'The words blur. You blink, press your thumb to your temple, try again. The letters swim, rearrange themselves, refuse to cohere into meaning' is a bit repetitive in conveying the same effect.",
+        "T4: The description of the reflection in the glass threads ('not of your face, but of a vast, dark chamber...') is a bit too on-the-nose and could be more subtly hinted at or left to player interpretation.",
+        "T5: The NPC's statement 'The Archive opens at dawn' contradicts the earlier established timeline of 'half-hour before dawn' and 'half-hour bell fades into silence.'",
+        "T6: The description of the keyhole/channel 'Too shallow. More like a channel, designed to catch something thin and metallic' is a bit verbose and could be more concise."
+      ],
+      "summary": "The player discovers a seemingly dead courier in Saint Orra's Wake, carrying a satchel with a letter written in their own hand, dated 30 years in the future, which they cannot read. The courier is alive, with a strange, hot, glass-threaded tattoo of the 'Glass Archive.' An NPC, a scarred woman, reveals the Archive is where Veyr stores memories, and its hidden door only opens for 'Couriers of the Unwritten,' like the one now carrying the satchel."
+    },
+    {
+      "turns": [
+        7,
+        12
+      ],
+      "scores": {
+        "continuity": 5,
+        "contradiction_free": 5,
+        "npc_voice": 4,
+        "prose_freshness": 4,
+        "player_agency": 5
+      },
+      "contradictions": [],
+      "flags": [
+        "T7: The description of the satchel's weight as 'not heavy, but substantial' is a bit vague and could be more evocative.",
+        "T8: The description of the market as 'early-morning buyers' feels slightly redundant after 'morning market is in full swing'.",
+        "T9: 'The gravity here pulls at strange angles; you feel it in your inner ear, a subtle tilt that makes your step land just slightly heavier than expected.' This is a great detail, but it's the first mention of unusual gravity in Veyr, which feels like a significant world-building element to introduce so late and without prior hint.",
+        "T10: The woman's voice is described as 'thin, reedy' but then she's also described as having 'feverish brightness' in her eyes. While not a contradiction, the voice description feels a little generic compared to the more vivid eye description.",
+        "T12: The DM's narration of the player's internal thought process ('The distinction feels right. You've seen memory-seals before, the geometric cages the Archivists weave to keep a thought contained. This spiral has the same bones.') is a slight overstep into player internal monologue, though it's brief and serves to confirm the player's statement."
+      ],
+      "summary": "The player learns about 'Couriers of the Unwritten' and their gathering place, *The Last Key*, from a scarred woman. They then abandon this lead to explore the Hanging Warrens, where they encounter a young woman drawing a glowing, cold, spiraling sigil on the street. The player identifies it as a lock, not a ward, and the woman accidentally activates it, causing something 'inside' to respond."
+    },
+    {
+      "turns": [
+        13,
+        18
+      ],
+      "scores": {
+        "continuity": 5,
+        "contradiction_free": 5,
+        "npc_voice": 4,
+        "prose_freshness": 4,
+        "player_agency": 5
+      },
+      "contradictions": [],
+      "flags": [
+        "T13: The DM introduces a crowd and two specific NPCs (vendor, old woman/child) but then only the vendor is active for several turns, making the other two feel like set dressing rather than potential interactors or witnesses. While they reappear at the end, their initial introduction feels a bit like a missed opportunity for more dynamic background.",
+        "T17: The vendor's line 'Noon bell's a candle-mark off' is a bit clunky. 'A candle-mark' isn't a widely understood unit of time, and while it implies a short duration, it could be phrased more clearly or evocatively for a D&D setting (e.g., 'an hour's walk,' 'a short while,' 'the sun's almost directly overhead')."
+      ],
+      "summary": "The player and the young woman are at the Hanging Warrens, where the woman has accidentally activated a glowing, cold sigil identified as a seal to an underground chamber. The woman suffers from memory loss but recalls the Wardens patrol this seal at noon. The player's satchel is identified as a 'key' to the seal, used by a figure in a mural to close it, not open it. A scarred vendor warns them about the approaching Wardens."
+    },
+    {
+      "turns": [
+        19,
+        24
+      ],
+      "scores": {
+        "continuity": 5,
+        "contradiction_free": 5,
+        "npc_voice": 5,
+        "prose_freshness": 4,
+        "player_agency": 5
+      },
+      "contradictions": [],
+      "flags": [
+        "T19: The description of the passage as having 'gravity here *tilts*, pulling your steps sideways at a strange angle' is a bit sudden and fantastical without prior setup, though it's consistent within the turn.",
+        "T22: The description of the light as 'phosphorescent glow blooms ahead, like moonlight through fog' is a strong image, but 'moonlight through fog' doesn't quite capture the 'pale blue mineral threaded through the stone' that follows. It's a minor stylistic disconnect."
+      ],
+      "summary": "The player and the woman descend into a hidden chamber beneath the Hanging Warrens. They discover a mural depicting the player's satchel as a 'key' to a seal, which is meant to keep something *out* of the city, not in. The spiral pattern of the seal is found etched into the chamber floor, with an indentation matching the satchel's base."
+    },
+    {
+      "turns": [
+        25,
+        30
+      ],
+      "scores": {
+        "continuity": 5,
+        "contradiction_free": 5,
+        "npc_voice": 5,
+        "prose_freshness": 5,
+        "player_agency": 5
+      },
+      "contradictions": [],
+      "flags": [],
+      "summary": "The player leaves the chamber and finds Lys Vane in the market. Lys reveals the city's true history: the 'seal' is a bond keeping a creature called the Root contained, which used to be fed memories. The Choir of Anchors replaced this with the Glass Archive and the Night of Unburdening, but the seal is failing, and the Root is waking and hungry."
+    }
+  ]
+}

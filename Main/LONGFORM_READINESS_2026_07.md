@@ -423,3 +423,19 @@ uncertainty. Retired facts move to `WorldState.superseded_facts` with
 seeing both sides of a contradiction. Live qwen3.5:9b calibration: wax
 state change retires, movement retires the stale location, birth-history
 correctly survives a new residence. 14 unit tests pin the seam.
+
+### Supersession validated live (run 20260723_151427, seed "Lys Vane")
+
+Best 30-turn result yet: 25/26 harness gates (sole fail: two sloppy
+narrator aliases — "Warrens", a district name, attached to a person).
+`fact_superseded` fired 15 times doing real work ("frost stopped
+spreading" retired "frost is spreading"; corrected Wardens patrol
+location retired the wrong one). Narrative grader: PASS 4.64 with ZERO
+severe contradictions — the previous run of this same scenario FAILED on
+the wax contradiction; contradiction_free mean rose 4.4 -> 4.8.
+Watch-item: one borderline retirement merged a street-sigil fact into a
+cellar-seal fact (shared spiral/seal anchors) — plausibly the story
+connecting them, but the class is worth an eye in future soaks.
+Remaining finding queue: prose freshness (consistently the floor,
+4.0-4.2), retire the generic tool-followup leg, extractor id-field
+sloppiness.
