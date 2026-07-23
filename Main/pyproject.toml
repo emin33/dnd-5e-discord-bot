@@ -16,7 +16,7 @@ dependencies = [
     "groq>=0.25.0",
     "openai>=1.0.0",
     "anthropic>=0.89.0",  # default 'production' profile narrator
-    "google-generativeai>=0.8.6",  # legacy SDK used by GeminiClient (google-genai stays in [eval])
+    "google-genai>=1.0.0",  # GeminiClient (migrated off end-of-support google-generativeai)
 
     # Data validation
     "pydantic>=2.9.0",

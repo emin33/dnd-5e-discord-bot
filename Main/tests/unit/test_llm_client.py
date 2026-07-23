@@ -252,90 +252,108 @@ class TestAnthropicStructuredOutput:
         assert "ONLY a valid JSON" in str(kwargs["system"])
 
 
+def _fake_genai_client(captured: dict, text: str = "{}", usage_metadata=None):
+    """Fake google.genai Client exposing aio.models.generate_content."""
+    if usage_metadata is None:
+        usage_metadata = SimpleNamespace(
+            prompt_token_count=1, candidates_token_count=1,
+        )
+
+    async def _generate_content(**call_kwargs):
+        captured.update(call_kwargs)
+        part = SimpleNamespace(text=text, function_call=None)
+        candidate = SimpleNamespace(
+            content=SimpleNamespace(parts=[part]),
+            finish_reason=SimpleNamespace(name="STOP"),
+        )
+        return SimpleNamespace(
+            candidates=[candidate], usage_metadata=usage_metadata,
+        )
+
+    return SimpleNamespace(
+        aio=SimpleNamespace(
+            models=SimpleNamespace(generate_content=_generate_content)
+        )
+    )
+
+
 class TestGeminiStructuredOutput:
     """R4: json_schema must be wired through as response_schema."""
 
-    async def test_json_schema_sets_response_schema(self, monkeypatch):
-        import google.generativeai as genai
-
+    async def test_json_schema_sets_response_schema(self):
         from dnd_bot.llm.client import GeminiClient
 
         client = GeminiClient(model="gemini-test", api_key="test-key")
-
         captured: dict = {}
-
-        class _FakeGenerativeModel:
-            def __init__(self, **model_kwargs):
-                captured["model_kwargs"] = model_kwargs
-
-            async def generate_content_async(self, **call_kwargs):
-                captured["call_kwargs"] = call_kwargs
-                part = SimpleNamespace(text='{"action_type": "roleplay"}', function_call=None)
-                candidate = SimpleNamespace(
-                    content=SimpleNamespace(parts=[part]),
-                    finish_reason=SimpleNamespace(name="STOP"),
-                )
-                return SimpleNamespace(
-                    candidates=[candidate],
-                    usage_metadata=SimpleNamespace(
-                        prompt_token_count=10, candidates_token_count=5,
-                    ),
-                )
-
-        monkeypatch.setattr(genai, "GenerativeModel", _FakeGenerativeModel)
+        client._client = _fake_genai_client(
+            captured, text='{"action_type": "roleplay"}'
+        )
 
         result = await client.chat(
             messages=[{"role": "user", "content": "hi"}],
             json_schema=_SCHEMA,
         )
 
-        gen_config = captured["call_kwargs"]["generation_config"]
-        assert gen_config.response_mime_type == "application/json"
-        # The caller schema is converted and passed through — reverting the
+        config = captured["config"]
+        assert config.response_mime_type == "application/json"
+        # The caller schema is normalized and passed through — reverting the
         # fix leaves response_schema unset and this fails.
-        schema = gen_config.response_schema
+        schema = config.response_schema
         assert schema is not None
-        assert schema.type == genai.protos.Type.OBJECT
-        assert "action_type" in schema.properties
-        assert list(schema.required) == ["action_type"]
+        assert schema["type"] == "object"
+        assert "action_type" in schema["properties"]
+        assert list(schema["required"]) == ["action_type"]
         assert json.loads(result.content) == {"action_type": "roleplay"}
 
-    async def test_json_mode_only_omits_response_schema(self, monkeypatch):
-        import google.generativeai as genai
-
+    async def test_json_mode_only_omits_response_schema(self):
         from dnd_bot.llm.client import GeminiClient
 
         client = GeminiClient(model="gemini-test", api_key="test-key")
         captured: dict = {}
-
-        class _FakeGenerativeModel:
-            def __init__(self, **model_kwargs):
-                pass
-
-            async def generate_content_async(self, **call_kwargs):
-                captured["call_kwargs"] = call_kwargs
-                part = SimpleNamespace(text="{}", function_call=None)
-                candidate = SimpleNamespace(
-                    content=SimpleNamespace(parts=[part]),
-                    finish_reason=SimpleNamespace(name="STOP"),
-                )
-                return SimpleNamespace(
-                    candidates=[candidate],
-                    usage_metadata=SimpleNamespace(
-                        prompt_token_count=1, candidates_token_count=1,
-                    ),
-                )
-
-        monkeypatch.setattr(genai, "GenerativeModel", _FakeGenerativeModel)
+        client._client = _fake_genai_client(captured)
 
         await client.chat(
             messages=[{"role": "user", "content": "hi"}],
             json_mode=True,
         )
 
-        gen_config = captured["call_kwargs"]["generation_config"]
-        assert gen_config.response_mime_type == "application/json"
-        assert gen_config.response_schema is None
+        config = captured["config"]
+        assert config.response_mime_type == "application/json"
+        assert config.response_schema is None
+
+    async def test_tools_use_json_schema_declarations(self):
+        """OpenAI-format tools must survive as parameters_json_schema."""
+        from dnd_bot.llm.client import GeminiClient
+
+        client = GeminiClient(model="gemini-test", api_key="test-key")
+        captured: dict = {}
+        client._client = _fake_genai_client(captured)
+
+        await client.chat(
+            messages=[{"role": "user", "content": "hi"}],
+            tools=[{
+                "type": "function",
+                "function": {
+                    "name": "ref_entity",
+                    "description": "Reference a roster entity",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"entity_id": {"type": "string"}},
+                        "required": ["entity_id"],
+                    },
+                },
+            }],
+            tool_choice="required",
+        )
+
+        config = captured["config"]
+        declaration = config.tools[0].function_declarations[0]
+        assert declaration.name == "ref_entity"
+        assert declaration.parameters_json_schema["required"] == ["entity_id"]
+        assert config.tool_config.function_calling_config.mode == "ANY"
+        # Declarations are dicts — automatic calling must be disabled so
+        # function_call parts come back to the orchestrator.
+        assert config.automatic_function_calling.disable is True
 
 
 class TestGeminiSchemaNormalization:
@@ -352,24 +370,20 @@ class TestGeminiSchemaNormalization:
     """
 
     @staticmethod
-    def _assert_no_empty_objects(proto_schema):
-        """Walk a protos.Schema: every OBJECT node must carry properties."""
-        import google.generativeai as genai
-
-        if proto_schema.type == genai.protos.Type.OBJECT:
-            assert len(proto_schema.properties) > 0, (
-                "OBJECT node with empty properties survived conversion"
+    def _assert_no_empty_objects(schema: dict):
+        """Walk a normalized schema: every object node must carry properties."""
+        if schema.get("type") == "object":
+            assert schema.get("properties"), (
+                "object node with empty properties survived normalization"
             )
-            for sub in proto_schema.properties.values():
+            for sub in schema["properties"].values():
                 TestGeminiSchemaNormalization._assert_no_empty_objects(sub)
-        elif proto_schema.type == genai.protos.Type.ARRAY:
+        elif schema.get("type") == "array":
             TestGeminiSchemaNormalization._assert_no_empty_objects(
-                proto_schema.items
+                schema["items"]
             )
 
     def test_extraction_schema_round_trips_without_empty_objects(self):
-        import google.generativeai as genai
-
         from dnd_bot.llm.client import GeminiClient
         from dnd_bot.llm.extractors.entity_extractor import get_extraction_schema
 
@@ -377,17 +391,16 @@ class TestGeminiSchemaNormalization:
         normalized = client._normalize_response_schema(get_extraction_schema())
         # $defs/anyOf all resolved — the schema is fully expressible.
         assert normalized is not None
-        proto = client._convert_schema(normalized)
-        self._assert_no_empty_objects(proto)
+        self._assert_no_empty_objects(normalized)
         # Nested-model refs were inlined, not destroyed: the entities
         # items carry ExtractedEntity's real properties.
-        entity_items = proto.properties["entities"].items
-        assert entity_items.type == genai.protos.Type.OBJECT
-        assert "name" in entity_items.properties
-        # Optional[str] became a nullable STRING, not an empty OBJECT.
-        monster = entity_items.properties["monster_index"]
-        assert monster.type == genai.protos.Type.STRING
-        assert monster.nullable is True
+        entity_items = normalized["properties"]["entities"]["items"]
+        assert entity_items["type"] == "object"
+        assert "name" in entity_items["properties"]
+        # Optional[str] became a nullable string, not an empty object.
+        monster = entity_items["properties"]["monster_index"]
+        assert monster["type"] == "string"
+        assert monster["nullable"] is True
 
     def test_summary_schema_round_trips(self):
         from dnd_bot.llm.client import GeminiClient
@@ -405,7 +418,7 @@ class TestGeminiSchemaNormalization:
         }
         normalized = client._normalize_response_schema(summary_schema)
         assert normalized is not None
-        self._assert_no_empty_objects(client._convert_schema(normalized))
+        self._assert_no_empty_objects(normalized)
 
     def test_triage_schema_falls_back(self):
         """TriageSchema carries free-form dicts (``currency_spent: dict``,
@@ -417,15 +430,11 @@ class TestGeminiSchemaNormalization:
         client = GeminiClient(model="gemini-test", api_key="test-key")
         assert client._normalize_response_schema(get_triage_schema()) is None
 
-    async def test_inexpressible_schema_falls_back_to_mime_type_only(
-        self, monkeypatch
-    ):
+    async def test_inexpressible_schema_falls_back_to_mime_type_only(self):
         """StateDelta carries ``flag_changes: dict[str, bool]`` — a
-        free-form object no protos.Schema can express. The chat path must
-        drop response_schema (old mime-type-only behavior), not send an
-        empty OBJECT node the API rejects."""
-        import google.generativeai as genai
-
+        free-form object the schema normalization cannot express. The chat
+        path must drop response_schema (mime-type-only behavior), not send
+        an empty object node the API rejects."""
         from dnd_bot.game.world_state import get_state_delta_schema
         from dnd_bot.llm.client import GeminiClient
 
@@ -433,35 +442,16 @@ class TestGeminiSchemaNormalization:
         assert client._normalize_response_schema(get_state_delta_schema()) is None
 
         captured: dict = {}
-
-        class _FakeGenerativeModel:
-            def __init__(self, **model_kwargs):
-                pass
-
-            async def generate_content_async(self, **call_kwargs):
-                captured["call_kwargs"] = call_kwargs
-                part = SimpleNamespace(text="{}", function_call=None)
-                candidate = SimpleNamespace(
-                    content=SimpleNamespace(parts=[part]),
-                    finish_reason=SimpleNamespace(name="STOP"),
-                )
-                return SimpleNamespace(
-                    candidates=[candidate],
-                    usage_metadata=SimpleNamespace(
-                        prompt_token_count=1, candidates_token_count=1,
-                    ),
-                )
-
-        monkeypatch.setattr(genai, "GenerativeModel", _FakeGenerativeModel)
+        client._client = _fake_genai_client(captured)
 
         await client.chat(
             messages=[{"role": "user", "content": "hi"}],
             json_schema=get_state_delta_schema(),
         )
 
-        gen_config = captured["call_kwargs"]["generation_config"]
-        assert gen_config.response_mime_type == "application/json"
-        assert gen_config.response_schema is None
+        config = captured["config"]
+        assert config.response_mime_type == "application/json"
+        assert config.response_schema is None
 
 
 class TestOllamaCompatStructuredOutput:
@@ -685,39 +675,17 @@ class TestProviderCacheTokens:
         resp = await client.chat(messages=[{"role": "user", "content": "hi"}])
         assert resp.cache_read_tokens == 0
 
-    @staticmethod
-    def _fake_gemini_model_cls(usage_metadata):
-        class _FakeGenerativeModel:
-            def __init__(self, **model_kwargs):
-                pass
-
-            async def generate_content_async(self, **call_kwargs):
-                part = SimpleNamespace(text="hi", function_call=None)
-                candidate = SimpleNamespace(
-                    content=SimpleNamespace(parts=[part]),
-                    finish_reason=SimpleNamespace(name="STOP"),
-                )
-                return SimpleNamespace(
-                    candidates=[candidate], usage_metadata=usage_metadata,
-                )
-
-        return _FakeGenerativeModel
-
-    async def test_gemini_cached_content_tokens_surfaced(self, monkeypatch):
-        import google.generativeai as genai
-
+    async def test_gemini_cached_content_tokens_surfaced(self):
         from dnd_bot.llm.client import GeminiClient
 
         client = GeminiClient(model="gemini-test", api_key="test-key")
-        monkeypatch.setattr(
-            genai,
-            "GenerativeModel",
-            self._fake_gemini_model_cls(
-                SimpleNamespace(
-                    prompt_token_count=100,
-                    candidates_token_count=5,
-                    cached_content_token_count=37,
-                )
+        client._client = _fake_genai_client(
+            {},
+            text="hi",
+            usage_metadata=SimpleNamespace(
+                prompt_token_count=100,
+                candidates_token_count=5,
+                cached_content_token_count=37,
             ),
         )
 
@@ -725,22 +693,18 @@ class TestProviderCacheTokens:
         assert resp.prompt_tokens == 100  # includes the cached slice
         assert resp.cache_read_tokens == 37
 
-    async def test_gemini_none_cached_count_defaults_to_zero(self, monkeypatch):
+    async def test_gemini_none_cached_count_defaults_to_zero(self):
         """The SDK reports None (not 0) when no cached content applies."""
-        import google.generativeai as genai
-
         from dnd_bot.llm.client import GeminiClient
 
         client = GeminiClient(model="gemini-test", api_key="test-key")
-        monkeypatch.setattr(
-            genai,
-            "GenerativeModel",
-            self._fake_gemini_model_cls(
-                SimpleNamespace(
-                    prompt_token_count=10,
-                    candidates_token_count=2,
-                    cached_content_token_count=None,
-                )
+        client._client = _fake_genai_client(
+            {},
+            text="hi",
+            usage_metadata=SimpleNamespace(
+                prompt_token_count=10,
+                candidates_token_count=2,
+                cached_content_token_count=None,
             ),
         )
 

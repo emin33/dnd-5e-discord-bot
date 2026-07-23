@@ -1386,10 +1386,10 @@ class GeminiClient:
         api_key: Optional[str] = None,
     ):
         try:
-            import google.generativeai as genai
+            from google import genai
         except ImportError:
             raise ImportError(
-                "google-generativeai package required. Install with: pip install google-generativeai"
+                "google-genai package required. Install with: pip install google-genai"
             )
 
         settings = get_settings()
@@ -1403,56 +1403,31 @@ class GeminiClient:
             key = env.get("GEMINI_API_KEY", "")
         if not key:
             raise ValueError("GEMINI_API_KEY must be set when using Gemini provider")
-        self._genai = genai
-        genai.configure(api_key=key)
+        self._client = genai.Client(api_key=key)
 
-    def _convert_tools(self, tools: list[dict]) -> Optional[list]:
-        """Convert OpenAI-format tools to Gemini function_declarations."""
+    @staticmethod
+    def _convert_tools(tools: list[dict]) -> Optional[list]:
+        """Convert OpenAI-format tools to Gemini function declarations.
+
+        google.genai accepts plain JSON Schema via ``parameters_json_schema``
+        — no proto conversion needed (that machinery died with the
+        end-of-support ``google.generativeai`` SDK).
+        """
         if not tools:
             return None
-        protos = self._genai.protos
+        from google.genai import types
+
         declarations = []
         for t in tools:
             func = t.get("function", {})
-            params = func.get("parameters")
             declarations.append(
-                protos.FunctionDeclaration(
+                types.FunctionDeclaration(
                     name=func.get("name", ""),
                     description=func.get("description", ""),
-                    parameters=self._convert_schema(params) if params else None,
+                    parameters_json_schema=func.get("parameters") or None,
                 )
             )
-        return [protos.Tool(function_declarations=declarations)]
-
-    def _convert_schema(self, schema: dict):
-        """Convert JSON Schema dict to Gemini Schema proto (recursive)."""
-        protos = self._genai.protos
-        type_map = {
-            "object": protos.Type.OBJECT,
-            "string": protos.Type.STRING,
-            "number": protos.Type.NUMBER,
-            "integer": protos.Type.INTEGER,
-            "boolean": protos.Type.BOOLEAN,
-            "array": protos.Type.ARRAY,
-        }
-        schema_type = type_map.get(schema.get("type", ""), protos.Type.OBJECT)
-        kwargs: dict[str, Any] = {"type": schema_type}
-        if "description" in schema:
-            kwargs["description"] = schema["description"]
-        if "enum" in schema:
-            kwargs["enum"] = schema["enum"]
-        if schema.get("nullable"):
-            kwargs["nullable"] = True
-        if "properties" in schema:
-            kwargs["properties"] = {
-                k: self._convert_schema(v)
-                for k, v in schema["properties"].items()
-            }
-        if "required" in schema:
-            kwargs["required"] = schema["required"]
-        if "items" in schema:
-            kwargs["items"] = self._convert_schema(schema["items"])
-        return protos.Schema(**kwargs)
+        return [types.Tool(function_declarations=declarations)]
 
     @staticmethod
     def _normalize_response_schema(schema: dict[str, Any]) -> Optional[dict[str, Any]]:
@@ -1581,36 +1556,40 @@ class GeminiClient:
             else:
                 merged.append({"role": msg["role"], "parts": list(msg["parts"])})
 
-        # Build model kwargs — system_instruction and tools are set per-model
-        model_kwargs: dict[str, Any] = {"model_name": self.model}
-        if system_parts:
-            model_kwargs["system_instruction"] = "\n\n".join(system_parts)
+        from google.genai import types as genai_types
 
-        gemini_tools = self._convert_tools(tools)
-        if gemini_tools:
-            model_kwargs["tools"] = gemini_tools
-
-        model = self._genai.GenerativeModel(**model_kwargs)
-
-        # Generation config
-        gen_kwargs: dict[str, Any] = {
+        # Build one GenerateContentConfig — system_instruction, tools, and
+        # generation settings all live here in google.genai.
+        config_kwargs: dict[str, Any] = {
             "temperature": temperature,
             "max_output_tokens": max_tokens or 2000,
         }
+        if system_parts:
+            config_kwargs["system_instruction"] = "\n\n".join(system_parts)
+
+        gemini_tools = self._convert_tools(tools)
+        if gemini_tools:
+            config_kwargs["tools"] = gemini_tools
+            # Declarations are dicts, not callables — the SDK's automatic
+            # function calling cannot execute them; disable it explicitly so
+            # function_call parts come back to us.
+            config_kwargs["automatic_function_calling"] = (
+                genai_types.AutomaticFunctionCallingConfig(disable=True)
+            )
 
         # Enforce JSON output when json_schema or json_mode is requested.
         # response_schema constrains decoding to the caller's schema (real
         # enforcement, R4); the mime type alone only asks for JSON-shaped
         # text. Normalize first ($ref inlining, Optional -> nullable) —
-        # schemas that survive are converted to a protos.Schema; ones that
-        # don't fall back to mime-type-only rather than sending a schema
-        # the API would reject.
+        # schemas that survive pass through as plain JSON schema dicts;
+        # ones that don't fall back to mime-type-only rather than sending a
+        # schema the API would reject.
         if json_schema or json_mode:
-            gen_kwargs["response_mime_type"] = "application/json"
+            config_kwargs["response_mime_type"] = "application/json"
             if json_schema:
                 normalized = self._normalize_response_schema(json_schema)
                 if normalized is not None:
-                    gen_kwargs["response_schema"] = self._convert_schema(normalized)
+                    config_kwargs["response_schema"] = normalized
                 else:
                     logger.debug(
                         "gemini_response_schema_unsupported",
@@ -1618,27 +1597,27 @@ class GeminiClient:
                         detail="falling back to response_mime_type only",
                     )
 
-        gen_config = self._genai.GenerationConfig(**gen_kwargs)
-
-        call_kwargs: dict[str, Any] = {
-            "contents": merged,
-            "generation_config": gen_config,
-        }
-
         # Tool choice → Gemini function_calling_config
         if tools and tool_choice:
             mode_map = {"auto": "AUTO", "required": "ANY", "none": "NONE"}
-            mode = mode_map.get(tool_choice, "AUTO")
-            call_kwargs["tool_config"] = {
-                "function_calling_config": {"mode": mode}
-            }
+            config_kwargs["tool_config"] = genai_types.ToolConfig(
+                function_calling_config=genai_types.FunctionCallingConfig(
+                    mode=mode_map.get(tool_choice, "AUTO")
+                )
+            )
+
+        config = genai_types.GenerateContentConfig(**config_kwargs)
 
         try:
             import time as _time
             _t0 = _time.monotonic()
 
             response = await asyncio.wait_for(
-                model.generate_content_async(**call_kwargs),
+                self._client.aio.models.generate_content(
+                    model=self.model,
+                    contents=merged,
+                    config=config,
+                ),
                 timeout=self.timeout,
             )
 
@@ -1689,8 +1668,9 @@ class GeminiClient:
                 tool_calls=tool_calls,
                 model=self.model,
                 finish_reason=finish,
-                prompt_tokens=getattr(usage, "prompt_token_count", 0) if usage else 0,
-                completion_tokens=getattr(usage, "candidates_token_count", 0) if usage else 0,
+                # google.genai reports None (not 0) for absent counts.
+                prompt_tokens=(getattr(usage, "prompt_token_count", 0) or 0) if usage else 0,
+                completion_tokens=(getattr(usage, "candidates_token_count", 0) or 0) if usage else 0,
                 # Gemini's prompt_token_count INCLUDES cached tokens; the
                 # cached slice is reported separately here.
                 cache_read_tokens=(getattr(usage, "cached_content_token_count", 0) or 0) if usage else 0,
