@@ -1,0 +1,94 @@
+{
+  "turn_log": "data\\turn_logs\\a04069e1-7f6c-46f2-a174-941a095eef9e.jsonl",
+  "judge_model": "gemini-2.5-flash",
+  "verdict": "FAIL",
+  "overall_average": 4.7,
+  "dimension_means": {
+    "continuity": 5.0,
+    "contradiction_free": 4.5,
+    "npc_voice": 5.0,
+    "prose_freshness": 4.5,
+    "player_agency": 4.5
+  },
+  "gates": [
+    {
+      "name": "judge_coverage_complete",
+      "passed": true,
+      "detail": "windows graded=2; failed=0"
+    },
+    {
+      "name": "overall_average",
+      "passed": true,
+      "detail": "avg=4.7 (gate >= 4.0)"
+    },
+    {
+      "name": "no_dimension_below_minimum",
+      "passed": true,
+      "detail": "means={'continuity': 5.0, 'contradiction_free': 4.5, 'npc_voice': 5.0, 'prose_freshness': 4.5, 'player_agency': 4.5} (gate >= 3.0)"
+    },
+    {
+      "name": "zero_severe_contradictions",
+      "passed": false,
+      "detail": "severe=[{'turn': 2, 'severity': 'severe', 'detail': \"The DM's opening line 'You're right. I apologize for the contradiction. Let me correct this.' indicates a prior contradiction or error that was not part of the provided 'Story so far' or Turn 1. This implies a break in the expected flow or a correction of an unstated issue, which impacts the 'contradiction_free' score for the overall window, even if the corrected turn itself is now contradiction-free.\"}]"
+    },
+    {
+      "name": "prose_repetition_bounded",
+      "passed": true,
+      "detail": "worst 8-gram repeat ratio=0.007 (gate <= 0.35)"
+    }
+  ],
+  "worst_repeat_ratio": 0.007,
+  "opening_bigrams": {
+    "the copper": 1,
+    "you're right": 1,
+    "mara venn": 1,
+    "mara venn's": 1,
+    "two gold": 1,
+    "the brass": 1,
+    "your fingers": 1,
+    "the word": 1
+  },
+  "windows": [
+    {
+      "turns": [
+        1,
+        6
+      ],
+      "scores": {
+        "continuity": 5,
+        "contradiction_free": 4,
+        "npc_voice": 5,
+        "prose_freshness": 4,
+        "player_agency": 4
+      },
+      "contradictions": [
+        {
+          "turn": 2,
+          "severity": "severe",
+          "detail": "The DM's opening line 'You're right. I apologize for the contradiction. Let me correct this.' indicates a prior contradiction or error that was not part of the provided 'Story so far' or Turn 1. This implies a break in the expected flow or a correction of an unstated issue, which impacts the 'contradiction_free' score for the overall window, even if the corrected turn itself is now contradiction-free."
+        }
+      ],
+      "flags": [
+        "T2: The DM's opening apology indicates a prior unstated contradiction, which affects the overall contradiction_free score for the window.",
+        "T5: The DM invents the 'reliquary' as an object on the table without it being previously introduced or mentioned. This is a minor continuity slip."
+      ],
+      "summary": "Kael meets Mara Venn at the Copper Finch, learning about the Ash Gate's unusual mist and a 'metal scraping' sound from beyond. Mara reveals a crescent scar from a dead informant and swears to be Kael's ally in exposing a gate conspiracy. Kael and Mara exchange the brass compass and gold, solidifying their partnership, and Mara reveals an obsidian key found with the informant, believing it opens something beyond the Gate."
+    },
+    {
+      "turns": [
+        7,
+        12
+      ],
+      "scores": {
+        "continuity": 5,
+        "contradiction_free": 5,
+        "npc_voice": 5,
+        "prose_freshness": 5,
+        "player_agency": 5
+      },
+      "contradictions": [],
+      "flags": [],
+      "summary": "Kael and Mara part ways after Kael implodes the reliquary and warns Mara of the approaching City Watch. Kael recalls Old Bram's warning about the Ash Gate and then travels there, where he meets Sable Quill, a courier waiting for him with a letter from the Gatekeeper."
+    }
+  ]
+}

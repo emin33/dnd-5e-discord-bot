@@ -170,6 +170,7 @@ class NarrationStrategy:
             "tool_ref_alias_mismatches_removed": 0,
             "tool_repair_failed_closed": False,
             "tool_ref_deterministic_recoveries": [],
+            "tool_followup_refs_superseded": 0,
             "tool_duplicate_creations_collapsed": 0,
             "tool_followup_effects": 0,
             "effect_obligations": [],
@@ -1133,6 +1134,90 @@ class NarrationStrategy:
             ))
         return recovered
 
+    def _supersede_followup_refs(
+        self,
+        effects: list[ProposedEffect],
+        prose: str,
+        roster_refs: list[tuple[str, str, tuple[str, ...]]],
+        action: str,
+        already_grounded: list[ProposedEffect],
+    ) -> list[ProposedEffect]:
+        """Deterministically ground the generic followup's ``ref_entity`` calls.
+
+        The blind "call a tool for everything you narrated" pass is the run's
+        dominant source of structural tool noise: ``ref_entity`` calls with an
+        entity_id absent from the roster, or an ``alias_used`` not copied
+        verbatim from the prose (LONGFORM_READINESS 2026-07-23, ~3/4 of the
+        structural failures). Grounding a reference, though, does not need the
+        model to get the id/alias right — every reference that would survive
+        validation is reconstructable from the prose against the authoritative
+        roster.
+
+        So when a model ref fails to ground, its intent is honoured the same way
+        an empty ``ref_entity({})`` already is — recover all roster entities the
+        prose names — instead of charging the malformed call to the structural
+        budget. Fully-valid ref turns are trusted byte-for-byte (no augmentation
+        that would, for example, invent a reference to the current location),
+        and mutation calls — the followup's irreducible job, carrying values
+        absent from the roster — pass through untouched.
+        """
+        if not roster_refs:
+            # No authoritative roster to recover from; leave the model's refs to
+            # the ordinary unknown-ref/alias validators, which still fail closed.
+            return effects
+        model_refs = [e for e in effects if e.effect_type == EffectType.REF_ENTITY]
+        if not model_refs:
+            # A mutation-only followup owes no reference recovery.
+            return effects
+        non_refs = [e for e in effects if e.effect_type != EffectType.REF_ENTITY]
+        # Validate the model's refs the way the primary path does, but WITHOUT
+        # charging the drop counters: a ref the model got wrong is superseded,
+        # not failed.
+        cleaned, _ = self._drop_unknown_roster_refs(model_refs, roster_refs)
+        cleaned, _, _ = self._reconcile_roster_ref_aliases(cleaned, prose, roster_refs)
+        valid_model_refs = self._valid_effects_for_prose(cleaned, prose, action)
+        superseded = len(model_refs) - len(valid_model_refs)
+        self.last_diagnostics["tool_followup_refs_superseded"] += superseded
+        if not superseded:
+            # Every ref already grounds; trust the model's set unchanged.
+            return effects
+        # At least one reference could not be grounded. Recover the references
+        # deterministically from the prose (the recover-all-named path an empty
+        # ref already takes) and keep the model's valid refs alongside.
+        prior_refs = [
+            e for e in already_grounded if e.effect_type == EffectType.REF_ENTITY
+        ]
+        recovered = self._recover_roster_references(
+            prose, roster_refs, non_refs + valid_model_refs + prior_refs
+        )
+        # _recover_roster_references dedups kept refs by EXACT id string, but a
+        # valid model ref may carry a normalize-equal variant of the roster id
+        # (display name "Bram" vs slug "bram-id"). Filter recovered refs whose
+        # roster row is already covered by a kept ref, otherwise one narrative
+        # mention executes two ref_entity effects and double-counts the
+        # mention/importance signal that feeds name promotion.
+        covered_rows = {
+            entity_id
+            for kept in (*valid_model_refs, *prior_refs)
+            for entity_id, name, aliases in roster_refs
+            if self._normalized_phrase(kept.ref_entity_id or "")
+            in {
+                self._normalized_phrase(label)
+                for label in (entity_id, name, *aliases)
+                if label
+            }
+        }
+        recovered = [
+            effect
+            for effect in recovered
+            if effect.ref_entity_id not in covered_rows
+        ]
+        if recovered:
+            self.last_diagnostics["tool_ref_deterministic_recoveries"] = [
+                effect.ref_entity_id for effect in recovered
+            ]
+        return non_refs + valid_model_refs + recovered
+
     async def _tool_followup(
         self,
         prose: str,
@@ -1254,6 +1339,17 @@ class NarrationStrategy:
                 effects = self._normalize_grounded_ref_aliases(
                     tool_calls_to_effects(allowed_tool_calls),
                     prose,
+                )
+                # Replace the model's advisory ref_entity guesses with
+                # deterministic roster grounding before any drop-counting: the
+                # generic leg is the run's dominant structural-noise source and
+                # its refs are fully reconstructable from prose + roster.
+                effects = self._supersede_followup_refs(
+                    effects,
+                    prose,
+                    list(roster_refs or []),
+                    action,
+                    preserved_initial,
                 )
                 effects, unknown_ref_drops = self._drop_unknown_roster_refs(
                     effects,

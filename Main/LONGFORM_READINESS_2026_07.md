@@ -466,3 +466,77 @@ hole in minutes: the per-turn memory->world fact sync resurrected
 supersession-retired facts every turn (fixed bidirectionally, 2b26065).
 Remaining unproven path: restart/resume convergence — crash mid-run,
 reload, assert the stores re-agree. That is the next audit to build.
+
+## 2026-07-23 (later): generic tool-followup leg narrowed — ref grounding made deterministic
+
+The last persistent gate miss, `tool_structural_failure_budget` (5.5-8.3%
+vs 5%), is closed by making the generic followup's reference grounding
+deterministic instead of trusting the model's `ref_entity` guesses.
+
+**Corrected root cause.** The earlier framing ("the followup leg is the
+tool recovery for streamed turns") is incomplete: streaming is OFF in the
+longform harness (`Harness.send_action` -> `process_message` passes no
+`on_narrative_token`), yet the deepseek narrator emits ZERO tools in its
+primary prose call on essentially every turn (`primary_effects=0`), so the
+generic leg fires on ~every turn (29/30, 72/80 in recent runs) and does
+~all the tool work. `ref_entity` is ~3/4 of executed effects (66/94,
+260/336) and ~3/4 of the structural errors (10x "requires entity_id", 5x
+"alias not verbatim", vs 3x update_entity + 2x add_npc). The leg is
+load-bearing, not a rare recovery — full retirement would collapse
+`tool_effect_turn_coverage` (turns-with-nonref sit at only 65-67% vs the
+60% gate even WITH the leg).
+
+**Fix** (`NarrationStrategy._supersede_followup_refs`, wired into
+`_tool_followup` before any drop-counting). Grounding a reference never
+needed the model to get the id/alias right: every ref that survives
+validation is reconstructable from prose + authoritative roster. So model
+ref guesses became advisory. Fully-valid ref turns are returned
+byte-for-byte (no augmentation — e.g. no invented current-location ref);
+when any ref fails to ground, its intent is honoured the way an empty
+`ref_entity({})` already was — deterministic recover-all-named via
+`_recover_roster_references` — instead of charging the malformed call to
+the structural budget. Mutation calls (update_*, change_location,
+remove_entity, spawn_object, add_npc) pass through untouched with their
+existing validation/repair, so the residual mutation-sloppiness class is
+still measured. New diagnostic: `tool_followup_refs_superseded`. Streamed
+turns still produce `ref_entity` — now deterministic and clean.
+
+An adversarial multi-agent review of the change confirmed one real bug
+before landing (fixed + pinned): a kept model ref carrying a display-name
+id ("Bram" vs slug "bram-id") did not suppress deterministic recovery of
+the same entity (exact-string dedup), so one mention could execute two
+ref_entity effects and double-count the mention/importance signal feeding
+name promotion. A metric-gaming claim (ungroundable invented-id refs no
+longer charge the budget) was adversarially REFUTED — state output is
+identical and the class stays visible in `tool_followup_refs_superseded` —
+with one legitimate watch-item: that diagnostic feeds no gate, so a
+regression flooding hallucinated refs would be visible but ungated;
+consider a superseded-ratio budget if it ever trends up.
+
+**Validation.** 1163 unit tests green (56 in test_narration_strategy: 2 new
+pins, 2 updated to supersede semantics), mypy clean. Live:
+`test_tool_reliability.py` (deepseek_v4_flash_qwen9b) — PASS 11/11,
+44/44 effects executed (100%), followup fired 8/12 turns, structural
+errors ZERO, repair turns ZERO, budget inputs dropped=1/45 = **2.2%**
+(vs 5.5-8.3% pre-fix; the one drop is a primary-path ref to a same-turn
+add_npc, out of the followup's scope), `tool_followup_refs_superseded`=1
+doing real work, coverage 12/12. Narrative grade of the same run: overall
+4.7, continuity 5.0, repeat ratio 0.007; its one severe-contradiction flag
+is a T2 prose meta-leak from the resolved-outcome REPAIR leg ("I apologize
+for the contradiction") — pre-existing repair-prose class, unrelated to
+tool effects; worth its own small fix (strip meta-openers from repair
+prose).
+
+**Separate blocker found (pre-existing, now the top item):** four
+consecutive longform callback runs aborted at the seed pick
+("No trustworthy graph-backed emergent callback seed") — 2x
+targeted_relevance_callback, 1x deep_seeded_callback, 1x
+emergent_callback. In every aborted run the narrator told an
+object-focused, NPC-less story (extractor `new_npcs=0` every turn,
+`kg_npc_nodes=0`; seed candidates like "metallic residue" fail canonical
+eligibility) while `targeted_relevance_callback`/`deep_seeded_callback`
+hard-require `required_seed_type="npc"`. The supersession change is
+exonerated: it was a verified NO-OP in those runs (superseded=0). This
+narrator NPC-drought (model/premise drift vs the soak-era behavior) is
+what currently blocks the npc-seeded scenarios, independent of tool
+reliability.

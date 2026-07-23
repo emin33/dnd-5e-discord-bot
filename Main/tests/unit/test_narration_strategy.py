@@ -368,7 +368,7 @@ async def test_general_followup_drops_unadvertised_npc_creation_call():
 
 
 @pytest.mark.asyncio
-async def test_followup_drops_reference_id_absent_from_authoritative_roster():
+async def test_followup_reference_absent_from_authoritative_roster_is_superseded():
     client = ScriptedBrain([
         narration_response("The gaunt man watches from the alley."),
         narration_response("", tool_calls=[{
@@ -389,8 +389,14 @@ async def test_followup_drops_reference_id_absent_from_authoritative_roster():
         None,
     )
 
+    # A roster IS present (Mara), so the generic-leg ref is grounded
+    # deterministically: the invented "gaunt_man" id is not in the roster and
+    # no roster name appears in the prose, so it is superseded (advisory, not a
+    # counted structural drop) and produces no effect.
     assert effects == []
-    assert h.strategy.last_diagnostics["tool_unknown_roster_refs_dropped"] == 1
+    assert h.strategy.last_diagnostics["tool_followup_refs_superseded"] == 1
+    assert h.strategy.last_diagnostics["tool_unknown_roster_refs_dropped"] == 0
+    assert h.strategy.last_diagnostics["tool_invalid_effects_dropped"] == 0
 
 
 @pytest.mark.asyncio
@@ -824,9 +830,117 @@ npcs_here:
     assert len(client.calls) == 2
     assert effects[0].ref_entity_id == "barkeep"
     assert h.strategy.last_diagnostics["tool_repair_attempted"] is False
+    # The model's empty-id ref is superseded by deterministic roster recovery
+    # before validation, so no structural failure is recorded or counted.
     assert h.strategy.last_diagnostics[
         "tool_followup_structural_error_details"
-    ] == ["ref_entity: ref_entity requires entity_id from the roster"]
+    ] == []
+    assert h.strategy.last_diagnostics[
+        "tool_ref_deterministic_recoveries"
+    ] == ["barkeep"]
+    assert h.strategy.last_diagnostics["tool_followup_refs_superseded"] == 1
+    assert h.strategy.last_diagnostics["tool_invalid_effects_dropped"] == 0
+
+
+@pytest.mark.asyncio
+async def test_followup_supersedes_sloppy_ref_but_keeps_mutation():
+    """The generic leg's core new contract: model ref guesses are advisory.
+
+    A sloppy ref (invented id) is superseded by deterministic recovery of the
+    prose-named roster entity — not charged to the structural-failure budget —
+    while the model's mutation call (its irreducible job) passes through.
+    """
+    client = ScriptedBrain([
+        narration_response("Bram lowers the ledger; his warning is plain."),
+        narration_response("", tool_calls=[
+            {"name": "ref_entity", "arguments": {"entity_id": "bram-the-clerk"}},
+            {
+                "name": "update_entity",
+                "arguments": {
+                    "entity_id": "bram-id",
+                    "description_addition": "issued a plain warning",
+                },
+            },
+        ]),
+    ])
+    h = _Harness(client)
+    h.tools.append({"type": "function", "function": {"name": "update_entity"}})
+
+    _, effects = await h.strategy.run(
+        _spec(action="I ask Bram what he knows."),
+        _context(
+            player_action="I ask Bram what he knows.",
+            world_state_yaml="""
+npcs_here:
+- id: bram-id
+  name: Bram
+  type: npc
+""",
+        ),
+        None,
+    )
+
+    assert {e.effect_type for e in effects} == {
+        EffectType.REF_ENTITY,
+        EffectType.UPDATE_ENTITY,
+    }
+    ref = next(e for e in effects if e.effect_type == EffectType.REF_ENTITY)
+    # Grounded from the prose against the authoritative roster, NOT the
+    # invented "bram-the-clerk" id the model proposed.
+    assert ref.ref_entity_id == "bram-id"
+    diagnostics = h.strategy.last_diagnostics
+    assert diagnostics["tool_followup_refs_superseded"] == 1
+    assert diagnostics["tool_ref_deterministic_recoveries"] == ["bram-id"]
+    assert diagnostics["tool_followup_structural_errors"] == 0
+    assert diagnostics["tool_invalid_effects_dropped"] == 0
+    assert diagnostics["tool_repair_attempted"] is False
+
+
+@pytest.mark.asyncio
+async def test_superseded_ref_recovery_does_not_duplicate_display_name_id_ref():
+    """A kept ref with a display-name id must suppress recovery of the slug.
+
+    Reviewer-confirmed case: the model refs Bram by display name (valid — it
+    normalize-matches the roster row) while a second ref is superseded. The
+    deterministic recovery dedups by exact id string, so without the covered-row
+    filter it would append a second ref under the canonical slug and one
+    narrative mention would double-count the entity's mention/importance signal.
+    """
+    client = ScriptedBrain([
+        narration_response("Bram lowers the ledger."),
+        narration_response("", tool_calls=[
+            {"name": "ref_entity", "arguments": {"entity_id": "Bram"}},
+            {
+                "name": "ref_entity",
+                "arguments": {"entity_id": "mara-id", "alias_used": "Elena"},
+            },
+        ]),
+    ])
+    h = _Harness(client)
+
+    _, effects = await h.strategy.run(
+        _spec(action="I watch Bram."),
+        _context(
+            player_action="I watch Bram.",
+            world_state_yaml="""
+npcs_here:
+- id: bram-id
+  name: Bram
+  type: npc
+- id: mara-id
+  name: Mara
+  type: npc
+""",
+        ),
+        None,
+    )
+
+    refs = [e for e in effects if e.effect_type == EffectType.REF_ENTITY]
+    # Exactly ONE reference to Bram — the model's valid display-name ref is
+    # kept and the recovery pass must not add a second slug-keyed duplicate.
+    assert len(refs) == 1
+    assert refs[0].ref_entity_id == "Bram"
+    assert h.strategy.last_diagnostics["tool_followup_refs_superseded"] == 1
 
 
 @pytest.mark.asyncio
