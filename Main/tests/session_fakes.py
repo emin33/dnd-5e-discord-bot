@@ -150,7 +150,9 @@ class FakeMemoryManager:
     """The slice of MemoryManager that process_message touches."""
 
     def __init__(self):
-        self.buffer = SimpleNamespace(pinned_facts=[])
+        self.buffer = SimpleNamespace(
+            pinned_facts=[], retire_facts=lambda facts: []
+        )
         self.core = SimpleNamespace(get_block=lambda name: None)
 
     def set_combat_state(self, in_combat: bool) -> None:

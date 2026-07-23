@@ -1103,9 +1103,22 @@ class GameSessionManager:
                     if scene_summary:
                         memory.update_scene(scene_summary)
 
-                # Sync pinned facts from memory into world state
+                # Sync pinned facts from memory into world state — and
+                # retirement back the other way: a fact the supersession
+                # seam archived must leave the memory tier too, or the two
+                # stores diverge (and this loop would resurrect it).
                 fact_store = session.world_store
-                if fact_store is not None and memory.buffer.pinned_facts:
+                if fact_store is not None:
+                    superseded = {
+                        str(entry.get("fact") or "")
+                        for entry in session.world_state.superseded_facts
+                    } if session.world_state else set()
+                    retired = memory.buffer.retire_facts(superseded)
+                    for fact in retired:
+                        logger.info(
+                            "pinned_fact_retired_by_supersession",
+                            fact=fact[:120],
+                        )
                     for fact in memory.buffer.pinned_facts:
                         fact_store.add_established_fact(fact)
 

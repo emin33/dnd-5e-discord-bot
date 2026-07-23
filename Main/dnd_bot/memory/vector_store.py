@@ -373,6 +373,31 @@ class VectorStore:
     # Knowledge graph entity descriptions (for semantic entity matching)
     # ------------------------------------------------------------------
 
+    def indexed_entity_ids(
+        self, campaign_id: str, node_ids: list[str]
+    ) -> set[str]:
+        """Which of *node_ids* have an entity embedding in this campaign.
+
+        Used by the cross-store consistency audit; one batched get.
+        """
+        if not node_ids:
+            return set()
+        collection = self._get_collection(campaign_id)
+        if not collection:
+            return set()
+        try:
+            result = collection.get(
+                ids=[f"entity_{node_id}" for node_id in node_ids]
+            )
+        except Exception as e:
+            logger.warning("indexed_entity_lookup_failed", error=str(e))
+            return set()
+        found = set()
+        for memory_id in (result or {}).get("ids") or []:
+            if str(memory_id).startswith("entity_"):
+                found.add(str(memory_id)[len("entity_"):])
+        return found
+
     def add_entity_description(
         self,
         campaign_id: str,

@@ -2396,6 +2396,12 @@ async def run_long_horizon(
     finally:
         # FIX-3: always clean up, finalize artifacts, and run assertions over
         # whatever turns landed — even on a partial/crashed run.
+        # Cross-store audit must run against the LIVE stores, before teardown.
+        consistency_report = None
+        try:
+            consistency_report = await session.run_consistency_audit()
+        except Exception as e:
+            artifact_errors.append(f"consistency_audit: {type(e).__name__}: {e}")
         try:
             await session.cleanup()
         except Exception as e:
@@ -2437,6 +2443,20 @@ async def run_long_horizon(
         if seed is not None and session_id:
             try:
                 results = run_assertions(scenario, session_id, seed)
+                if consistency_report is not None:
+                    results.append(AssertionResult(
+                        name="cross_store_consistency",
+                        passed=bool(consistency_report.get("passed")),
+                        description=(
+                            "WorldState, knowledge graph, ChromaDB, scene "
+                            "registry, and memory tiers agree at end of run."
+                        ),
+                        detail=(
+                            f"violations={consistency_report.get('violations') or []}"[:300]
+                            + f"; coverage={consistency_report.get('coverage')}"
+                            + f"; counts={consistency_report.get('counts')}"
+                        ),
+                    ))
                 render_results(scenario, seed, results, verdict_trusted)
             except Exception as e:
                 print(f"  {C.YELLOW}assertion_error: {e}{C.RESET}")
@@ -2477,6 +2497,7 @@ async def run_long_horizon(
             "assertions": [r.__dict__ for r in results],
             "assertions_passed": passed,
             "assertions_total": total,
+            "consistency_audit": consistency_report,
             "report": report,
         })
         if not final_manifest_ok:

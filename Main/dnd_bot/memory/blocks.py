@@ -240,6 +240,23 @@ class MessageBuffer:
         """Typed facts extracted during compaction that must survive indefinitely."""
         return self._pinned_facts
 
+    def retire_facts(self, facts: set[str]) -> list[str]:
+        """Drop pinned facts the world ledger has superseded.
+
+        Without this, the per-turn memory->world fact sync resurrects a
+        retired fact every turn (exact-dedup only checks the LIVE ledger),
+        and compaction keeps feeding the stale fact to its contradiction
+        check. Returns the facts removed.
+        """
+        if not facts:
+            return []
+        removed = [fact for fact in self._pinned_facts if fact in facts]
+        if removed:
+            self._pinned_facts = [
+                fact for fact in self._pinned_facts if fact not in facts
+            ]
+        return removed
+
     # ------------------------------------------------------------------
     # Persistence
     # ------------------------------------------------------------------

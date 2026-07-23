@@ -193,7 +193,9 @@ class _FakeMemory:
     """Just enough MemoryManager surface for process_message."""
 
     def __init__(self) -> None:
-        self.buffer = SimpleNamespace(pinned_facts=[])
+        self.buffer = SimpleNamespace(
+            pinned_facts=[], retire_facts=lambda facts: []
+        )
 
     def set_combat_state(self, in_combat: bool) -> None:
         pass

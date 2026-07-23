@@ -650,6 +650,35 @@ class TestSession:
         except Exception:
             pass
 
+    async def run_consistency_audit(self) -> Optional[dict]:
+        """Cross-store agreement audit over the LIVE stores (pre-cleanup).
+
+        Returns the report dict, or None when the session is unreachable.
+        Call before :meth:`cleanup` — teardown destroys the stores.
+        """
+        if self.manager is None:
+            return None
+        game_session = self.manager.get_session(self.channel_id)
+        if game_session is None or game_session.world_state is None:
+            return None
+        from dnd_bot.game.consistency_audit import run_consistency_audit
+        from dnd_bot.game.scene import get_scene_registry
+        from dnd_bot.memory import get_memory_manager, get_vector_store
+
+        memory = await get_memory_manager(self.campaign_id)
+        scene_registry = get_scene_registry(
+            self.campaign_id, game_session.session_key
+        )
+        report = run_consistency_audit(
+            world_state=game_session.world_state,
+            knowledge_graph=getattr(game_session, "knowledge_graph", None),
+            scene_registry=scene_registry,
+            memory=memory,
+            vector_store=get_vector_store(),
+            campaign_id=self.campaign_id,
+        )
+        return report.to_dict()
+
     async def cleanup(self):
         """End session, print summary, and delete test data."""
         if self._cleaned_up:

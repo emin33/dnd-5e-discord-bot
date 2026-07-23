@@ -111,9 +111,19 @@ class WorldStateStore:
             self._state.phase = "exploration"
 
     def add_established_fact(self, fact: str) -> None:
-        """Record a pinned fact once (the memory→world-state fact sync)."""
-        if fact and fact not in self._state.established_facts:
-            self._state.established_facts.append(fact)
+        """Record a pinned fact once (the memory→world-state fact sync).
+
+        A fact the supersession seam retired stays retired — without this
+        check the per-turn sync re-adds it from memory every turn.
+        """
+        if not fact or fact in self._state.established_facts:
+            return
+        if any(
+            entry.get("fact") == fact
+            for entry in self._state.superseded_facts
+        ):
+            return
+        self._state.established_facts.append(fact)
 
     # ── The extractor pipeline's apply seam ──────────────────────────────
 
