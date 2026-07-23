@@ -21,11 +21,17 @@ import uuid
 import structlog
 
 from .world_state import NPCState, NPCUpdate, StateDelta, WorldState
-from .identity import locations_equivalent, resolve_unique_identity
+from .identity import (
+    is_generic_npc_label,
+    locations_equivalent,
+    resolve_unique_identity,
+)
 from ..llm.effects import EffectType, ProposedEffect
 
 if TYPE_CHECKING:
     from ..models import Character
+    from ..models.npc import SceneEntity
+    from .scene.registry import SceneEntityRegistry
 
 logger = structlog.get_logger()
 
@@ -112,7 +118,11 @@ class WorldStateStore:
     # ── The extractor pipeline's apply seam ──────────────────────────────
 
     async def apply_delta(
-        self, delta: StateDelta, *, narrator_prose: str = ""
+        self,
+        delta: StateDelta,
+        *,
+        narrator_prose: str = "",
+        scene_registry: Optional["SceneEntityRegistry"] = None,
     ) -> list[str]:
         """Dedup → validate → write: the extractor pipeline's apply seam.
 
@@ -120,14 +130,91 @@ class WorldStateStore:
         event or a coordinator method (plan anti-re-flag rule; Step 5).
         ``narrator_prose`` gives the brain judge the turn's prose for its
         paraphrase decision; with no proposed NPCs or an empty roster the
-        judge is never consulted.
+        judge is never consulted. ``scene_registry`` supplies the scene
+        layer's identity merges — the naming-promotion seam: when a
+        generic-labeled person's revealed proper name was already merged
+        onto their SceneEntity, a proposed new_npc under that name is
+        rewritten onto the existing WorldState NPC instead of fragmenting
+        into a parallel identity.
         """
         if delta.new_npcs and self._state.npcs:
-            delta = await self._dedup_delta(delta, narrator_prose)
+            delta = await self._dedup_delta(
+                delta, narrator_prose, scene_registry=scene_registry
+            )
         return self._state.apply_delta(delta)
 
+    # ── Scene-registry identity consult (cross-store naming promotion) ────
+
+    def _scene_registry_npcs(
+        self, scene_registry: Optional["SceneEntityRegistry"]
+    ) -> list["SceneEntity"]:
+        """NPC-typed SceneEntities, or [] when no registry is wired."""
+        if scene_registry is None:
+            return []
+        try:
+            entities = scene_registry.get_all()
+        except Exception as e:
+            logger.warning("scene_registry_read_failed", error=str(e), exc_info=True)
+            return []
+        return [
+            entity
+            for entity in entities
+            if getattr(getattr(entity, "entity_type", None), "value", "") == "npc"
+        ]
+
+    def _resolve_npc_via_scene_registry(
+        self,
+        name: str,
+        scene_registry: Optional["SceneEntityRegistry"],
+    ) -> Optional[NPCState]:
+        """Map a proposed NPC name to an existing world NPC through the
+        scene registry's identity merges.
+
+        The registry is where a newly revealed proper name is first merged
+        onto a generic-labeled person ("the older woman" gains alias
+        "Orris"). WorldState hasn't heard yet, so the world-roster
+        deterministic check misses it and the judge sees two
+        distinct-looking names. Resolution stays at the codebase's exact
+        identity-key bar (``resolve_unique_identity``) on the registry
+        side, then crosses stores via the canonical ``npc_id`` link (name
+        keys as fallback). Abstains on anything ambiguous.
+        """
+        if not (name or "").strip():
+            return None
+        entities = self._scene_registry_npcs(scene_registry)
+        if not entities:
+            return None
+        match = resolve_unique_identity(name, entities)
+        if match is None:
+            return None
+        npc = self._state.npcs.get(getattr(match, "npc_id", None) or "")
+        if npc is None:
+            npc = resolve_unique_identity(
+                getattr(match, "name", "") or "", self._state.npcs.values()
+            )
+        return npc
+
+    def _scene_alias_evidence(
+        self, scene_registry: Optional["SceneEntityRegistry"]
+    ) -> Optional[list[dict]]:
+        """The registry's alias map, as evidence rows for the dedup judge."""
+        rows: list[dict] = []
+        for entity in self._scene_registry_npcs(scene_registry):
+            aliases = [a for a in (getattr(entity, "aliases", None) or []) if a]
+            if not aliases:
+                continue
+            row: dict = {"name": entity.name, "aliases": aliases}
+            npc_id = getattr(entity, "npc_id", None)
+            if npc_id and npc_id in self._state.npcs:
+                row["world_npc_id"] = npc_id
+            rows.append(row)
+        return rows or None
+
     async def _dedup_delta(
-        self, delta: StateDelta, narrator_prose: str
+        self,
+        delta: StateDelta,
+        narrator_prose: str,
+        scene_registry: Optional["SceneEntityRegistry"] = None,
     ) -> StateDelta:
         """Run each ``delta.new_npcs`` entry through the brain dedup judge.
 
@@ -155,6 +242,7 @@ class WorldStateStore:
         judge = get_dedup_judge()
         surviving: list = []
         appended_updates: list = []
+        alias_evidence = self._scene_alias_evidence(scene_registry)
 
         for proposed in delta.new_npcs:
             deterministic = resolve_unique_identity(
@@ -179,6 +267,41 @@ class WorldStateStore:
                 )
                 continue
 
+            # Scene-registry identity consult (naming promotion): the
+            # registry already merged this name onto an existing entity —
+            # the extractor's "new" NPC is that person's revealed proper
+            # name, not a new identity. Promote the proper name over a
+            # generic label; otherwise record it as an alias.
+            registry_npc = self._resolve_npc_via_scene_registry(
+                proposed.name or "", scene_registry
+            )
+            if registry_npc is not None:
+                alias = (proposed.name or "").strip()
+                promote = bool(
+                    alias
+                    and not is_generic_npc_label(alias)
+                    and is_generic_npc_label(registry_npc.name)
+                )
+                appended_updates.append(NPCUpdate(
+                    id=registry_npc.id,
+                    new_name=alias if promote else None,
+                    add_aliases=(
+                        [alias]
+                        if alias
+                        and not promote
+                        and alias.casefold() != registry_npc.name.casefold()
+                        else None
+                    ),
+                ))
+                logger.info(
+                    "extractor_dedup_scene_registry_rewrite",
+                    proposed_name=proposed.name,
+                    target_id=registry_npc.id,
+                    existing_name=registry_npc.name,
+                    name_promoted=promote,
+                )
+                continue
+
             try:
                 decision = await judge.judge_add_npc(
                     proposed_name=proposed.name or "",
@@ -186,6 +309,7 @@ class WorldStateStore:
                     narrator_prose=narrator_prose,
                     existing_npcs=list(world_state.npcs.values()),
                     current_turn=world_state.turn,
+                    scene_alias_map=alias_evidence,
                 )
             except Exception as e:
                 logger.warning("extractor_dedup_judge_call_exception", error=str(e), exc_info=True)
@@ -225,7 +349,11 @@ class WorldStateStore:
         return delta
 
     async def dedup_effect(
-        self, effect: ProposedEffect, narrator_prose: str = ""
+        self,
+        effect: ProposedEffect,
+        narrator_prose: str = "",
+        *,
+        scene_registry: Optional["SceneEntityRegistry"] = None,
     ) -> ProposedEffect:
         """Run the brain dedup judge on an ADD_NPC effect.
 
@@ -279,6 +407,38 @@ class WorldStateStore:
                 dialogue_emotions=list(effect.dialogue_emotions),
             )
 
+        # Scene-registry identity consult (naming promotion): mirrors the
+        # extractor path in _dedup_delta. The rewritten REF_ENTITY carries
+        # the proper name as ``ref_alias_used``, so the existing
+        # NamePromotion machinery (DeltaBridge._effect_ref_entity) promotes
+        # the KG node's name through the one seam that already owns it.
+        registry_npc = self._resolve_npc_via_scene_registry(
+            effect.npc_name, scene_registry
+        )
+        if registry_npc is not None:
+            alias = (effect.npc_name or "").strip()
+            if (
+                alias
+                and alias.casefold() != registry_npc.name.casefold()
+                and alias not in registry_npc.aliases
+            ):
+                registry_npc.aliases.append(alias)
+            logger.info(
+                "dedup_scene_registry_rewrite",
+                original_name=effect.npc_name,
+                target_id=registry_npc.id,
+                existing_name=registry_npc.name,
+            )
+            return ProposedEffect(
+                effect_type=EffectType.REF_ENTITY,
+                ref_entity_id=registry_npc.id,
+                ref_alias_used=(
+                    alias if alias.casefold() != registry_npc.name.casefold() else None
+                ),
+                dialogue_indices=list(effect.dialogue_indices),
+                dialogue_emotions=list(effect.dialogue_emotions),
+            )
+
         try:
             from ..llm.extractors.dedup_judge import get_dedup_judge
         except Exception as e:
@@ -293,6 +453,7 @@ class WorldStateStore:
                 narrator_prose=narrator_prose,
                 existing_npcs=list(world_state.npcs.values()),
                 current_turn=world_state.turn,
+                scene_alias_map=self._scene_alias_evidence(scene_registry),
             )
         except Exception as e:
             logger.warning("dedup_judge_call_exception", error=str(e), exc_info=True)

@@ -593,3 +593,165 @@ class TestParaphrasePileUpRegression:
         assert len(ws.npcs) == 2
         names = {npc.name for npc in ws.npcs.values()}
         assert names == {"Hooded Figure", "Marta"}
+
+
+# ── Cross-store naming promotion (LONGFORM_READINESS 2026-07-23) ────
+
+
+class _CaptureBrain:
+    """Brain stub that records the messages it was sent."""
+
+    def __init__(self, response_content: str = '{"action": "accept"}'):
+        self.response_content = response_content
+        self.messages: list | None = None
+        self.call_count = 0
+
+    async def chat(self, messages, **kwargs):
+        self.call_count += 1
+        self.messages = messages
+        return _MockResp(content=self.response_content)
+
+
+@pytest.mark.asyncio
+class TestSceneRegistryNamingPromotion:
+    """The last recurring identity-split defect: a generic-labeled person
+    acquires a proper name, the scene registry merges the identities, but
+    the extractor emits a NEW npc under the proper name and the judge
+    accepts it (names look distinct). The registry consult in the dedup
+    pipeline must rewrite deterministically instead."""
+
+    def _world_and_registry(self):
+        from dnd_bot.game.scene.registry import SceneEntityRegistry
+        from dnd_bot.models.npc import SceneEntity
+        from dnd_bot.models.npc import EntityType as SceneEntityType
+
+        ws = WorldState(turn=12)
+        ws.npcs["woman-uuid"] = NPCState(
+            id="woman-uuid", name="the older woman", last_seen_turn=11,
+        )
+        registry = SceneEntityRegistry("camp-1", 0)
+        registry.register_entity(SceneEntity(
+            name="the older woman",
+            entity_type=SceneEntityType.NPC,
+            npc_id="woman-uuid",
+            aliases=["Orris"],
+        ))
+        return ws, registry
+
+    async def test_apply_delta_rewrites_and_promotes_proper_name(
+        self, reset_dedup_singleton
+    ):
+        """Registry maps 'Orris' onto the generic-labeled entity: the
+        proposed new_npc is rewritten onto the existing NPC and the
+        proper name is promoted over the generic label — judge never
+        consulted."""
+        ws, registry = self._world_and_registry()
+        brain = _CaptureBrain()
+        dedup_judge_module._JUDGE = EntityDedupJudge(client=brain)
+        delta = StateDelta(new_npcs=[NPCState(id="orris-uuid", name="Orris")])
+
+        await WorldStateStore(ws).apply_delta(
+            delta,
+            narrator_prose="'Orris,' the older woman says at last.",
+            scene_registry=registry,
+        )
+
+        assert "orris-uuid" not in ws.npcs
+        assert len(ws.npcs) == 1
+        npc = ws.npcs["woman-uuid"]
+        assert npc.name == "Orris"
+        assert "the older woman" in npc.aliases
+        assert brain.call_count == 0
+
+    async def test_apply_delta_aliases_when_existing_name_is_proper(
+        self, reset_dedup_singleton
+    ):
+        """When the existing entity already has a proper name, the
+        registry-mapped variant lands as an alias, not a rename."""
+        from dnd_bot.game.scene.registry import SceneEntityRegistry
+        from dnd_bot.models.npc import SceneEntity
+        from dnd_bot.models.npc import EntityType as SceneEntityType
+
+        ws = WorldState(turn=8)
+        ws.npcs["elara-uuid"] = NPCState(
+            id="elara-uuid", name="Elara", last_seen_turn=7,
+        )
+        registry = SceneEntityRegistry("camp-1", 0)
+        registry.register_entity(SceneEntity(
+            name="Elara",
+            entity_type=SceneEntityType.NPC,
+            npc_id="elara-uuid",
+            aliases=["Elara Venn"],
+        ))
+        brain = _CaptureBrain()
+        dedup_judge_module._JUDGE = EntityDedupJudge(client=brain)
+        delta = StateDelta(new_npcs=[NPCState(id="venn-uuid", name="Elara Venn")])
+
+        await WorldStateStore(ws).apply_delta(
+            delta, narrator_prose="prose", scene_registry=registry,
+        )
+
+        assert "venn-uuid" not in ws.npcs
+        npc = ws.npcs["elara-uuid"]
+        assert npc.name == "Elara"
+        assert "Elara Venn" in npc.aliases
+        assert brain.call_count == 0
+
+    async def test_dedup_effect_rewrites_via_registry(self, reset_dedup_singleton):
+        """Narrator-side add_npc under the registry-merged proper name is
+        rewritten to REF_ENTITY carrying the proper name as the alias,
+        which feeds the existing NamePromotion machinery."""
+        ws, registry = self._world_and_registry()
+        brain = _CaptureBrain()
+        dedup_judge_module._JUDGE = EntityDedupJudge(client=brain)
+        effect = ProposedEffect(
+            effect_type=EffectType.ADD_NPC,
+            npc_name="Orris",
+            npc_description="the older woman from the well",
+        )
+
+        result = await WorldStateStore(ws).dedup_effect(
+            effect, "prose", scene_registry=registry,
+        )
+
+        assert result.effect_type == EffectType.REF_ENTITY
+        assert result.ref_entity_id == "woman-uuid"
+        assert result.ref_alias_used == "Orris"
+        assert "Orris" in ws.npcs["woman-uuid"].aliases
+        assert brain.call_count == 0
+
+    async def test_unmatched_name_still_reaches_judge_with_alias_map(
+        self, reset_dedup_singleton
+    ):
+        """A name the registry cannot resolve falls through to the judge —
+        and the judge's prompt now carries the registry's alias map as
+        evidence."""
+        ws, registry = self._world_and_registry()
+        brain = _CaptureBrain('{"action": "accept"}')
+        dedup_judge_module._JUDGE = EntityDedupJudge(client=brain)
+        delta = StateDelta(new_npcs=[NPCState(id="matron-uuid", name="The Gray Matron")])
+
+        await WorldStateStore(ws).apply_delta(
+            delta, narrator_prose="prose", scene_registry=registry,
+        )
+
+        assert brain.call_count == 1
+        assert "matron-uuid" in ws.npcs  # judge accepted — genuinely new
+        user_prompt = brain.messages[1]["content"]
+        assert "Scene-layer identity merges" in user_prompt
+        assert "Orris" in user_prompt
+        assert "woman-uuid" in user_prompt
+
+    async def test_no_registry_keeps_existing_behavior(self, reset_dedup_singleton):
+        """Without a scene registry the pipeline behaves exactly as before:
+        judge consulted, no alias-map section in the prompt."""
+        ws, _ = self._world_and_registry()
+        brain = _CaptureBrain('{"action": "accept"}')
+        dedup_judge_module._JUDGE = EntityDedupJudge(client=brain)
+        delta = StateDelta(new_npcs=[NPCState(id="orris-uuid", name="Orris")])
+
+        await WorldStateStore(ws).apply_delta(delta, narrator_prose="prose")
+
+        assert brain.call_count == 1
+        assert "orris-uuid" in ws.npcs
+        assert "Scene-layer identity merges" not in brain.messages[1]["content"]

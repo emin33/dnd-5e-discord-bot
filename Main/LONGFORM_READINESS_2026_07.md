@@ -282,3 +282,60 @@ Chroma per-turn embed/query work now runs off the event loop
 async). Remaining queued: google.genai migration (venv install was deferred
 while soaks ran), soak #3 for the pass-rate matrix, naming-promotion design
 (chip).
+
+## 2026-07-23 (later): cross-store naming promotion landed
+
+The design from the previous section is implemented (commits 778898e +
+d9225c4), all three seams, conservative/abstain-on-ambiguity throughout:
+
+1. **Extractor-apply consults the scene registry.**
+   `WorldStateStore.apply_delta`/`_dedup_delta` and `dedup_effect` take a
+   `scene_registry`; a proposed NPC name that the registry's identity keys
+   resolve (exact `resolve_unique_identity` bar, NPC-typed entities only)
+   is crossed to the world NPC via the canonical `npc_id` link and
+   rewritten deterministically — `new_name` promotion when a proper name
+   lands on a generic label, `add_aliases` otherwise. Judge never
+   consulted for these. Effect-path rewrites emit REF_ENTITY carrying the
+   proper name as `ref_alias_used`, so the existing NamePromotion
+   machinery does the KG rename.
+2. **Proper-name uniqueness enforced at the KG write seam.**
+   `_apply_add_node` merges a new NPC node into the unique existing
+   holder of the same proper name (identity-key match on name+aliases) or
+   abstains when ambiguous; `promote_entity_name` abstains on collision.
+   Generic role labels exempt. Additionally (found live, run
+   20260723_120152 T15): `promote_entity_name` abstains when the new name
+   is a token-fragment of the current label — the narrator ref'd 'a Choir
+   acolyte' with alias "Choir" and the node was renamed to the faction,
+   misbinding the next turn's legitimate 'the acolyte' ref.
+3. **Judge evidence.** The dedup judge prompt now receives the scene
+   registry's alias map (`name`/`aliases`/`world_npc_id` rows) with
+   guidance that those merges are authoritative.
+
+Supporting: "older"/"younger" joined `_GENERIC_NPC_TERMS` (the live
+label "the older woman" wasn't classifying as generic, which would have
+blocked promotion). 1111 unit tests green (15 new pin the Orris,
+Elara Venn, and Choir live cases), mypy clean.
+
+Validation, two 30-turn targeted_relevance_callback runs:
+
+- 20260723_120152 (seed "Orina Vex"): 23/26. `canonical_npc_identity_unique`
+  PASS. `tool_reference_identity_grounding` FAIL via the Choir promotion
+  hijack above — fixed by the fragment guard. Both washout gates failed
+  as organic-reincorporation noise (soak-#2 "Mira Vex" class): the
+  narrator minted a second "Orina" (mother of a missing son) colliding
+  with the seed's first name while the player carried a sworn oath into
+  the washout window.
+- 20260723_121644 (seed "Vex Harlow"): 24/26. **Both target gates PASS**
+  (`canonical_npc_identity_unique` collisions={},
+  `tool_reference_identity_grounding` misbound=[]); washout gates PASS.
+  Residual fails are documented noise: `tool_structural_failure_budget`
+  5.5% vs 5% (pre-existing), and one `tool_omission_signal_coverage` miss
+  (T29: extractor put names in the `id` field — 'Vex Harlow',
+  'small-pouch-of-grey-ash' — updates store-rejected, narrator owed the
+  tool; pre-existing extractor sloppiness class).
+
+Neither run organically re-triggered the naming-promotion event (it is
+intermittent); the registry-consult path is pinned by unit tests against
+the live cases. Next: soak #3 for the pass-rate matrix should confirm
+`canonical_npc_identity_unique` + `tool_reference_identity_grounding`
+hold at 80 turns with the seams active.

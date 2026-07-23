@@ -11,12 +11,19 @@ from .models import (
     AddEdge,
     AddNode,
     Entity,
+    EntityType,
     GraphOperation,
     RemoveEdge,
     RemoveNode,
     UpdateNode,
 )
 from .repository import KnowledgeGraphRepository
+from ..identity import (
+    entity_identity_keys,
+    identity_keys,
+    is_generic_npc_label,
+    name_is_fragment_of,
+)
 
 logger = structlog.get_logger()
 
@@ -101,6 +108,27 @@ class KnowledgeGraph:
 
         return rejections
 
+    def _npc_proper_name_collisions(self, node_id: str, name: str) -> list[Entity]:
+        """NPC nodes other than ``node_id`` already holding proper name ``name``.
+
+        The canonical-npc-identity invariant: at most one durable NPC node
+        per proper name. Generic role labels ("the guard") abstain — they
+        are archetypes, not identities. Matching uses the codebase's exact
+        identity-key bar (leading-title stripping only, no fuzz).
+        """
+        if is_generic_npc_label(name):
+            return []
+        keys = identity_keys(name)
+        if not keys:
+            return []
+        return [
+            entity
+            for nid, entity in self._entities.items()
+            if nid != node_id
+            and entity.entity_type == EntityType.NPC
+            and keys & entity_identity_keys(entity)
+        ]
+
     async def _apply_add_node(self, op: AddNode) -> None:
         entity = op.entity
         if entity.node_id in self._entities:
@@ -111,10 +139,45 @@ class KnowledgeGraph:
             existing.updated_at = datetime.utcnow()
             self._entities[entity.node_id] = existing
             await self._repo.upsert_node(existing)
-        else:
-            self._graph.add_node(entity.node_id, entity_type=entity.entity_type.value)
-            self._entities[entity.node_id] = entity
-            await self._repo.upsert_node(entity)
+            return
+
+        # Proper-name uniqueness at the write seam: a new NPC node whose
+        # proper name a durable NPC node already carries must merge into it
+        # (unique holder) or abstain (ambiguous) — never create a parallel
+        # identity that later collides when a generic node's name is
+        # promoted (the cross-store naming-promotion defect).
+        if entity.entity_type == EntityType.NPC:
+            collisions = self._npc_proper_name_collisions(entity.node_id, entity.name)
+            if len(collisions) == 1:
+                existing = collisions[0]
+                existing.properties.update(entity.properties)
+                held = {a.casefold() for a in existing.aliases}
+                held.add(existing.name.casefold())
+                for alias in (entity.name, *entity.aliases):
+                    if alias and alias.casefold() not in held:
+                        existing.aliases.append(alias)
+                        held.add(alias.casefold())
+                existing.updated_at = datetime.utcnow()
+                await self._repo.upsert_node(existing)
+                logger.info(
+                    "kg_add_node_merged_into_same_named_npc",
+                    proposed_node_id=entity.node_id,
+                    target_node_id=existing.node_id,
+                    name=entity.name,
+                )
+                return
+            if collisions:
+                logger.warning(
+                    "kg_add_node_abstained_proper_name_collision",
+                    proposed_node_id=entity.node_id,
+                    name=entity.name,
+                    colliding=[e.node_id for e in collisions],
+                )
+                return
+
+        self._graph.add_node(entity.node_id, entity_type=entity.entity_type.value)
+        self._entities[entity.node_id] = entity
+        await self._repo.upsert_node(entity)
 
     async def _apply_add_edge(self, op: AddEdge) -> None:
         rel = op.relationship
@@ -229,10 +292,41 @@ class KnowledgeGraph:
 
         Used when an unnamed NPC ('the hooded stranger') gets a proper
         name from the narrator.
+
+        Enforces the proper-name uniqueness invariant at the write seam:
+        when another durable NPC node already carries ``new_name``, the
+        promotion abstains (returns False) rather than minting a second
+        node with the same canonical name. The split identity stays split
+        — recoverable evidence — instead of becoming an irreversible
+        name collision.
         """
         entity = self._entities.get(node_id)
         if not entity:
             return False
+
+        # A "new name" whose every word already sits in the current label is
+        # an excerpt, not a naming event ('Choir' offered as an alias for
+        # 'a Choir acolyte' is the faction's name, not the person's) —
+        # promoting it hijacks the excerpted word's identity. Abstain.
+        if name_is_fragment_of(new_name, entity.name):
+            logger.info(
+                "entity_name_promotion_fragment_abstained",
+                node_id=node_id,
+                current_name=entity.name,
+                new_name=new_name,
+            )
+            return False
+
+        if entity.entity_type == EntityType.NPC:
+            collisions = self._npc_proper_name_collisions(node_id, new_name)
+            if collisions:
+                logger.warning(
+                    "entity_name_promotion_collision_abstained",
+                    node_id=node_id,
+                    new_name=new_name,
+                    colliding=[e.node_id for e in collisions],
+                )
+                return False
 
         old_name = entity.name
         entity.name = new_name

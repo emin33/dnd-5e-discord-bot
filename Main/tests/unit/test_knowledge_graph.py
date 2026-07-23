@@ -1230,3 +1230,126 @@ class TestIsProperName:
     def test_indefinite_article(self):
         assert _is_proper_name("a mysterious figure") is False
         assert _is_proper_name("an armored knight") is False
+
+
+# ======================================================================
+# Proper-name uniqueness at the write seam (cross-store naming promotion)
+# ======================================================================
+
+class TestProperNameUniquenessSeam:
+    """canonical_npc_identity_unique enforced where writes land: AddNode
+    merges into (or abstains from) an existing NPC node that already
+    carries the same proper name; promote_entity_name abstains on
+    collision instead of minting a second node with the canonical name."""
+
+    @pytest.fixture
+    def kg(self):
+        repo = _make_mock_repo()
+        return KnowledgeGraph("test-campaign", repo)
+
+    async def test_add_node_merges_duplicate_proper_name(self, kg):
+        await kg.load()
+        await kg.apply_operations([AddNode(entity=_make_entity(
+            "uuid-1", name="Orris", description="an older woman",
+        ))])
+        await kg.apply_operations([AddNode(entity=_make_entity(
+            "uuid-2", name="Orris", disposition="friendly",
+        ))])
+
+        assert kg.node_count() == 1
+        assert kg.get_entity("uuid-2") is None
+        merged = kg.get_entity("uuid-1")
+        assert merged.properties["disposition"] == "friendly"
+        assert merged.properties["description"] == "an older woman"
+
+    async def test_add_node_matches_existing_alias(self, kg):
+        """A node holding the proper name as an ALIAS also claims it."""
+        await kg.load()
+        entity = _make_entity("uuid-1", name="the older woman")
+        entity.aliases = ["Orris"]
+        await kg.apply_operations([AddNode(entity=entity)])
+        await kg.apply_operations([AddNode(entity=_make_entity(
+            "uuid-2", name="Orris",
+        ))])
+
+        assert kg.node_count() == 1
+        assert kg.get_entity("uuid-2") is None
+
+    async def test_add_node_generic_labels_stay_distinct(self, kg):
+        """Role labels are archetypes, not identities — no dedup."""
+        await kg.load()
+        await kg.apply_operations([AddNode(entity=_make_entity("uuid-1", name="the guard"))])
+        await kg.apply_operations([AddNode(entity=_make_entity("uuid-2", name="the guard"))])
+        assert kg.node_count() == 2
+
+    async def test_add_node_distinct_proper_names_unaffected(self, kg):
+        await kg.load()
+        await kg.apply_operations([AddNode(entity=_make_entity("uuid-1", name="Orris"))])
+        await kg.apply_operations([AddNode(entity=_make_entity("uuid-2", name="Elara Venn"))])
+        assert kg.node_count() == 2
+
+    async def test_add_node_non_npc_types_unaffected(self, kg):
+        """Two locations may share a name — the invariant is NPC-only."""
+        await kg.load()
+        await kg.apply_operations([AddNode(entity=_make_entity(
+            "loc-1", entity_type=EntityType.LOCATION, name="Riverside",
+        ))])
+        await kg.apply_operations([AddNode(entity=_make_entity(
+            "loc-2", entity_type=EntityType.LOCATION, name="Riverside",
+        ))])
+        assert kg.node_count() == 2
+
+    async def test_promotion_abstains_when_name_taken(self, kg):
+        await kg.load()
+        await kg.apply_operations([
+            AddNode(entity=_make_entity("uuid-hooded", name="the hooded stranger")),
+            AddNode(entity=_make_entity("uuid-orris", name="Orris")),
+        ])
+
+        promoted = await kg.promote_entity_name("uuid-hooded", "Orris")
+
+        assert promoted is False
+        assert kg.get_entity("uuid-hooded").name == "the hooded stranger"
+
+    async def test_promotion_succeeds_when_name_free(self, kg):
+        await kg.load()
+        await kg.apply_operations([
+            AddNode(entity=_make_entity("uuid-hooded", name="the hooded stranger")),
+        ])
+
+        promoted = await kg.promote_entity_name("uuid-hooded", "Orris")
+
+        assert promoted is True
+        entity = kg.get_entity("uuid-hooded")
+        assert entity.name == "Orris"
+        assert "the hooded stranger" in entity.aliases
+
+    async def test_promotion_abstains_on_label_fragment(self, kg):
+        """'Choir' offered as the new name for 'a Choir acolyte' is an
+        excerpt of the descriptive label (the faction's name), not a
+        newly revealed personal name (live case: run 20260723_120152
+        T15 renamed the acolyte node to 'Choir', misbinding T16's
+        legitimate 'the acolyte' ref)."""
+        await kg.load()
+        await kg.apply_operations([
+            AddNode(entity=_make_entity("uuid-acolyte", name="a Choir acolyte")),
+        ])
+
+        promoted = await kg.promote_entity_name("uuid-acolyte", "Choir")
+
+        assert promoted is False
+        assert kg.get_entity("uuid-acolyte").name == "a Choir acolyte"
+
+    async def test_promotion_accepts_name_extension(self, kg):
+        """Gaining words is a real naming event ('Elara' -> 'Elara Venn')."""
+        await kg.load()
+        await kg.apply_operations([
+            AddNode(entity=_make_entity("uuid-elara", name="Elara")),
+        ])
+
+        promoted = await kg.promote_entity_name("uuid-elara", "Elara Venn")
+
+        assert promoted is True
+        entity = kg.get_entity("uuid-elara")
+        assert entity.name == "Elara Venn"
+        assert "Elara" in entity.aliases
