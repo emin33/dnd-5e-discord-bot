@@ -57,6 +57,58 @@ TOOL_SCHEMA_TOKEN_OVERHEAD = 5000
 
 OnToken = Callable[[str], Awaitable[None]]
 
+# A repair leg shows the model its own rejected draft, which invites
+# assistant meta-talk ("You're right. I apologize for the contradiction.")
+# that governance's _META_REASONING vocabulary does not cover. Matched only
+# against the LEADING sentences of repaired prose, so in-story dialogue and
+# later narration are never rewritten.
+_REPAIR_META_OPENER = re.compile(
+    r"(?:"
+    r"\byou(?:'re|’re| are) (?:absolutely |quite )?right\b|"
+    r"\bi apologi[sz]e\b|"
+    r"\bmy apologies\b|"
+    r"\bmy mistake\b|"
+    r"\bgood catch\b|"
+    r"\bsorry (?:for|about) (?:the|that|this|my)\b|"
+    r"\bcontradiction\b|"
+    r"\blet me (?:correct|fix|rewrite|re-write|revise|redo|re-?narrate|"
+    r"try (?:this|that|it|again))\b|"
+    r"\bi(?:'ll|’ll| will) (?:correct|fix|rewrite|revise|redo|re-?narrate)\b|"
+    r"\bcorrect(?:ing)? (?:this|that|the (?:narration|draft|prose|scene|error))\b|"
+    r"\bhere(?:'s|’s| is) the (?:corrected|revised|updated|fixed|proper|"
+    r"repaired)\b|"
+    r"\b(?:corrected|revised|rewritten|updated|repaired) "
+    r"(?:narration|version|prose|draft|scene|response)\b|"
+    r"\bmy (?:previous|earlier|prior|last) "
+    r"(?:narration|draft|response|reply|version)\b"
+    r")",
+    re.IGNORECASE,
+)
+
+# One sentence-like unit: text up to terminal punctuation (a colon covers
+# "Corrected narration:" headers) or a line break.
+_LEADING_SENTENCE = re.compile(r"[^.!?:\n]{1,240}(?:[.!?:]+|(?=\n)|$)")
+
+
+def strip_repair_meta_preamble(prose: str) -> str:
+    """Drop leading assistant meta-acknowledgment sentences from repaired prose.
+
+    Deterministic backstop behind the repair prompts: strips openers that
+    apologize for or announce the correction, stopping at the first sentence
+    that reads as fiction. Returns "" when nothing in-fiction remains, which
+    the repair legs treat as a failed repair (fail closed).
+    """
+    remaining = prose.strip()
+    for _ in range(6):
+        # A quote/emphasis opener is in-fiction, never assistant meta-talk.
+        if not remaining or remaining[0] in "\"'“‘*":
+            break
+        match = _LEADING_SENTENCE.match(remaining)
+        if not match or not _REPAIR_META_OPENER.search(match.group(0)):
+            break
+        remaining = remaining[match.end():].lstrip()
+    return remaining
+
 
 @dataclass(frozen=True)
 class NarrationSpec:
@@ -185,6 +237,7 @@ class NarrationStrategy:
             "resolved_outcome_repair_attempted": False,
             "resolved_outcome_repair_succeeded": False,
             "resolved_outcome_failed_closed": False,
+            "repair_meta_preamble_stripped": False,
             "final_effects": 0,
         }
         # Tier-aware narrator client selection (Phase B). The injected
@@ -656,6 +709,17 @@ class NarrationStrategy:
             )
             return existing_effects
 
+    def _strip_meta_preamble(self, prose: str) -> str:
+        """Apply the deterministic meta-opener strip to repaired prose."""
+        cleaned = strip_repair_meta_preamble(prose)
+        if cleaned != prose.strip():
+            self.last_diagnostics["repair_meta_preamble_stripped"] = True
+            logger.warning(
+                "narrator_repair_meta_preamble_stripped",
+                removed=prose.strip()[: len(prose.strip()) - len(cleaned)][:200],
+            )
+        return cleaned
+
     async def _repair_resolved_outcome(
         self,
         *,
@@ -685,7 +749,12 @@ class NarrationStrategy:
                     "in the player action occurs exactly as stated. Do not turn "
                     "it into a refusal, missing item, failed attempt, or alternate "
                     "event. Return the corrected prose AND the complete tool set. "
-                    f"The required effect families are: {required}."
+                    f"The required effect families are: {required}. "
+                    "The replacement must be pure in-fiction narration addressed "
+                    "to the player: never apologize, never acknowledge the "
+                    "correction or any contradiction, and never mention drafts, "
+                    "rewrites, or these instructions. Begin directly with the "
+                    "story."
                 ),
             },
         ]
@@ -703,6 +772,7 @@ class NarrationStrategy:
             repaired_prose, repaired_effects = self._extract_prose_and_effects(
                 response, spec.action
             )
+            repaired_prose = self._strip_meta_preamble(repaired_prose)
             if (
                 repaired_prose
                 and not governance.validate(repaired_prose)
@@ -752,6 +822,7 @@ class NarrationStrategy:
             repaired_prose, repaired_effects = self._extract_prose_and_effects(
                 response, spec.action
             )
+            repaired_prose = self._strip_meta_preamble(repaired_prose)
             if repaired_prose:
                 return repaired_prose, repaired_effects, True
         except Exception as exc:
