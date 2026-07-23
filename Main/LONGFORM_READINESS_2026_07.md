@@ -367,3 +367,33 @@ Soak matrix so far (deep_seeded_callback, deepseek_v4_flash_qwen9b):
 | 20260722_230128 | Sera Vellik | 22/26 | 6/6 | FAIL (pre-fix) | FAIL (pre-fix) | baseline |
 | 20260723_005611 | Tomas Vex | 24/26 | 6/6 | PASS | PASS | pre-seams |
 | 20260723_122931 | Pell | 24/26 | 6/6 | PASS | PASS | all seams active |
+
+## 2026-07-23: third pillar closed — narrative-quality grader
+
+`test_narrative_grader.py` grades a completed run's turn log offline with
+an independent judge (Gemini 2.5 Flash, think=False — never the narrator
+grading itself): rolling 6-turn windows with a carried story summary,
+five dimensions (continuity, contradiction_free, npc_voice,
+prose_freshness, player_agency), per-flag turn numbers, plus
+deterministic prose metrics (8-gram cross-turn repetition, opening-bigram
+variety). Hard gates per the plan: overall >= 4.0, no dimension mean
+< 3.0, ZERO severe contradictions, repetition ratio <= 0.35, and judge
+coverage fails closed. Artifacts land in data/narrative_quality/.
+~$0.01/80-turn run.
+
+First grades over existing artifacts:
+| run | turns | overall | verdict | notes |
+|-----|-------|---------|---------|-------|
+| soak #1 (Sera Vellik) | 80 | 4.67 | PASS | freshness 4.21 lowest |
+| soak #3 (Pell) | 80 | 4.70 | PASS | narrator mid-sentence cutoffs T8/T9/T26 flagged (NARRATOR_MAX_TOKENS symptom) |
+| validation 20260723_003823 | 30 | 4.48 | FAIL | severe contradiction T22: wax soft/warm at T19 -> brittle "hours old" at T22 (review: continuity slip vs deliberate time-anomaly cue) |
+
+The FAIL proves the judge is not a rubber stamp. Follow-ups it surfaced:
+narrator truncation (prose hitting the 1500-token ceiling mid-sentence)
+and the T22-class ambiguity between world-weirdness and contradiction —
+both feed the fact-supersession design.
+
+GeminiClient migration note: think=False now maps to
+ThinkingConfig(thinking_budget=0) — 2.5 models think by default and a
+small-budget JSON call otherwise returns truncated output (found live by
+the grader's first run).

@@ -1527,6 +1527,8 @@ class GeminiClient:
 
         Note: Gemini does not support frequency/presence penalties. These
         params are accepted for interface compatibility but ignored.
+        ``think=False`` disables 2.5-model thinking (budget 0); True/None
+        keep the model default.
         """
         _guard_real_model_request()
         # Separate system instructions from chat messages
@@ -1566,6 +1568,14 @@ class GeminiClient:
         }
         if system_parts:
             config_kwargs["system_instruction"] = "\n\n".join(system_parts)
+        # Gemini 2.5 models think by default and thinking spends the
+        # max_output_tokens budget — a small-budget JSON call can burn its
+        # entire allowance thinking and return truncated output. think=False
+        # disables it; True/None keep the model default.
+        if think is False:
+            config_kwargs["thinking_config"] = genai_types.ThinkingConfig(
+                thinking_budget=0
+            )
 
         gemini_tools = self._convert_tools(tools)
         if gemini_tools:

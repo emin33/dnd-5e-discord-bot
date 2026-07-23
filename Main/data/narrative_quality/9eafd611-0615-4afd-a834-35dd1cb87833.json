@@ -1,0 +1,330 @@
+{
+  "turn_log": "data\\turn_logs\\9eafd611-0615-4afd-a834-35dd1cb87833.jsonl",
+  "judge_model": "gemini-2.5-flash",
+  "verdict": "PASS",
+  "overall_average": 4.67,
+  "dimension_means": {
+    "continuity": 4.79,
+    "contradiction_free": 4.79,
+    "npc_voice": 4.64,
+    "prose_freshness": 4.21,
+    "player_agency": 4.93
+  },
+  "gates": [
+    {
+      "name": "judge_coverage_complete",
+      "passed": true,
+      "detail": "windows graded=14; failed=0"
+    },
+    {
+      "name": "overall_average",
+      "passed": true,
+      "detail": "avg=4.67 (gate >= 4.0)"
+    },
+    {
+      "name": "no_dimension_below_minimum",
+      "passed": true,
+      "detail": "means={'continuity': 4.79, 'contradiction_free': 4.79, 'npc_voice': 4.64, 'prose_freshness': 4.21, 'player_agency': 4.93} (gate >= 3.0)"
+    },
+    {
+      "name": "zero_severe_contradictions",
+      "passed": true,
+      "detail": "severe=[]"
+    },
+    {
+      "name": "prose_repetition_bounded",
+      "passed": true,
+      "detail": "worst 8-gram repeat ratio=0.0 (gate <= 0.35)"
+    }
+  ],
+  "worst_repeat_ratio": 0.0,
+  "opening_bigrams": {
+    "you crouch": 4,
+    "the map": 2,
+    "the woman's": 2,
+    "the parchment": 2,
+    "you turn": 2,
+    "your fingers": 2,
+    "you step": 2,
+    "you push": 2
+  },
+  "windows": [
+    {
+      "turns": [
+        1,
+        6
+      ],
+      "scores": {
+        "continuity": 5,
+        "contradiction_free": 4,
+        "npc_voice": 5,
+        "prose_freshness": 4,
+        "player_agency": 5
+      },
+      "contradictions": [
+        {
+          "turn": 3,
+          "severity": "minor",
+          "detail": "Player asks if attackers mentioned names. Elara says 'No names.' In Turn 6, player asks the same question, and Elara again says 'No names,' but then immediately contradicts herself by saying the grinding-stone one called her 'Elara.' This is a minor contradiction in Elara's recall, not a major plot hole."
+        }
+      ],
+      "flags": [
+        "T3: Player asks about names, Elara says 'No names.'",
+        "T6: Player asks about names again, Elara says 'No names,' then immediately states the attacker called her 'Elara.'"
+      ],
+      "summary": "The player investigates a wounded courier, Elara, who reveals she was a decoy. A map to the 'Whispering Woods' and a 'broken sun' destination is found. Elara provides details about the attackers (two, one with a 'grinding stone' voice and a cough) and the real courier (copper pin, tiny gear). The 'broken sun' is identified as the 'Sunken Stair' near 'The Grey Tooth' and 'The Split Pillar.' Elara confirms the attackers knew her name and that she was a decoy, indicating an organized operation with inside information."
+    },
+    {
+      "turns": [
+        7,
+        12
+      ],
+      "scores": {
+        "continuity": 5,
+        "contradiction_free": 5,
+        "npc_voice": 5,
+        "prose_freshness": 5,
+        "player_agency": 5
+      },
+      "contradictions": [],
+      "flags": [],
+      "summary": "The player leaves Elara and heads to the Gutter-Step Market, where they encounter Sera Vellik, a porter. Sera provides information about the real courier (a Cartographer's apprentice with a copper gear pin and a 'broken sun' tattoo) and a crumpled note with the word 'Broken.' The player then heads towards the Whispering Woods, entering a new environment where gravity behaves normally."
+    },
+    {
+      "turns": [
+        13,
+        18
+      ],
+      "scores": {
+        "continuity": 5,
+        "contradiction_free": 5,
+        "npc_voice": 5,
+        "prose_freshness": 4,
+        "player_agency": 5
+      },
+      "contradictions": [],
+      "flags": [
+        "T16: The DM's narration cuts off mid-sentence at the end of the turn, which is a minor formatting error."
+      ],
+      "summary": "The player encounters Lyra, a young woman with a 'broken sun' tattoo and a copper gear pin, who is a decoy carrying a map case through the Whispering Woods. Lyra reveals she is being hunted by something ancient with claws, not the Cartographers or the Choir, and gives the player the map case. Inside, they find a blank sheet of parchment, just as a large, thumping sound approaches."
+    },
+    {
+      "turns": [
+        19,
+        24
+      ],
+      "scores": {
+        "continuity": 5,
+        "contradiction_free": 5,
+        "npc_voice": 5,
+        "prose_freshness": 5,
+        "player_agency": 5
+      },
+      "contradictions": [],
+      "flags": [],
+      "summary": "The player and Lyra encounter Elara, a former Cartographer with a broken-sun tattoo, who reveals the map case contains a 'map of when' and that Lyra's employer is dead. Elara explains three factions are interested in the map: the Choir, a creature with claws, and the old man's killer. The window ends with Elara revealing her mentor's last word: 'DAWN.'"
+    },
+    {
+      "turns": [
+        25,
+        30
+      ],
+      "scores": {
+        "continuity": 5,
+        "contradiction_free": 5,
+        "npc_voice": 5,
+        "prose_freshness": 4,
+        "player_agency": 5
+      },
+      "contradictions": [],
+      "flags": [
+        "T25: The description of the paper is a little generic; 'rough, crumpled' and 'ink is smudged' are common descriptors.",
+        "T28: 'The trees press closer on either side, their branches twisted into shapes that look almost like hands reaching.' This is a fairly common fantasy trope for menacing woods.",
+        "T30: 'Elara moves with practiced ease\u2014her boots finding roots that don't shift, her weight balanced, her pace steady but unhurried. She's reading the ground the way a sailor reads water.' This is a good description, but 'reading the ground the way a sailor reads water' is a slightly mixed metaphor, though understandable."
+      ],
+      "summary": "The party learns about a 'living compass' and a hidden cache at the Split Pillar, a day's travel east. They decide to head for the cache despite the immediate threat of the Choir and a creature in the woods. Elara leads them through a marsh towards the Split Pillar, with Lyra following the player."
+    },
+    {
+      "turns": [
+        31,
+        36
+      ],
+      "scores": {
+        "continuity": 4,
+        "contradiction_free": 5,
+        "npc_voice": 4,
+        "prose_freshness": 4,
+        "player_agency": 5
+      },
+      "contradictions": [],
+      "flags": [
+        "T31: The description of the Split Pillar's split as 'severed' and 'ununnaturally even' is a bit redundant with 'almost polished'.",
+        "T32: 'You'd almost miss it if you weren't looking' is a slightly clunky phrase.",
+        "T34: 'The rotten wood splinters loudly\u2014a sharp, wet sound' is a bit of an oxymoron; splintering wood is typically dry and sharp, not wet.",
+        "T34: The DM states the trapdoor 'lurches open six inches before jamming' but then immediately says 'You can see the gap... but the mechanism has seized. You can't force it further without either breaking the door entirely or\u2014'. This implies the player *can't* get it open, which is then contradicted by the player's next action of wedging the knife deeper to open it more. The DM should have been clearer about the state of the door.",
+        "T35: 'The rotted wood gives with a soft creak as you lever it sideways\u2014not forcing the door wider, but wedging the blade deep into the seam where the frame has rotted softest. The trapdoor holds steady, propped open just enough.' This feels like the DM is narrating the player's success in opening the door further, but the previous turn implied it was jammed and couldn't be forced further. This could have been smoother.",
+        "T36: 'Your right foot finds a stone. You shift your weight\u2014SCRAPE.' This feels a bit like the DM is narrating a specific action (finding a stone, shifting weight) that wasn't explicitly stated by the player, though it's a reasonable inference for descending."
+      ],
+      "summary": "The party reaches the Split Pillar and discovers a bloodstained handprint. Elara reveals a hidden trapdoor to a workshop beneath the pillar. The player attempts to open it, causing a stone slab above to shift precariously and making noise. Descending into the dark chamber, the player's movement alerts a creature below, which begins making wet clicking sounds."
+    },
+    {
+      "turns": [
+        37,
+        42
+      ],
+      "scores": {
+        "continuity": 4,
+        "contradiction_free": 4,
+        "npc_voice": 4,
+        "prose_freshness": 4,
+        "player_agency": 5
+      },
+      "contradictions": [
+        {
+          "turn": 38,
+          "severity": "minor",
+          "detail": "DM states the fall is 'eight feet, maybe nine' after the previous turn established the player was 'halfway down the wall, maybe ten feet from the floor below'. This implies the player was 20 feet up, making the remaining fall 10 feet, not 8-9."
+        }
+      ],
+      "flags": [
+        "T37: The phrase 'You stop listening to Lyra. Stop listening to the clicking.' is a bit clunky and could be smoother, e.g., 'You tune out Lyra's panic and the clicking below...'",
+        "T38: The description of the chamber's size ('roughly fifteen feet across') feels a little out of place given the absolute darkness described in the previous turn. While eyes adjust, a precise measurement might be hard to discern.",
+        "T41: The use of '\u77ed\u5200' (Chinese for shortsword/dagger) instead of the English word is an error."
+      ],
+      "summary": "The player descends into the dark chamber, landing on packed earth. They discover a narrow passage leading deeper, where they find a tarnished coin and the body of a dead goblin. The source of the clicking and breathing remains elusive, but the passage continues into a wider, unseen space."
+    },
+    {
+      "turns": [
+        43,
+        48
+      ],
+      "scores": {
+        "continuity": 5,
+        "contradiction_free": 5,
+        "npc_voice": 5,
+        "prose_freshness": 4,
+        "player_agency": 5
+      },
+      "contradictions": [],
+      "flags": [
+        "T43: The phrase 'relief flickering across her features' is a bit of a clich\u00e9.",
+        "T44: 'Her voice is low, controlled' is a slightly generic description.",
+        "T45: 'Something shifts in her expression\u2014a crack in the armor, quickly sealed' is a common trope.",
+        "T46: 'Her grip is firm, calloused. A hand that's worked, that's held a knife in fear more than once' is a good detail, but the second sentence feels a little too much like direct exposition rather than showing.",
+        "T46: 'Word of a ranger... That means something in Veyr. Means you've walked the vertical roads, read the gravity tides, seen what the city hides in its shadow-corners' is a bit of an info-dump about Veyr and rangers, even if it's delivered by an NPC. It feels a little forced into the conversation."
+      ],
+      "summary": "The player emerges from the passage to find Lyra unharmed but Elara missing, having gone to investigate sounds in the treeline. Lyra reveals Elara was seeking 'proof' related to her mentor Corvin and the Choir. The player and Lyra agree to find Elara, tracking her footprints to the treeline where they discover drag marks and fresh, barefoot goblin prints leading away from the passage and into the mist, suggesting Elara followed a new trail."
+    },
+    {
+      "turns": [
+        49,
+        54
+      ],
+      "scores": {
+        "continuity": 5,
+        "contradiction_free": 5,
+        "npc_voice": 5,
+        "prose_freshness": 4,
+        "player_agency": 5
+      },
+      "contradictions": [],
+      "flags": [
+        "T53: The phrase 'Whoever built this knew what they were doing' is a bit generic and could be more evocative or specific to the setting."
+      ],
+      "summary": "The player and Lyra follow a new lead to a hidden root tunnel, believing Elara has gone to Corvin's workshop. They enter the workshop to find it empty but discover a strange compass pointing northeast and a journal with fresh ink, detailing a ritual and showing familiar glyphs. The journal also suggests something was deliberately hidden."
+    },
+    {
+      "turns": [
+        55,
+        60
+      ],
+      "scores": {
+        "continuity": 4,
+        "contradiction_free": 4,
+        "npc_voice": 4,
+        "prose_freshness": 4,
+        "player_agency": 4
+      },
+      "contradictions": [],
+      "flags": [
+        "T57: The compass needle's wild spin and sudden stop on a torch sconce feels a bit too convenient for the DM to invalidate the player's read of the compass, rather than letting the player misinterpret it. It borders on hijacking the player's observation.",
+        "T59: The DM's narration explicitly states 'something clicks into place in your mind, not mechanical, but logical' and then proceeds to explain the player's realization about the compass being a key and the journal a lock. While the player was clearly trying to figure things out, this level of explicit internal monologue for the player character is usually best left to the player to articulate or for the DM to prompt them to articulate."
+      ],
+      "summary": "The player discovers a hidden message on parchment and a 'brass key' compass. Elara appears, revealing she was also tracking the journal and that someone else was recently in the workshop. The player realizes the compass is a key and the journal a lock, and that the true culprit is still nearby, prompting a tense standoff towards a shadowed archway."
+    },
+    {
+      "turns": [
+        61,
+        66
+      ],
+      "scores": {
+        "continuity": 5,
+        "contradiction_free": 5,
+        "npc_voice": 5,
+        "prose_freshness": 4,
+        "player_agency": 5
+      },
+      "contradictions": [],
+      "flags": [
+        "T61: The DM's narration states 'No mechanical connection' and 'utterly useless as a key' for the compass, which is a bit too definitive given the later reveal that it *is* part of the key mechanism. While the player's initial assumption was wrong, the DM's statement feels like it closes off possibilities too strongly, rather than just describing the current lack of obvious function.",
+        "T62: The DM's narration 'The compass points north. Always north.' is repeated from T61. While it reinforces the player's initial misdirection, a slight variation in phrasing could improve prose freshness.",
+        "T65: The phrase 'The cache is rea' is a clear typo/incomplete sentence."
+      ],
+      "summary": "The player and Elara are in a workshop, searching for a hidden cache. They discover the compass is a key, but not in the way initially thought, and that the journal holds more clues. An unknown female voice and multiple creatures are approaching from a shadowed archway, forcing a choice between opening the cache and confronting the threat."
+    },
+    {
+      "turns": [
+        67,
+        72
+      ],
+      "scores": {
+        "continuity": 5,
+        "contradiction_free": 5,
+        "npc_voice": 4,
+        "prose_freshness": 4,
+        "player_agency": 5
+      },
+      "contradictions": [],
+      "flags": [
+        "T67: Elara's dialogue 'Then decide. Now.' feels a little abrupt given the player's prior statement about prioritizing the cache. While she's urgent, the 'Now' feels slightly redundant after the player just stated their priority.",
+        "T71: The description of the old man's eyes 'flick past your shoulder once, quick, before returning to his straps' hints at something, but it's not followed up on, making it feel like a dangling detail rather than a subtle clue."
+      ],
+      "summary": "The player attempts to open the cache with Elara, but fails and injures their hand as creatures approach. The player shoves Elara into the archway to draw the creatures away, leaving them alone in the workshop. The player then leaves the workshop and travels to the Gutter-Step Market, where they find Sera Vellik."
+    },
+    {
+      "turns": [
+        73,
+        79
+      ],
+      "scores": {
+        "continuity": 5,
+        "contradiction_free": 5,
+        "npc_voice": 4,
+        "prose_freshness": 4,
+        "player_agency": 5
+      },
+      "contradictions": [],
+      "flags": [
+        "T75: The DM repeats the player's dialogue verbatim in italics, which is generally unnecessary and can feel a bit clunky.",
+        "T79: The DM's final summary of the player's failure ('you couldn't find the crack in her armor' and 'you missed something. There was a door there, and you couldn't find the handle') is a bit too meta and explicitly tells the player they failed, rather than letting the narrative imply it."
+      ],
+      "summary": "The player confronts Sera Vellik about 'Veyr,' initially believing it to be a person. Sera reveals 'Veyr' is a place and dangerous to inquire about. Despite the player's persistence and blocking her path, Sera remains evasive, offering only one question, which she answers ambiguously before disengaging and leaving the market."
+    },
+    {
+      "turns": [
+        80,
+        80
+      ],
+      "scores": {
+        "continuity": 5,
+        "contradiction_free": 5,
+        "npc_voice": 5,
+        "prose_freshness": 5,
+        "player_agency": 5
+      },
+      "contradictions": [],
+      "flags": [],
+      "summary": "Sera Vellik successfully evades the player, disappearing into the market crowd. The DM describes her efficient movement and the market closing around her. The player is left alone with a 'crushed hand,' 'empty satchel,' and the word 'Broken,' contemplating their next move with clear directional options."
+    }
+  ]
+}

@@ -1,0 +1,159 @@
+{
+  "turn_log": "data\\turn_logs\\8818720f-2df4-4a0f-af32-0e8895117b03.jsonl",
+  "judge_model": "gemini-2.5-flash",
+  "verdict": "FAIL",
+  "overall_average": 4.48,
+  "dimension_means": {
+    "continuity": 4.6,
+    "contradiction_free": 4.4,
+    "npc_voice": 4.6,
+    "prose_freshness": 4.0,
+    "player_agency": 4.8
+  },
+  "gates": [
+    {
+      "name": "judge_coverage_complete",
+      "passed": true,
+      "detail": "windows graded=5; failed=0"
+    },
+    {
+      "name": "overall_average",
+      "passed": true,
+      "detail": "avg=4.48 (gate >= 4.0)"
+    },
+    {
+      "name": "no_dimension_below_minimum",
+      "passed": true,
+      "detail": "means={'continuity': 4.6, 'contradiction_free': 4.4, 'npc_voice': 4.6, 'prose_freshness': 4.0, 'player_agency': 4.8} (gate >= 3.0)"
+    },
+    {
+      "name": "zero_severe_contradictions",
+      "passed": false,
+      "detail": "severe=[{'turn': 22, 'severity': 'severe', 'detail': \"The wax smudge is described as 'soft, still pliable' and 'warm' in Turn 19, and the player pockets a 'soft' sliver in Turn 21. In Turn 22, it is suddenly 'duller. Drier. The edges have gone brittle, cracking where they meet the wood. You frown, pressing it with a fingertip. Hard. Stiff. It seems as though it's been there for hours, not minutes.' This is a direct contradiction of its established state just moments prior in game time.\"}]"
+    },
+    {
+      "name": "prose_repetition_bounded",
+      "passed": true,
+      "detail": "worst 8-gram repeat ratio=0.014 (gate <= 0.35)"
+    }
+  ],
+  "worst_repeat_ratio": 0.014,
+  "opening_bigrams": {
+    "the stooped": 5,
+    "you slide": 2,
+    "lira's eyes": 2,
+    "you lean": 2,
+    "you turn": 2,
+    "the vendor": 2,
+    "the morning": 1,
+    "you work": 1
+  },
+  "windows": [
+    {
+      "turns": [
+        1,
+        6
+      ],
+      "scores": {
+        "continuity": 5,
+        "contradiction_free": 5,
+        "npc_voice": 4,
+        "prose_freshness": 4,
+        "player_agency": 5
+      },
+      "contradictions": [],
+      "flags": [
+        "T4: The narration ends mid-sentence, which is a minor formatting error.",
+        "T5: Lira's dialogue 'Lira,' she says, hugging whatever she's carrying tighter. 'Lira.' is a bit repetitive and could be streamlined."
+      ],
+      "summary": "The player investigates a collapsed courier in Saint Orra's Wake, finding a cryptic note and a mysterious disc. A child witness, Lira, reports seeing a cloaked figure in the bell-tower before the courier fell. The player now has a lead to a bonesetter and a mystery to unravel."
+    },
+    {
+      "turns": [
+        7,
+        12
+      ],
+      "scores": {
+        "continuity": 4,
+        "contradiction_free": 5,
+        "npc_voice": 4,
+        "prose_freshness": 4,
+        "player_agency": 4
+      },
+      "contradictions": [],
+      "flags": [
+        "T7: The description of the apothecary's door as 'heavy oak, weathered by years of Veyr's strange weather' feels a little out of place given the previous descriptions of Saint Orra's Wake as a place of 'upward drizzle' and 'rain-slicked courtyard'. While not a contradiction, it introduces a new, somewhat fantastical element ('Veyr's strange weather') without much context.",
+        "T9: The DM's narration of the player's dialogue ('I appreciate the offer,' you say. 'But I think we'd both prefer I didn't carry a stranger into your home without understanding what I'm bringing through the door.') is an invention of player dialogue, not a direct reflection of the player's stated action ('I decide this opening lead can wait. I turn away from the people and places involved, cross into a distant district, and pursue the newest unrelated disturbance I can find.'). While it provides a plausible reason for the player's departure, it still puts words in the player's mouth.",
+        "T11: The DM's description of the finger's direction ('But the more you look, the less you see. The finger points roughly toward a gap between two tenement buildings... But the finger could just as easily have fallen that way when the body dropped. The wrist is limp. The arm is twisted at an odd angle. It's just... a corpse. In a gutter. Rigor mortis doing what rigor mortis does.') is a bit heavy-handed in dismissing the player's investigation. While it's fine for the investigation to yield no immediate clues, the narration actively tells the player there's 'less you see' and that it's 'just... a corpse' rather than letting the player draw that conclusion from the lack of evidence."
+      ],
+      "summary": "The player abandons the collapsed courier and Elara Venn to investigate a new disturbance in the Warrens. They find a grotesque, dead figure in a drain, wearing a tattered courier uniform, but find no identifying marks or clear clues from its position. A stooped onlooker engages the player in conversation."
+    },
+    {
+      "turns": [
+        13,
+        18
+      ],
+      "scores": {
+        "continuity": 5,
+        "contradiction_free": 5,
+        "npc_voice": 5,
+        "prose_freshness": 4,
+        "player_agency": 5
+      },
+      "contradictions": [],
+      "flags": [
+        "T18: The description of the ossuary gate is cut off mid-sentence, which is a minor formatting error."
+      ],
+      "summary": "The player gathers information from local NPCs about a tall figure seen near the corpse, who then headed north. They learn about a scaffold at the market cross and a 'dead-end' bell-tower lane leading to a sealed ossuary, where strange lights and gravity anomalies have been observed. The player chooses to investigate the bell-tower lane and arrives at the ossuary gate."
+    },
+    {
+      "turns": [
+        19,
+        24
+      ],
+      "scores": {
+        "continuity": 4,
+        "contradiction_free": 3,
+        "npc_voice": 5,
+        "prose_freshness": 4,
+        "player_agency": 5
+      },
+      "contradictions": [
+        {
+          "turn": 22,
+          "severity": "severe",
+          "detail": "The wax smudge is described as 'soft, still pliable' and 'warm' in Turn 19, and the player pockets a 'soft' sliver in Turn 21. In Turn 22, it is suddenly 'duller. Drier. The edges have gone brittle, cracking where they meet the wood. You frown, pressing it with a fingertip. Hard. Stiff. It seems as though it's been there for hours, not minutes.' This is a direct contradiction of its established state just moments prior in game time."
+        }
+      ],
+      "flags": [
+        "T22: The sudden aging of the wax smudge is a severe contradiction that breaks the established reality of the scene.",
+        "T23: The DM states 'You can't tell if the door was forced or opened normally. You can't tell if the candle was held by someone entering or leaving, or if it was pressed here for some other purpose entirely.' This feels like a slight overreach, as the player's earlier examination (T19) did establish the wax was pressed from the *inside* by fingertips trying to pry boards loose, suggesting a specific purpose and direction."
+      ],
+      "summary": "The player investigates a warm wax smudge on a boarded ossuary window, hearing scraping and muttering from within. A 'click' from the door leads them to find the padlock still locked, but the wax smudge has inexplicably aged. Frustrated, the player discovers disturbed ground and a quivering ivy strand near the bell-tower wall, revealing a narrow gap with the smell of tallow."
+    },
+    {
+      "turns": [
+        25,
+        30
+      ],
+      "scores": {
+        "continuity": 5,
+        "contradiction_free": 4,
+        "npc_voice": 5,
+        "prose_freshness": 4,
+        "player_agency": 5
+      },
+      "contradictions": [
+        {
+          "turn": 29,
+          "severity": "minor",
+          "detail": "Lira states 'He's be' at the end of her sentence, which is an incomplete thought. While it could be interpreted as her being cut off, it reads more like a typo."
+        }
+      ],
+      "flags": [
+        "T29: Lira's final sentence is cut off, ending with 'He's be'."
+      ],
+      "summary": "The player successfully locates Lira, a 'gutter-child' known for being light-fingered and skittish, at the stable loft of the Weeping Sister tavern. Lira is jumpy and denies hearing a 'click' or knowing about the wax sliver, but her behavior indicates she's been spooked by someone else. An unseen individual is confirmed to be in the stable below, having followed the player and Lira."
+    }
+  ]
+}

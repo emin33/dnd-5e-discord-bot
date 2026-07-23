@@ -321,6 +321,25 @@ class TestGeminiStructuredOutput:
         assert config.response_mime_type == "application/json"
         assert config.response_schema is None
 
+    async def test_think_false_zeroes_thinking_budget(self):
+        """2.5 models think by default and thinking spends max_output_tokens;
+        think=False must disable it or small JSON calls come back truncated."""
+        from dnd_bot.llm.client import GeminiClient
+
+        client = GeminiClient(model="gemini-test", api_key="test-key")
+        captured: dict = {}
+        client._client = _fake_genai_client(captured)
+
+        await client.chat(
+            messages=[{"role": "user", "content": "hi"}],
+            think=False,
+        )
+        assert captured["config"].thinking_config.thinking_budget == 0
+
+        captured.clear()
+        await client.chat(messages=[{"role": "user", "content": "hi"}])
+        assert captured["config"].thinking_config is None
+
     async def test_tools_use_json_schema_declarations(self):
         """OpenAI-format tools must survive as parameters_json_schema."""
         from dnd_bot.llm.client import GeminiClient
