@@ -252,3 +252,33 @@ Remaining known-noisy gate: `tool_structural_failure_budget` (5.7% and
 8.3% vs 5% on ~110-effect runs) — the OLD generic followup leg's refs
 without entity_id / non-verbatim aliases. Pre-existing model sloppiness,
 worth revisiting once the targeted leg fully replaces the generic one.
+
+## Soak #2 (20260723_005611): 24/26 — fixes hold at scale
+
+Second 80-turn run, fresh seed (npc "Tomas Vex"), all fix batches active:
+recall 6/6 again, and every previously-fixed gate passed at 80-turn scale
+(omission coverage, identity grounding, canonical name uniqueness, KG seed
+scoping). Two residual fails:
+
+1. `narrator_kept_seed_out_of_memory_gap` (turn 61): the narrator
+   spontaneously invented "Mira Vex, Tomas Vex's grandmother" as the plot's
+   hidden figure mid-washout. KG context was clean; this is organic creative
+   reincorporation via the narrator's own memory tiers — a desirable
+   narrative behavior that nonetheless weakens the cold-recall evidence for
+   that run. Left as a hard gate for now: across a multi-run matrix, clean-
+   washout runs carry the recall claim; annotated-washout runs still verify
+   consistency.
+2. `tool_effect_execution_reliability` 97.7%: five fail-closed rejections,
+   all narrator-embellished ids ('corvins-hallway',
+   'drilled-silver-coin-ragpicker-token',
+   'low-wooden-door-with-token-indentation'). Addressed post-run by
+   `_resolve_invented_scene_ids`: when an unresolvable id strictly contains
+   exactly one known entity's full token set (>=2 tokens), the effect is
+   rewritten onto that entity; no unique containment keeps the rejection.
+   Unit-tested against the live cases; next run validates in vivo.
+
+Chroma per-turn embed/query work now runs off the event loop
+(asyncio.to_thread across 9 hot-path sites; session._build_context is
+async). Remaining queued: google.genai migration (venv install was deferred
+while soaks ran), soak #3 for the pass-rate matrix, naming-promotion design
+(chip).

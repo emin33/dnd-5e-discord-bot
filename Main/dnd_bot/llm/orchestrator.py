@@ -265,6 +265,99 @@ def _canonicalize_npc_effect_ids(
     return normalized
 
 
+_ID_FILLER_TOKENS = {"the", "a", "an", "of", "with", "and", "in", "on", "at", "to"}
+
+
+def _id_tokens(value: object) -> frozenset:
+    words = re.findall(r"[a-z0-9]+", str(value or "").lower())
+    return frozenset(word for word in words if word not in _ID_FILLER_TOKENS)
+
+
+def _resolve_invented_scene_ids(
+    effects: list[ProposedEffect],
+    world_state,
+    knowledge_graph,
+) -> list[ProposedEffect]:
+    """Resolve narrator-embellished ids onto the unique entity they contain.
+
+    Models compose descriptive slugs around a real referent's name —
+    ``low-wooden-door-with-token-indentation`` for the scene item
+    ``low wooden door`` (soak 20260723_005611, turns 22-32). When the
+    invented id resolves to nothing on its own and exactly ONE known
+    entity's full token set (>=2 tokens) is contained in it, the effect is
+    rewritten onto that entity. Anything else keeps the fail-closed
+    rejection: ``corvins-hallway`` contains no known entity and still
+    rejects; two contained candidates are ambiguous and abstain.
+    """
+    if not effects:
+        return effects
+
+    known_ids: set[str] = set()
+    candidates: list[tuple[str, frozenset]] = []
+    if world_state is not None:
+        for item_id in world_state.scene_items:
+            known_ids.add(item_id)
+            tokens = _id_tokens(item_id)
+            if tokens:
+                candidates.append((item_id, tokens))
+        for npc_id, npc in world_state.npcs.items():
+            known_ids.add(npc_id)
+            tokens = _id_tokens(npc.name)
+            if tokens:
+                candidates.append((npc_id, tokens))
+    for entity in (getattr(knowledge_graph, "_entities", {}) or {}).values():
+        node_id = str(getattr(entity, "node_id", "") or "")
+        if not node_id:
+            continue
+        known_ids.add(node_id)
+        for label in (node_id, str(getattr(entity, "name", "") or "")):
+            tokens = _id_tokens(label)
+            if tokens:
+                candidates.append((node_id, tokens))
+    known_token_ids = {_id_tokens(kid): kid for kid in known_ids}
+
+    normalized: list[ProposedEffect] = []
+    for effect in effects:
+        field = None
+        value = ""
+        if effect.effect_type == EffectType.REF_ENTITY and effect.ref_entity_id:
+            field = "ref_entity_id"
+            value = effect.ref_entity_id
+        elif effect.effect_type == EffectType.UPDATE_ENTITY and effect.update_entity_id:
+            field = "update_entity_id"
+            value = effect.update_entity_id
+        if field is None:
+            normalized.append(effect)
+            continue
+        value_tokens = _id_tokens(value)
+        if (
+            value in known_ids
+            or value_tokens in known_token_ids
+            or not value_tokens
+        ):
+            # Resolvable as-is (exact id or slug dialect of one) — leave it
+            # to the normal validation path.
+            normalized.append(effect)
+            continue
+        contained = {
+            candidate_id
+            for candidate_id, candidate_tokens in candidates
+            if len(candidate_tokens) >= 2 and candidate_tokens < value_tokens
+        }
+        if len(contained) == 1:
+            resolved_id = next(iter(contained))
+            logger.info(
+                "invented_id_resolved",
+                proposed_id=value,
+                resolved_id=resolved_id,
+                effect_type=effect.effect_type.value,
+            )
+            normalized.append(effect.model_copy(update={field: resolved_id}))
+        else:
+            normalized.append(effect)
+    return normalized
+
+
 def _reanchor_same_turn_generic_npc_effects(
     effects: list[ProposedEffect],
     delta,
@@ -1734,6 +1827,11 @@ class DMOrchestrator:
             kg,
         )
         proposed_effects = _canonicalize_npc_effect_ids(
+            proposed_effects,
+            world_state,
+            kg,
+        )
+        proposed_effects = _resolve_invented_scene_ids(
             proposed_effects,
             world_state,
             kg,
