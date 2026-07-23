@@ -1,0 +1,148 @@
+{
+  "turn_log": "data\\turn_logs\\38b415da-49fd-4978-9166-a7df0b8fc84e.jsonl",
+  "judge_model": "gemini-2.5-flash",
+  "verdict": "PASS",
+  "overall_average": 4.8,
+  "dimension_means": {
+    "continuity": 5.0,
+    "contradiction_free": 5.0,
+    "npc_voice": 4.8,
+    "prose_freshness": 4.2,
+    "player_agency": 5.0
+  },
+  "gates": [
+    {
+      "name": "judge_coverage_complete",
+      "passed": true,
+      "detail": "windows graded=5; failed=0"
+    },
+    {
+      "name": "overall_average",
+      "passed": true,
+      "detail": "avg=4.8 (gate >= 4.0)"
+    },
+    {
+      "name": "no_dimension_below_minimum",
+      "passed": true,
+      "detail": "means={'continuity': 5.0, 'contradiction_free': 5.0, 'npc_voice': 4.8, 'prose_freshness': 4.2, 'player_agency': 5.0} (gate >= 3.0)"
+    },
+    {
+      "name": "zero_severe_contradictions",
+      "passed": true,
+      "detail": "severe=[]"
+    },
+    {
+      "name": "prose_repetition_bounded",
+      "passed": true,
+      "detail": "worst 8-gram repeat ratio=0.0 (gate <= 0.35)"
+    }
+  ],
+  "worst_repeat_ratio": 0.0,
+  "opening_bigrams": {
+    "the gaunt": 9,
+    "the bird": 4,
+    "the vial": 3,
+    "tamsyn's lips": 2,
+    "you turn": 2,
+    "you drop": 1,
+    "the courier's": 1,
+    "the compass": 1
+  },
+  "windows": [
+    {
+      "turns": [
+        1,
+        6
+      ],
+      "scores": {
+        "continuity": 5,
+        "contradiction_free": 5,
+        "npc_voice": 5,
+        "prose_freshness": 5,
+        "player_agency": 5
+      },
+      "contradictions": [],
+      "flags": [],
+      "summary": "The player character, Kael Windrunner, encounters a dying courier named Tamsyn who delivers a letter and a living brass compass. Tamsyn reveals Kael wrote the letter 30 years in the future, sealing a memory within the Glass Archive of Veyr, a city that 'forgets' annually. Kael receives a vial of 'dawn dust' as the final piece of a three-part key to reclaim the hidden memory, with the warning that the 'Choir' will know when it's reclaimed."
+    },
+    {
+      "turns": [
+        7,
+        12
+      ],
+      "scores": {
+        "continuity": 5,
+        "contradiction_free": 5,
+        "npc_voice": 5,
+        "prose_freshness": 4,
+        "player_agency": 5
+      },
+      "contradictions": [],
+      "flags": [
+        "T9: The description of the upward rain thinning to a drizzle feels slightly at odds with the earlier description of rain falling upward, though it's a minor point and could be interpreted as a localized effect or the tide shifting again.",
+        "T12: The description of the bird keeper's voice as 'rasping, like she hasn't spoken in hours' is a minor nit, as she's been in a crowd where people were shouting, and it's unlikely she'd have been completely silent for 'hours' in that context. It's a common trope, but slightly out of place here."
+      ],
+      "summary": "Kael learns more about the Archive's labyrinth, the gravity tides, and the three-part key from a dying Tamsyn. Ignoring Tamsyn's plea, Kael travels to The Spoor district, where a former warden reveals the Archive is 'bleeding' and something alive is in vault Lung-Seven-Three. A silent bird keeper confirms the wardens' presence and provides a sketch of the vault."
+    },
+    {
+      "turns": [
+        13,
+        18
+      ],
+      "scores": {
+        "continuity": 5,
+        "contradiction_free": 5,
+        "npc_voice": 5,
+        "prose_freshness": 4,
+        "player_agency": 5
+      },
+      "contradictions": [],
+      "flags": [
+        "T14: The phrase \"Nothing useful surfaces\" is a bit generic and could be varied.",
+        "T18: The DM's internal monologue about the dead-letter office being purged, then the NPC stating it, feels a little clunky. It's not a contradiction, but the delivery could be smoother."
+      ],
+      "summary": "Kael learns more about the wardens' sealing of Lung-Seven-Three, including a unique dark key and a 'pulsing' seal. The gaunt woman explains the gravity tides affecting Archive access and directs Kael to Archivist Velka, who might grant access to Lung-Seven-Three if Kael can provide proof to help her complete her catalog. The gaunt woman is unsure where to find such proof quickly."
+    },
+    {
+      "turns": [
+        19,
+        24
+      ],
+      "scores": {
+        "continuity": 5,
+        "contradiction_free": 5,
+        "npc_voice": 5,
+        "prose_freshness": 4,
+        "player_agency": 5
+      },
+      "contradictions": [],
+      "flags": [
+        "T20: The phrase 'carrying the quiet authority of someone who has watched the Archive's routines for decades' is a bit clunky and could be streamlined.",
+        "T21: 'pulling the memory forward' is a slightly awkward phrasing.",
+        "T22: 'wring more from a memory that has nothing left to give' is a slightly mixed metaphor, though understandable.",
+        "T23: 'the word drawn out' is a bit of a DM meta-commentary on the NPC's speech rather than a direct description of the sound itself.",
+        "T24: 'a crack in the armor of someone who's spent years swallowing her doubts' is a good image, but 'swallowing her doubts' is a common idiom."
+      ],
+      "summary": "Kael continues to gather information about the Lung-Seven-Three resealing from the bird keeper and the gaunt woman (Rina). Key details emerge about the wardens, the 'pulsing' black key, and a transferred junior archivist who heard a 'ticking' sound. Rina, now identified by name, directs Kael to Archivist Velka with this new information before the gravity tides shift."
+    },
+    {
+      "turns": [
+        25,
+        30
+      ],
+      "scores": {
+        "continuity": 5,
+        "contradiction_free": 5,
+        "npc_voice": 4,
+        "prose_freshness": 4,
+        "player_agency": 5
+      },
+      "contradictions": [],
+      "flags": [
+        "T28: Tamsyn's dialogue about 'Kael something' feels a bit forced as a response to the player's question, which was 'what did you mean by 'Kael something'?' The DM's response explains the meaning of the name, but the player's question was more about the boy's phrasing, which Tamsyn doesn't directly address. It's a minor nitpick, but the phrasing could have been smoother.",
+        "T29: Tamsyn's description of the bone-halls and Velka's mapping of them is quite extensive and detailed for someone who 'never walked them.' While she clarifies that Velka has, the depth of her knowledge about the specific mechanics ('gravity shifts without warning. Sometimes you walk on walls. Sometimes you fall up') feels a little beyond what she should know if she hasn't experienced it herself. It's not a contradiction, but it stretches credulity slightly for her character."
+      ],
+      "summary": "Kael learns Tamsyn is dying and finds her in a hospice niche. Tamsyn reveals the 'Kael' she was looking for is an older version of the player, and gives Kael 'dawn dust' to bypass the sealed respiratory wing. She directs Kael to Archivist Velka at the Weeping Lamp, who knows the 'bone-halls' and 'why the seal is alive,' before falling unconscious."
+    }
+  ]
+}

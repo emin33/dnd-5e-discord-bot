@@ -450,3 +450,19 @@ worst opener repetition 2x (was 6x). The cross-turn opening hint moved
 the one dial that had never moved. Product gates otherwise 24/26 with
 only the structural budget miss (7.1% — the generic followup leg, the
 last queue item). No update_entity rejections of the id-field class.
+
+## 2026-07-23: first fully-green run (27/27) with cross-store audit live
+
+Run 20260723_162617 (seed "Tamsyn"): **PASS 27/27** — the first longform
+run to clear every gate, including the new `cross_store_consistency`
+assertion. The audit (dnd_bot/game/consistency_audit.py, run against LIVE
+stores before teardown) reported zero violations, 15 live fact
+supersessions, clean pinned facts, and the first-ever Chroma coverage
+measurement: 8/8 described KG entities indexed. Narrative grade 4.8
+(continuity 5.0, contradiction_free 5.0, zero severe), repeat ratio 0.0.
+
+The audit exists because the "provably consistent?" question found a real
+hole in minutes: the per-turn memory->world fact sync resurrected
+supersession-retired facts every turn (fixed bidirectionally, 2b26065).
+Remaining unproven path: restart/resume convergence — crash mid-run,
+reload, assert the stores re-agree. That is the next audit to build.
