@@ -728,9 +728,8 @@ class CombatTurnCoordinator:
                         return self._parse_monster_attack(action_data)
 
         # Default unarmed strike: flat 1 bludgeoning (+STR added by the
-        # damage math, per 5e). The roller only speaks NdM, so flat 1 is
-        # spelled "1d1" — the literal "1" it had before raised
-        # "Invalid dice notation" on every unarmed hit.
+        # damage math, per 5e). Spelled "1d1" rather than flat "1" so a
+        # critical hit still has a die to double.
         return WeaponStats(
             name="Unarmed Strike",
             damage_dice="1d1",

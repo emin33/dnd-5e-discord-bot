@@ -261,6 +261,7 @@ class SpellcastingManager:
         # Roll damage if hit
         if result.hit and spell.damage_dice:
             damage_dice = self._scale_damage(spell, slot_level, is_cantrip=(spell.level == 0), caster_level=caster.level)
+            damage_dice = self._substitute_mod(damage_dice, caster)
             result.damage_roll = self.roller.roll_damage(damage_dice, critical=is_critical)
             result.damage_dealt = result.damage_roll.total
             result.damage_type = spell.damage_type
@@ -287,6 +288,7 @@ class SpellcastingManager:
         # Pre-roll damage (target save determines full/half/none)
         if spell.damage_dice:
             damage_dice = self._scale_damage(spell, slot_level, is_cantrip=(spell.level == 0), caster_level=caster.level)
+            damage_dice = self._substitute_mod(damage_dice, caster)
             result.damage_roll = self.roller.roll(damage_dice)
             result.damage_dealt = result.damage_roll.total
             result.damage_type = spell.damage_type
@@ -310,21 +312,7 @@ class SpellcastingManager:
         if spell.heal_at_slot_level:
             heal_dice = spell.heal_at_slot_level.get(slot_level)
             if heal_dice:
-                # SRD heal strings embed the caster's spellcasting modifier
-                # as a "+ MOD" token (e.g. "1d8 + MOD"). Substitute it
-                # case-insensitively and sign-aware ("1d8-1", never
-                # "1d8+-1") before the roller sees the notation.
-                mod = 0
-                if caster.spellcasting_ability:
-                    mod = caster.abilities.get_modifier(caster.spellcasting_ability)
-                mod_str = f"+{mod}" if mod >= 0 else str(mod)
-                heal_dice = re.sub(
-                    r"\s*\+\s*(?:your spellcasting ability modifier|mod)\b",
-                    mod_str,
-                    heal_dice,
-                    flags=re.IGNORECASE,
-                )
-
+                heal_dice = self._substitute_mod(heal_dice, caster)
                 result.healing_roll = self.roller.roll(heal_dice)
                 result.healing_amount = max(0, result.healing_roll.total)
 
@@ -341,6 +329,28 @@ class SpellcastingManager:
             success=True,
             spell=spell,
             slot_used=slot_level,
+        )
+
+    def _substitute_mod(self, dice: str, caster: Character) -> str:
+        """Replace the SRD's "+ MOD" token with the caster's spellcasting
+        modifier.
+
+        SRD heal strings ("1d8 + MOD") and spiritual-weapon's damage
+        strings embed the token in either case; substitute it
+        case-insensitively and sign-aware ("1d8-1", never "1d8+-1").
+        MOD is 0 for a caster without a spellcasting ability. A MOD
+        token appearing without its "+" is left alone — the roller
+        rejects it loudly rather than healing garbage silently.
+        """
+        mod = 0
+        if caster.spellcasting_ability:
+            mod = caster.abilities.get_modifier(caster.spellcasting_ability)
+        mod_str = f"+{mod}" if mod >= 0 else str(mod)
+        return re.sub(
+            r"\s*\+\s*(?:your spellcasting ability modifier|mod)\b",
+            mod_str,
+            dice,
+            flags=re.IGNORECASE,
         )
 
     def _scale_damage(

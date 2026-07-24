@@ -42,6 +42,9 @@ class DiceRoll:
 
     def __str__(self) -> str:
         """Human-readable representation."""
+        if not self.kept_dice and not self.dice_results:
+            # Flat notation ("20") rolled no dice — don't render "[]".
+            return f"**{self.total}**"
         if self.advantage_rolls:
             rolls_str = f"[{self.advantage_rolls[0]}, {self.advantage_rolls[1]}] → {self.kept_dice[0]}"
         elif self.disadvantage_rolls:
@@ -243,7 +246,8 @@ class DiceRoller:
             negative = token.startswith("-")
             term = token.lstrip("+-")
 
-            if term.isdigit():
+            # isascii() too: isdigit() accepts superscripts int() rejects.
+            if term.isascii() and term.isdigit():
                 modifier += -int(term) if negative else int(term)
                 continue
 

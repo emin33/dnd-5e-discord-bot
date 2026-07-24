@@ -169,10 +169,34 @@ _GUARDIAN_OF_FAITH = {
     },
 }
 
+_SPIRITUAL_WEAPON = {
+    "index": "spiritual-weapon",
+    "name": "Spiritual Weapon",
+    "level": 2,
+    "school": {"index": "evocation"},
+    "casting_time": "1 bonus action",
+    "range": "60 feet",
+    "components": ["V", "S"],
+    "duration": "1 minute",
+    "concentration": False,
+    "ritual": False,
+    "desc": ["You create a floating, spectral weapon."],
+    "attack_type": "melee",
+    "damage": {
+        "damage_type": {"name": "Force"},
+        "damage_at_slot_level": {
+            "2": "1d8 + MOD",
+            "3": "1d8 + MOD",
+            "4": "2d8 + MOD",
+        },
+    },
+}
+
 _SPELLS = {
     row["index"]: row
     for row in (
         _CURE_WOUNDS,
+        _SPIRITUAL_WEAPON,
         _HEAL,
         _FLAME_STRIKE,
         _DISINTEGRATE,
@@ -374,6 +398,16 @@ class TestRollerSRDNotation:
         assert len(result.kept_dice) == 16
         assert result.total == 16
 
+    def test_flat_roll_renders_without_empty_brackets(self):
+        """User-facing embeds must not show "[] + 20" for flat rolls."""
+        result = DiceRoller(rng=ScriptedRNG([])).roll("20")
+        assert str(result) == "**20**"
+
+    def test_non_ascii_digits_rejected_cleanly(self):
+        """"²".isdigit() is True but it is not dice notation."""
+        with pytest.raises(ValueError, match="Invalid dice notation"):
+            DiceRoller().roll("²")
+
 
 # ── SpellcastingManager heal/save paths ──────────────────────────────────────
 
@@ -435,6 +469,38 @@ class TestCastHealingSpell:
         result = manager.cast_healing_spell(cleric, spell, slot_level=6)
 
         assert result.healing_amount == 70
+
+
+class TestCastAttackSpell:
+    """spiritual-weapon ships "+ MOD" in its DAMAGE strings — the only SRD
+    spell that does — and routes through cast_attack_spell (pre-merge
+    review finding: the first fix only substituted on the heal path)."""
+
+    def test_spiritual_weapon_substitutes_mod_on_hit(self, monkeypatch):
+        # d20 face 15 + spell attack bonus 7 (prof 4 + WIS 3) = 22 vs AC 13.
+        manager = _make_manager(monkeypatch, [15, 5])
+        cleric = _make_cleric()
+        spell = manager.get_spell_info("spiritual-weapon")
+
+        result = manager.cast_attack_spell(
+            cleric, spell, slot_level=2, target_ac=13
+        )
+
+        assert result.hit is True
+        assert result.damage_dealt == 8  # die 5 + WIS mod 3
+        assert result.damage_type == "force"
+
+    def test_spiritual_weapon_crit_doubles_dice_not_mod(self, monkeypatch):
+        manager = _make_manager(monkeypatch, [20, 4, 5])
+        cleric = _make_cleric()
+        spell = manager.get_spell_info("spiritual-weapon")
+
+        result = manager.cast_attack_spell(
+            cleric, spell, slot_level=2, target_ac=13
+        )
+
+        assert result.critical is True
+        assert result.damage_dealt == 12  # (4+5) dice + 3 mod, mod not doubled
 
 
 class TestCastSaveSpell:
