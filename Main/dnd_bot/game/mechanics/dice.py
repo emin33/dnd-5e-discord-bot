@@ -42,6 +42,9 @@ class DiceRoll:
 
     def __str__(self) -> str:
         """Human-readable representation."""
+        if not self.kept_dice and not self.dice_results:
+            # Flat notation ("20") rolled no dice — don't render "[]".
+            return f"**{self.total}**"
         if self.advantage_rolls:
             rolls_str = f"[{self.advantage_rolls[0]}, {self.advantage_rolls[1]}] → {self.kept_dice[0]}"
         elif self.disadvantage_rolls:
@@ -74,6 +77,16 @@ class DiceRoller:
         re.IGNORECASE,
     )
 
+    # One additive term inside compound notation: a dice group with optional
+    # keep/drop. SRD strings compound these ("4d6 + 5d6", "10d6 + 40") and
+    # sometimes are a bare flat integer ("20").
+    TERM_PATTERN = re.compile(
+        r"^(\d+)?d(\d+)(?:(kh|kl|dh|dl)(\d+))?$",
+        re.IGNORECASE,
+    )
+
+    _WHITESPACE = re.compile(r"\s+")
+
     def __init__(self, rng: Optional[random.Random] = None):
         """Initialize with optional custom RNG for testing."""
         self.rng = rng or random.Random()
@@ -97,11 +110,18 @@ class DiceRoller:
         Returns:
             DiceRoll with complete roll information
         """
-        notation = notation.strip().lower()
+        # SRD strings space their operators ("1d8 + 3") — the grammar is
+        # whitespace-insensitive.
+        notation = self._WHITESPACE.sub("", notation.strip().lower())
         match = self.DICE_PATTERN.match(notation)
 
         if not match:
-            raise ValueError(f"Invalid dice notation: {notation}")
+            return self._roll_compound(
+                notation,
+                advantage=advantage,
+                disadvantage=disadvantage,
+                reason=reason,
+            )
 
         num_dice = int(match.group(1)) if match.group(1) else 1
         die_size = int(match.group(2))
@@ -196,6 +216,83 @@ class DiceRoller:
             roll_type=roll_type,
         )
 
+    def _roll_compound(
+        self,
+        notation: str,
+        advantage: bool,
+        disadvantage: bool,
+        reason: str,
+    ) -> DiceRoll:
+        """Roll notation the single-group pattern can't parse.
+
+        SRD damage/heal strings arrive as flat integers ("20"), sums of a
+        dice group and a flat value ("10d6+40" once whitespace-stripped),
+        and sums of dice groups ("4d6+5d6"). Terms are +/- separated; dice
+        groups may only be added — the SRD never subtracts dice, so a
+        negative group stays a loud error.
+
+        Expects `notation` already lowercased and whitespace-stripped.
+        """
+        tokens = re.findall(r"[+-]?[^+-]+", notation)
+        if not tokens or "".join(tokens) != notation:
+            raise ValueError(f"Invalid dice notation: {notation}")
+
+        dice_results: list[int] = []
+        kept_dice: list[int] = []
+        dropped_dice: list[int] = []
+        modifier = 0
+
+        for token in tokens:
+            negative = token.startswith("-")
+            term = token.lstrip("+-")
+
+            # isascii() too: isdigit() accepts superscripts int() rejects.
+            if term.isascii() and term.isdigit():
+                modifier += -int(term) if negative else int(term)
+                continue
+
+            term_match = self.TERM_PATTERN.match(term)
+            if not term_match or negative:
+                raise ValueError(f"Invalid dice notation: {notation}")
+
+            num_dice = int(term_match.group(1)) if term_match.group(1) else 1
+            die_size = int(term_match.group(2))
+            if num_dice <= 0 or die_size <= 0:
+                raise ValueError(
+                    f"Invalid dice notation: {notation} (dice count and size must be positive)"
+                )
+
+            rolled = [self.rng.randint(1, die_size) for _ in range(num_dice)]
+            kept, dropped = self._apply_keep_drop(
+                rolled,
+                term_match.group(3),
+                int(term_match.group(4)) if term_match.group(4) else None,
+            )
+            dice_results.extend(rolled)
+            kept_dice.extend(kept)
+            dropped_dice.extend(dropped)
+
+        if advantage or disadvantage:
+            # Same contract as the single-group path: never drop the flag
+            # silently for non-1d20 notation.
+            logger.warning(
+                "advantage_flag_ignored_non_1d20",
+                notation=notation,
+                advantage=advantage,
+                disadvantage=disadvantage,
+                reason=reason,
+            )
+
+        return DiceRoll(
+            notation=notation,
+            dice_results=dice_results,
+            kept_dice=kept_dice,
+            dropped_dice=dropped_dice,
+            modifier=modifier,
+            total=sum(kept_dice) + modifier,
+            reason=reason,
+        )
+
     def _apply_keep_drop(
         self,
         dice: list[int],
@@ -263,13 +360,14 @@ class DiceRoller:
         For critical hits, doubles the number of dice rolled.
         """
         if critical:
-            # Double the dice for critical hits
-            match = self.DICE_PATTERN.match(notation.lower())
-            if match:
-                num_dice = int(match.group(1)) if match.group(1) else 1
-                die_size = match.group(2)
-                rest = notation[match.end(2) :]
-                notation = f"{num_dice * 2}d{die_size}{rest}"
+            # Double the dice for critical hits — every group of a
+            # compound notation ("4d6+4d6"), per the 5e rule that a crit
+            # doubles all of the attack's damage dice.
+            notation = re.sub(
+                r"(\d+)?d(\d+)",
+                lambda m: f"{(int(m.group(1)) if m.group(1) else 1) * 2}d{m.group(2)}",
+                self._WHITESPACE.sub("", notation.strip().lower()),
+            )
 
         return self.roll(notation, reason="Damage")
 
