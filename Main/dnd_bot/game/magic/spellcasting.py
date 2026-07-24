@@ -1,5 +1,6 @@
 """Spellcasting manager - handles spell resolution."""
 
+import re
 from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
@@ -309,11 +310,20 @@ class SpellcastingManager:
         if spell.heal_at_slot_level:
             heal_dice = spell.heal_at_slot_level.get(slot_level)
             if heal_dice:
-                # Replace "mod" with actual spellcasting modifier
+                # SRD heal strings embed the caster's spellcasting modifier
+                # as a "+ MOD" token (e.g. "1d8 + MOD"). Substitute it
+                # case-insensitively and sign-aware ("1d8-1", never
+                # "1d8+-1") before the roller sees the notation.
+                mod = 0
                 if caster.spellcasting_ability:
                     mod = caster.abilities.get_modifier(caster.spellcasting_ability)
-                    heal_dice = heal_dice.replace("+ your spellcasting ability modifier", f"+{mod}")
-                    heal_dice = heal_dice.replace("+ mod", f"+{mod}")
+                mod_str = f"+{mod}" if mod >= 0 else str(mod)
+                heal_dice = re.sub(
+                    r"\s*\+\s*(?:your spellcasting ability modifier|mod)\b",
+                    mod_str,
+                    heal_dice,
+                    flags=re.IGNORECASE,
+                )
 
                 result.healing_roll = self.roller.roll(heal_dice)
                 result.healing_amount = max(0, result.healing_roll.total)
@@ -361,7 +371,6 @@ class SpellcastingManager:
     def _scale_cantrip_damage(self, base_dice: str, caster_level: int) -> str:
         """Scale cantrip damage based on caster level (5th, 11th, 17th)."""
         # Parse base dice (e.g., "1d10")
-        import re
         match = re.match(r"(\d+)d(\d+)(.*)$", base_dice)
         if not match:
             return base_dice
