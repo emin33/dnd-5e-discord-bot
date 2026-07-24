@@ -540,3 +540,37 @@ exonerated: it was a verified NO-OP in those runs (superseded=0). This
 narrator NPC-drought (model/premise drift vs the soak-era behavior) is
 what currently blocks the npc-seeded scenarios, independent of tool
 reliability.
+
+## 2026-07-23 (evening): NPC-less-opening seed aborts root-caused + retry fix
+
+Four consecutive runs (elegant-albattani worktree, 20260723_173643/174525/
+175031/175539) aborted at the turn-9 seed pick. Root cause is a **story
+lottery, not a regression**: with the identical Glasswake premise, prompts,
+and code paths that seeded Pell/Lys Vane/Lena Harlow/Tamsyn earlier the same
+day, deepseek-v4-flash sometimes opens an object-focused story in which every
+human stays anonymous ("the courier", "a woman", "grey apron figure") for all
+8 explore turns. The extractor faithfully reports new_npcs=0 (or
+generic-named NPCs the eligibility filter correctly rejects), so
+`_canonical_seed_candidates` is empty and `required_seed_type="npc"`
+scenarios could not seed. Once an opening goes object-focused it
+self-conditions and stays that way. The branch's supersession diff
+(9c85e21) only touches followup ref grounding and was confirmed a no-op
+here. The existing single turn-8 nudge fired in all three NPC runs but one
+narration turn yields scenery, not a name exchange.
+
+The fourth abort ("'metallic residue' (item) is not an exact eligible
+canonical graph candidate", emergent_callback) was a different mode: eligible
+candidates existed but Gemini picked off-list three times and `pick_seed`
+raised.
+
+Harness fixes (test_long_horizon.py):
+- Seed pick no longer hard-aborts at turn 9. Up to `SEED_PICK_MAX_RETRY_TURNS`
+  (3) extended explore turns force an escalated name-demanding player action
+  and re-attempt the pick each turn; only then does the run abort.
+- The soft pre-pick nudge now also fires at turn `seed_pick_after_turn - 1`,
+  giving two chances to put a nameable person on stage before the boundary.
+- `seed.chosen_after_turn` records the ACTUAL pick turn; washout-transition
+  forcing, washout redaction, and the explore-window/gap assertions all
+  follow it, so a late pick cannot fail `seed_appears_in_explore`.
+- `pick_seed` falls back to the priority-sorted top canonical candidate when
+  Gemini exhausts its 3 attempts against a non-empty eligible list.

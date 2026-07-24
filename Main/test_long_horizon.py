@@ -91,6 +91,12 @@ LONG_HORIZON_DIR = Path("data/long_horizon")
 # "altar", so we match on the cleaned name and meaningful component tokens.
 SEED_STOPWORDS = {"the", "a", "an", "of", "to", "in"}
 
+# When the explore act ends with no eligible graph-backed seed (an NPC-less,
+# object-focused story — a legal narrator outcome, observed 4x on 2026-07-23),
+# extend explore with forced name-eliciting turns instead of aborting. Kept
+# small so a late pick still leaves cool-off room before memory_silence starts.
+SEED_PICK_MAX_RETRY_TURNS = 3
+
 # Degenerate seeds the framework falls back to when Gemini's seed-pick call
 # fails or returns garbage (see GeminiFlashPlayer.pick_seed / the seed-pick
 # except handler). A run seeded with one of these can't be trusted to prove
@@ -1890,6 +1896,26 @@ The action must begin with "I", end with punctuation, and contain no markdown or
                 continue
             return picked
 
+        # Gemini kept choosing off-list (observed 2026-07-23: 'metallic
+        # residue' three times despite the eligible-candidates constraint).
+        # Every candidate is already validated as canonical, emergent, and
+        # narration-exact, so ranking is the only thing being outsourced —
+        # fall back to the priority-sorted top candidate instead of aborting
+        # a run whose graph state is perfectly usable.
+        if seed_candidates:
+            candidate = seed_candidates[0]
+            print(
+                f"  {C.YELLOW}seed_pick_fallback: Gemini failed 3 attempts "
+                f"({last_problem}); using top canonical candidate "
+                f"{candidate['name']!r}{C.RESET}"
+            )
+            return Seed(
+                type=candidate["type"],
+                name=candidate["name"],
+                reason=candidate.get("description")
+                or "Canonical graph-backed emergent entity (ranking fallback).",
+                chosen_after_turn=scenario.seed_pick_after_turn,
+            )
         raise ValueError(f"Seed selection failed after 3 attempts: {last_problem}")
 
 
@@ -2247,19 +2273,36 @@ async def run_long_horizon(
 
     try:
         for turn in range(1, n_turns + 1):
-            # Pick the seed AFTER the explore phase but before the next action
-            if seed is None and turn == scenario.seed_pick_after_turn + 1:
+            # Pick the seed AFTER the explore phase but before the next action.
+            # A narrator can legally spend the whole explore act on an
+            # object-focused, anonymous-cast story (observed 4x consecutively
+            # on 2026-07-23 with deepseek-v4-flash: every human stayed "the
+            # courier"/"a woman" for 8 turns, so the graph held zero eligible
+            # named NPCs). That is a story-lottery outcome, not a memory
+            # failure — extend the explore act with forced name-eliciting
+            # actions for a few turns before declaring the run untestable.
+            seed_pick_retry = False
+            if seed is None and turn > scenario.seed_pick_after_turn:
                 seed_candidates = _canonical_seed_candidates(
                     ws_session, narration_history, scenario
                 )
+                retry_turns_used = turn - (scenario.seed_pick_after_turn + 1)
                 if not seed_candidates:
-                    raise RuntimeError(
-                        "No trustworthy graph-backed emergent callback seed "
-                        f"existed after turn {scenario.seed_pick_after_turn}"
-                    )
+                    if retry_turns_used >= SEED_PICK_MAX_RETRY_TURNS:
+                        raise RuntimeError(
+                            "No trustworthy graph-backed emergent callback seed "
+                            f"existed after turn {scenario.seed_pick_after_turn} "
+                            f"(+{SEED_PICK_MAX_RETRY_TURNS} nudged retry turns)"
+                        )
+                    seed_pick_retry = True
+            if seed is None and not seed_pick_retry and turn > scenario.seed_pick_after_turn:
                 seed = await player.pick_seed(
                     narration_history, scenario, seed_candidates
                 )
+                # Record when the pick really happened: washout redaction,
+                # the silence assertions, and the explore-window assertions
+                # all anchor on this, and a nudged retry moves it.
+                seed.chosen_after_turn = turn - 1
                 print(f"\n{C.MAGENTA}{C.BOLD}  >>> SEED IDENTIFIED <<< {C.RESET}")
                 print(f"  {C.MAGENTA}type:   {seed.type}{C.RESET}")
                 print(f"  {C.MAGENTA}name:   {seed.name}{C.RESET}")
@@ -2275,9 +2318,23 @@ async def run_long_horizon(
             washout_transition_recovery = False
             callback_entry_recovery = False
             forced_action = None
-            if (
+            if seed_pick_retry:
+                # The graph is still NPC-dry past the pick boundary. Escalate
+                # beyond the soft turn-8 nudge: one narration turn of "I walk
+                # toward the crowd" produces scenery, not a name exchange, so
+                # demand the exchange itself.
+                forced_action = (
+                    "I plant myself directly in front of the nearest living "
+                    "person, look them in the eye, and say, 'Your name. Your "
+                    "real, exact name — I need it before we speak of anything "
+                    "else.' I refuse titles, evasions, and descriptions, wait "
+                    "until they state a proper name, and repeat that name back "
+                    "to them twice."
+                )
+                seed_setup_recovery = True
+            elif (
                 phase.name == "explore"
-                and turn == scenario.seed_pick_after_turn
+                and turn >= scenario.seed_pick_after_turn - 1
                 and not _canonical_seed_candidates(
                     ws_session, narration_history, scenario
                 )
@@ -2293,7 +2350,7 @@ async def run_long_horizon(
             elif (
                 seed
                 and phase.name == "washout"
-                and turn == phase.turn_range[0]
+                and turn == max(phase.turn_range[0], seed.chosen_after_turn + 1)
             ):
                 # Make the callback target genuinely off-screen before the
                 # cool-off window begins. The player model may otherwise keep
@@ -2556,6 +2613,11 @@ def run_assertions(scenario: Scenario, session_id: str, seed: Seed) -> list[Asse
 
     explore_phase = next(p for p in scenario.phases if p.name == "explore")
     ex_lo, ex_hi = explore_phase.turn_range
+    # A nudged seed-pick retry extends discovery past the static explore
+    # range; the seed's first appearance and persistence live in those extra
+    # turns, so the explore window (and therefore the recall gap) follows the
+    # actual pick turn.
+    ex_hi = max(ex_hi, seed.chosen_after_turn)
     explore_turns = [t for t in log.turns() if ex_lo <= t <= ex_hi]
 
     # A deep creative campaign can have multiple named middle acts instead of
