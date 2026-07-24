@@ -1063,6 +1063,33 @@ def evaluate_tool_coverage(
                     f"({policy_suppression_ratio:.1%})"
                 ),
             ))
+            # Superseded followup refs no longer charge the structural budget
+            # (grounding is deterministic; state output is identical), so this
+            # separate bound keeps the model's raw ref-emission quality
+            # measured: a flood of hallucinated refs must fail SOMETHING even
+            # though every one is self-healed. Observed healthy runs sit at
+            # 0-2%; the pre-fix noisy runs would have measured ~6-8%.
+            superseded = sum(
+                int(diag.get("tool_followup_refs_superseded", 0) or 0)
+                for diag in diagnostics_by_turn
+            )
+            supersede_attempts = proposed_total + dropped + superseded
+            superseded_ratio = (
+                superseded / supersede_attempts if supersede_attempts else 0.0
+            )
+            results.append(AssertionResult(
+                name="tool_followup_supersede_budget",
+                passed=superseded_ratio <= 0.15,
+                description=(
+                    "Model-emitted followup references mostly ground as-is; "
+                    "deterministic supersession stays a repair path, not the "
+                    "primary source of references."
+                ),
+                detail=(
+                    f"superseded={superseded}/{supersede_attempts} "
+                    f"({superseded_ratio:.1%})"
+                ),
+            ))
             unmet_obligation_turns = [
                 {
                     "turn": index + 1,

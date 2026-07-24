@@ -574,3 +574,37 @@ Harness fixes (test_long_horizon.py):
   follow it, so a late pick cannot fail `seed_appears_in_explore`.
 - `pick_seed` falls back to the priority-sorted top canonical candidate when
   Gemini exhausts its 3 attempts against a non-empty eligible list.
+
+## 2026-07-23 (night): merged-master validation + gate-classifier refinements
+
+All three same-day fixes (ref supersession 9c85e21, repair meta-talk strip
+4d70b39, seed retry-with-nudge 09ea374) merged to master; 1174 tests green,
+mypy clean. First combined run, targeted_relevance_callback 20260723_223012
+(seed "Sera Venn" — the retry fix seeded a scenario that had aborted four
+times): 25/27, `tool_structural_failure_budget` **0.0%** (0/83, zero
+structural errors), `narrator_no_meta_reasoning_leak` PASS, grader PASS
+4.76 with zero severe contradictions.
+
+Both residual fails were measurement gaps, fixed in 69a41b3:
+
+- `kg_kept_seed_out_of_irrelevant_context` now separates retrieval that
+  TARGETED the seed (graph yaml, seed/text/vector ids, chunk entity_ids)
+  from the seed name riding inside ANOTHER entity's recalled episode (the
+  player asked about the Chain Stair; the recalled turn-8 episode read
+  "Sera points past the chapel..."). Episode co-mentions are annotated,
+  not failed. T22/23 reclassify to co-mention; zero targeted leaks.
+- `is_generic_npc_label` now classifies generic-noun + prepositional
+  descriptor ("man in apron") as generic, abstaining on capitalized
+  descriptor tokens ("man in Orin's shop"). The T12 "misbind"
+  (man in apron <- Hesk) was a correct vocative naming promotion ("You
+  talk too much, Hesk." ... "Hesk shrugs"); the identity gate's
+  generic-label exemption now covers it.
+
+Offline re-evaluation of 20260723_223012 with both refinements: 27/27.
+
+Also added `tool_followup_supersede_budget` (<=15%): superseded followup
+refs no longer charge the structural budget, so this separate bound keeps
+raw ref-emission quality measured — a hallucinated-ref flood must fail
+something even though every instance self-heals. Healthy runs measure
+0-2%; the pre-fix noisy runs would have measured ~6-8%. This closes the
+adversarial review's watch-item.
