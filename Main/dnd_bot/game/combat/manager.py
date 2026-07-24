@@ -1168,15 +1168,14 @@ class CombatManager:
         Grant advantage to a target via the Help action.
 
         The target's next attack roll or ability check gains advantage.
+        Does NOT consume the helper's action — economy ownership lives in
+        the coordinator's pre-routing consume block, which has already
+        spent it by the time this runs.
         """
         helper = self.get_combatant(helper_id)
         target = self.get_combatant(target_id)
 
         if not helper or not target:
-            return False
-
-        # Use helper's action
-        if not self.use_action(helper_id):
             return False
 
         target.has_help_advantage = True

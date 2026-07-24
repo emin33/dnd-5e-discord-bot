@@ -1007,3 +1007,54 @@ class TestActionEconomyRefund:
         assert mock_character.spell_slots.get_slots(1)[0] == 2
         assert char_repo.slot_calls == []
         assert player.turn_resources.action is True
+
+
+class TestHelpAction:
+    """The Help action could never succeed: the coordinator's economy block
+    consumes the action before routing, then grant_help_advantage tried to
+    consume the SAME action a second time, always got False, and _execute_help
+    reported "Could not grant help" every single time (post AQ-ERR-03 the
+    action was at least refunded). Economy ownership lives in the coordinator;
+    the manager only grants the marker.
+    """
+
+    async def test_help_grants_advantage_and_consumes_exactly_one_action(
+        self, mock_character, unique_channel_id
+    ):
+        manager = _make_combat(unique_channel_id, mock_character)
+        player = next(c for c in manager.combat.combatants if c.is_player)
+        ally = manager.add_custom_combatant(
+            name="Torvin", hp=10, ac=14, is_player=True
+        )
+        ally.turn_order = 2
+        session = _make_session(unique_channel_id, mock_character)
+        coordinator = _coordinator(manager, session, _ScriptedRoller())
+
+        result = await coordinator.execute_action(CombatAction(
+            action_type=CombatActionType.HELP,
+            combatant_id=player.id,
+            target_ids=[ally.id],
+        ))
+
+        assert result.success is True
+        assert result.error is None
+        assert ally.has_help_advantage is True
+        # Exactly one action spent — and it STAYS spent (no refund: the
+        # help genuinely happened).
+        assert player.turn_resources.action is False
+        assert player.turn_resources.bonus_action is True
+        assert player.turn_resources.reaction is True
+
+    async def test_grant_help_advantage_does_not_own_the_action_economy(
+        self, mock_character, unique_channel_id
+    ):
+        """The seam contract, pinned at the manager: the coordinator has
+        already consumed the helper's action by the time this runs, so the
+        grant must succeed with the action already spent."""
+        manager = _make_combat(unique_channel_id, mock_character)
+        player = next(c for c in manager.combat.combatants if c.is_player)
+        goblin = next(c for c in manager.combat.combatants if not c.is_player)
+        assert manager.use_action(player.id) is True  # coordinator's consume
+
+        assert manager.grant_help_advantage(player.id, goblin.id) is True
+        assert goblin.has_help_advantage is True
