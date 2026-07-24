@@ -319,6 +319,13 @@ def _resolve_invented_scene_ids(
     item-shaped id never rewrites onto an NPC. Anything else keeps the
     fail-closed rejection — ``corvins-hallway`` contains no known entity
     and still rejects; a ``sera`` with two tracked Seras abstains.
+
+    A winner must also agree with ``ref_alias_used`` when the narrator
+    supplied one. The alias is the name that actually appeared in prose, so
+    it is the strongest available evidence about who was meant; a rewrite
+    that contradicts it mis-binds the effect AND permanently grafts the
+    wrong alias onto the resolved entity downstream (post-merge review,
+    seam 2). Disagreement abstains rather than guessing.
     """
     if not effects:
         return effects
@@ -409,6 +416,25 @@ def _resolve_invented_scene_ids(
             direction = "subset"
         if len(matched) == 1:
             resolved_id = next(iter(matched))
+            # Alias agreement: the prose name the narrator actually used must
+            # be comparable to one of the winner's labels — 'low wooden door'
+            # inside 'low wooden door', 'Gideon Hask' against 'Gideon Hask'.
+            # A disjoint alias ('Mira' resolving onto 'Gideon Hask') is
+            # evidence the rewrite is wrong, so it abstains.
+            alias_tokens = _id_tokens(getattr(effect, "ref_alias_used", "") or "")
+            if alias_tokens and not any(
+                alias_tokens <= label_tokens or label_tokens <= alias_tokens
+                for candidate_id, label_tokens, _type, _proper in candidates
+                if candidate_id == resolved_id
+            ):
+                logger.debug(
+                    "invented_id_alias_mismatch_abstained",
+                    proposed_id=value,
+                    resolved_id=resolved_id,
+                    alias=effect.ref_alias_used,
+                )
+                normalized.append(effect)
+                continue
             # Type compatibility: an item-shaped id must not rewrite onto an
             # NPC (and vice versa) just because their tokens overlap.
             resolved_types = {

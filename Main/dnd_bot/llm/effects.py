@@ -206,6 +206,196 @@ def build_effect_idempotency_key(
     return f"{campaign_id}:{message_id}:{effect_index}"
 
 
+def _session_world_state(session):
+    """Return the session's WorldState however it is currently attached."""
+    if session is None:
+        return None
+    world_state = getattr(session, "world_state", None)
+    if world_state is None:
+        world_store = getattr(session, "world_store", None)
+        world_state = getattr(world_store, "state", None)
+    return world_state
+
+
+def resolve_world_npc(session, entity_id: str):
+    """Resolve a durable NPC after its scene-scoped view has departed.
+
+    This establishes identity only. The orchestrator's WorldStateStore
+    remains the sole writer for the authoritative world projection, and
+    DeltaBridge owns graph mutation. A graph-only match therefore makes
+    ``update_entity`` executable without incorrectly rematerializing an
+    off-screen NPC into the current scene.
+
+    Validator and executor share this one function on purpose: an id the
+    validator accepts and the executor cannot resolve is the validate-then-
+    die class the id-resolution work set out to eliminate.
+    """
+    world_state = _session_world_state(session)
+    if world_state is not None:
+        world_npc = (
+            world_state.npcs.get(entity_id)
+            or world_state._find_npc(entity_id)
+        )
+        if world_npc is not None:
+            return world_npc
+
+    # Departed-but-real identities. ``_is_known_entity`` has always accepted
+    # these, so resolution must too — otherwise a narrator update to a dead
+    # NPC validates and then dies at execution (post-merge review, seam 4).
+    dead_npcs = getattr(session, "campaign_dead_npcs", {}) if session else {}
+    if dead_npcs:
+        dead = dead_npcs.get(entity_id)
+        if dead is None:
+            from ..game.identity import resolve_unique_identity
+
+            dead = resolve_unique_identity(entity_id, list(dead_npcs.values()))
+        if dead is not None:
+            return dead
+
+    knowledge_graph = (
+        getattr(session, "knowledge_graph", None) if session else None
+    )
+    if knowledge_graph is None:
+        return None
+    graph_entity = knowledge_graph.get_entity(entity_id)
+    if graph_entity is None:
+        resolver = getattr(knowledge_graph, "resolve_entity_reference", None)
+        if callable(resolver):
+            graph_entity = resolver(entity_id)
+    entity_type = getattr(
+        getattr(graph_entity, "entity_type", None), "value", None
+    )
+    return graph_entity if graph_entity is not None and entity_type == "npc" else None
+
+
+def resolve_world_reference(session, entity_id: str):
+    """Resolve a canonical NPC, current location, or active scene item."""
+    npc = resolve_world_npc(session, entity_id)
+    if npc is not None:
+        return ("npc", npc)
+
+    world_state = _session_world_state(session)
+    if world_state is None:
+        return None
+
+    from ..game.knowledge.models import slugify
+
+    query_slug = slugify(entity_id)
+    location = (world_state.current_location or "").strip()
+    if location and query_slug == slugify(location):
+        return ("location", location)
+    # Historical/adjacent locations are not ambient prompt seeds, but an
+    # explicit narrator reference to a known place is still legitimate.
+    for known_location in world_state.connected_locations:
+        if query_slug and query_slug == slugify(known_location):
+            return ("location", known_location)
+    for name in world_state.scene_items:
+        if entity_id == name or (query_slug and query_slug == slugify(name)):
+            return ("item", name)
+
+    # Explicit references may resolve through the durable campaign graph
+    # after an entity leaves scene-scoped WorldState. This lookup does not
+    # make it an ambient prompt seed.
+    knowledge_graph = (
+        getattr(session, "knowledge_graph", None) if session else None
+    )
+    if knowledge_graph is not None:
+        graph_entity = knowledge_graph.get_entity(entity_id)
+        if graph_entity is None:
+            resolver = getattr(
+                knowledge_graph, "resolve_entity_reference", None
+            )
+            if callable(resolver):
+                graph_entity = resolver(entity_id)
+        if graph_entity is not None:
+            graph_type = getattr(
+                getattr(graph_entity, "entity_type", None), "value", None
+            ) or str(getattr(graph_entity, "entity_type", "entity"))
+            return (graph_type, graph_entity)
+    return None
+
+
+def world_reference_update_kind(scene_registry, session, entity_id: str):
+    """Return the world-reference type an ``update_entity`` target resolves to.
+
+    ``None`` means "do not gate": either the target is a live scene entity
+    (its own long-standing contract) or nothing about its type is knowable
+    from the collaborators at hand. Validator and executor both call this so
+    they cannot disagree about what a target is.
+    """
+    if scene_registry is not None and scene_registry.get_by_name(entity_id):
+        return None
+    if resolve_world_npc(session, entity_id) is not None:
+        return "npc"
+    reference = resolve_world_reference(session, entity_id)
+    return reference[0] if reference else None
+
+
+# Attitude toward the party and carried inventory are person semantics.
+# Nothing downstream writes them for a non-NPC: WorldStateStore's
+# UPDATE_ENTITY branch is NPC-gated and DeltaBridge would stamp the raw
+# property onto whatever node the id names.
+_PERSON_ONLY_UPDATE_FIELDS = (
+    ("disposition", "update_disposition"),
+    ("add_items", "update_add_items"),
+    ("remove_items", "update_remove_items"),
+)
+
+# A place is not a creature and holds no inventory. ``update_status`` is a
+# creature-liveness enum (alive/wounded/dead/fled/captured) whose 'dead'
+# value DeltaBridge translates into ``alive=false`` on the node.
+_LOCATION_ALLOWED_UPDATE_FIELDS = (
+    ("description_addition", "update_description_addition"),
+    ("importance", "update_importance"),
+)
+
+
+def update_entity_target_conflict(effect, target_kind) -> Optional[str]:
+    """Return why *effect*'s change fields cannot target *target_kind*.
+
+    Post-merge review, seam 1: the world-reference fallback made LOCATION and
+    item nodes reachable by ``update_entity``, and the executor applied the
+    NPC-only field family to them regardless — DeltaBridge then stamped
+    disposition/status onto a place. Abstains (returns None) whenever the
+    target kind is unknown.
+    """
+    if not target_kind or target_kind == "npc":
+        return None
+
+    if target_kind == "location":
+        allowed = {name for name, _attr in _LOCATION_ALLOWED_UPDATE_FIELDS}
+        offending = [
+            name
+            for name, attr in (
+                ("disposition", "update_disposition"),
+                ("status", "update_status"),
+                ("add_items", "update_add_items"),
+                ("remove_items", "update_remove_items"),
+            )
+            if name not in allowed and getattr(effect, attr, None) not in (None, [], "")
+        ]
+        if offending:
+            return (
+                f"update_entity target '{effect.update_entity_id}' is a location; "
+                f"{', '.join(offending)} describes a creature, not a place. Use "
+                "description_addition for a place, or target the NPC directly."
+            )
+        return None
+
+    offending = [
+        name
+        for name, attr in _PERSON_ONLY_UPDATE_FIELDS
+        if getattr(effect, attr, None) not in (None, [], "")
+    ]
+    if offending:
+        return (
+            f"update_entity target '{effect.update_entity_id}' is a "
+            f"{target_kind}, not an NPC; {', '.join(offending)} applies only to "
+            "a creature. Target the NPC directly."
+        )
+    return None
+
+
 class EffectValidator:
     """Validates proposed effects before execution.
 
@@ -648,6 +838,21 @@ class EffectValidator:
                 ),
             )
 
+        # Target-kind gate. Shares one resolver with the executor so an
+        # accepted target is always an executable one.
+        conflict = update_entity_target_conflict(
+            effect,
+            world_reference_update_kind(
+                self.scene_registry, self.session, effect.update_entity_id
+            ),
+        )
+        if conflict:
+            return EffectValidationResult(
+                effect=effect,
+                valid=False,
+                rejection_reason=conflict,
+            )
+
         # Validate disposition enum
         if effect.update_disposition is not None:
             valid_dispositions = {"friendly", "neutral", "unfriendly", "hostile", "allied"}
@@ -678,14 +883,10 @@ class EffectValidator:
             # resurrection transition. Keep that capability behind the
             # deterministic game mechanic (WorldState.revive_npc).
             if effect.update_status.lower() == "alive" and self.session:
-                world_state = getattr(self.session, "world_state", None)
-                npc = None
-                if world_state is not None:
-                    npc = (
-                        world_state.npcs.get(effect.update_entity_id)
-                        or world_state._find_npc(effect.update_entity_id)
-                    )
-                if npc is not None and not npc.alive:
+                # Resolves through the shared helper so the departed-roster
+                # NPCs seam 4 made executable cannot slip past this guard.
+                npc = resolve_world_npc(self.session, effect.update_entity_id)
+                if npc is not None and not getattr(npc, "alive", True):
                     return EffectValidationResult(
                         effect=effect,
                         valid=False,
@@ -1390,6 +1591,27 @@ class EffectExecutor:
                 error=f"update_entity target '{entity_id}' is not a known entity",
             )
 
+        # A LOCATION or item reached through the world-reference fallback must
+        # not carry NPC-only semantics into DeltaBridge. The validator applies
+        # the same rule via the same helpers, so this is a fail-closed backstop
+        # rather than a second opinion.
+        conflict = update_entity_target_conflict(
+            effect,
+            None if entity is not None or world_npc is not None
+            else (world_reference[0] if world_reference else None),
+        )
+        if conflict:
+            _logger.warning(
+                "update_entity_target_kind_conflict",
+                entity_id=entity_id,
+                target_kind=world_reference[0] if world_reference else None,
+            )
+            return EffectExecutionResult(
+                effect=effect,
+                success=False,
+                error=conflict,
+            )
+
         applied: dict = {}
 
         if effect.update_disposition is not None:
@@ -1413,21 +1635,40 @@ class EffectExecutor:
                 entity.important = bool(effect.update_importance)
             applied["important"] = bool(effect.update_importance)
 
+        # ``applied`` is a receipt, not a wish list: a key here asserts that
+        # some writer will carry the change. Pre-fix, a target that resolved
+        # only through the world reference read ``getattr(None, "description")``
+        # — always '' — so the dedup never fired and every re-execution
+        # re-reported the same append that nothing had written (review, seam 3).
+        existing_description, description_writer = self._description_write_target(
+            entity, entity_id, world_reference
+        )
         if effect.update_description_addition:
-            existing = getattr(entity, "description", "") or ""
             addition = effect.update_description_addition.strip()
-            if addition and addition not in existing:
+            if addition and addition not in existing_description:
                 if entity is not None:
-                    entity.description = (existing + " " + addition).strip()
-                applied["description_appended"] = addition
+                    entity.description = (
+                        existing_description + " " + addition
+                    ).strip()
+                if description_writer:
+                    applied["description_appended"] = addition
+                else:
+                    _logger.debug(
+                        "update_entity_description_has_no_writer",
+                        entity_id=entity_id,
+                        target_kind=(
+                            world_reference[0] if world_reference else "npc"
+                        ),
+                    )
 
         # Inventory deltas are recorded here for the log; the actual NPCState
         # inventory mutation happens in the orchestrator's
         # _sync_effect_to_world_state pass (NPCState lives on WorldState,
-        # not on SceneEntity).
-        if effect.update_add_items:
+        # not on SceneEntity) — so only claim them when that NPCState exists.
+        inventory_writer = self._world_state_npc(entity_id) is not None
+        if effect.update_add_items and inventory_writer:
             applied["items_added"] = list(effect.update_add_items)
-        if effect.update_remove_items:
+        if effect.update_remove_items and inventory_writer:
             applied["items_removed"] = list(effect.update_remove_items)
 
         _logger.info(
@@ -1452,116 +1693,51 @@ class EffectExecutor:
             },
         )
 
-    def _resolve_known_world_npc(self, entity_id: str):
-        """Resolve a durable NPC after its scene-scoped view has departed.
+    def _world_state_npc(self, entity_id: str):
+        """The NPCState ``WorldStateStore.apply_effect`` would resolve, if any.
 
-        This establishes identity only. The orchestrator's WorldStateStore
-        remains the sole writer for the authoritative world projection, and
-        DeltaBridge owns graph mutation. A graph-only match therefore makes
-        ``update_entity`` executable without incorrectly rematerializing an
-        off-screen NPC into the current scene.
+        The store is the writer for NPC description/inventory, and it resolves
+        strictly through ``WorldState.npcs``. A graph-only or departed-roster
+        identity therefore has no inventory writer even though it is a real NPC.
         """
-        world_state = (
-            getattr(self.session, "world_state", None)
-            if self.session
-            else None
-        )
+        world_state = _session_world_state(self.session)
         if world_state is None:
-            world_store = (
-                getattr(self.session, "world_store", None)
-                if self.session
-                else None
-            )
-            world_state = getattr(world_store, "state", None)
-        if world_state is not None:
-            world_npc = (
-                world_state.npcs.get(entity_id)
-                or world_state._find_npc(entity_id)
-            )
-            if world_npc is not None:
-                return world_npc
-
-        knowledge_graph = (
-            getattr(self.session, "knowledge_graph", None)
-            if self.session
-            else None
-        )
-        if knowledge_graph is None:
             return None
-        graph_entity = knowledge_graph.get_entity(entity_id)
-        if graph_entity is None:
-            resolver = getattr(
-                knowledge_graph,
-                "resolve_entity_reference",
-                None,
-            )
-            if callable(resolver):
-                graph_entity = resolver(entity_id)
-        entity_type = getattr(
-            getattr(graph_entity, "entity_type", None),
-            "value",
-            None,
-        )
-        return graph_entity if graph_entity is not None and entity_type == "npc" else None
+        return world_state.npcs.get(entity_id) or world_state._find_npc(entity_id)
+
+    def _description_write_target(self, entity, entity_id: str, world_reference):
+        """Return ``(existing_description, a_writer_exists)`` for this target.
+
+        Mirrors exactly what ``WorldStateStore.apply_effect`` will do, so the
+        dedup compares against the text that actually persists and the receipt
+        only claims appends something records.
+        """
+        if entity is not None:
+            return (getattr(entity, "description", "") or "", True)
+
+        npc_state = self._world_state_npc(entity_id)
+        if npc_state is not None:
+            return (getattr(npc_state, "description", "") or "", True)
+
+        world_state = _session_world_state(self.session)
+        if world_state is not None and world_reference is not None:
+            kind, target = world_reference
+            if kind == "item" and isinstance(target, str):
+                if target in world_state.scene_items:
+                    return (world_state.scene_items[target] or "", True)
+            elif kind == "location" and isinstance(target, str):
+                current = (world_state.current_location or "").strip()
+                if current and target == current:
+                    return (world_state.location_description or "", True)
+        return ("", False)
+
+    def _resolve_known_world_npc(self, entity_id: str):
+        """Resolve a durable NPC after its scene-scoped view has departed."""
+        return resolve_world_npc(self.session, entity_id)
 
     def _resolve_known_world_reference(self, entity_id: str):
         """Resolve a canonical NPC, current location, or active scene item."""
-        npc = self._resolve_known_world_npc(entity_id)
-        if npc is not None:
-            return ("npc", npc)
-
-        world_state = (
-            getattr(self.session, "world_state", None)
-            if self.session
-            else None
-        )
-        if world_state is None:
-            world_store = (
-                getattr(self.session, "world_store", None)
-                if self.session
-                else None
-            )
-            world_state = getattr(world_store, "state", None)
-        if world_state is None:
-            return None
-
-        from ..game.knowledge.models import slugify
-
-        query_slug = slugify(entity_id)
-        location = (world_state.current_location or "").strip()
-        if location and query_slug == slugify(location):
-            return ("location", location)
-        # Historical/adjacent locations are not ambient prompt seeds, but an
-        # explicit narrator reference to a known place is still legitimate.
-        for known_location in world_state.connected_locations:
-            if query_slug and query_slug == slugify(known_location):
-                return ("location", known_location)
-        for name in world_state.scene_items:
-            if entity_id == name or (query_slug and query_slug == slugify(name)):
-                return ("item", name)
-
-        # Explicit references may resolve through the durable campaign graph
-        # after an entity leaves scene-scoped WorldState. This lookup does not
-        # make it an ambient prompt seed.
-        knowledge_graph = (
-            getattr(self.session, "knowledge_graph", None)
-            if self.session
-            else None
-        )
-        if knowledge_graph is not None:
-            graph_entity = knowledge_graph.get_entity(entity_id)
-            if graph_entity is None:
-                resolver = getattr(
-                    knowledge_graph, "resolve_entity_reference", None
-                )
-                if callable(resolver):
-                    graph_entity = resolver(entity_id)
-            if graph_entity is not None:
-                graph_type = getattr(
-                    getattr(graph_entity, "entity_type", None), "value", None
-                ) or str(getattr(graph_entity, "entity_type", "entity"))
-                return (graph_type, graph_entity)
-        return None
+        return resolve_world_reference(self.session, entity_id)
 
     def _resolve_update_player_character(self):
         """Resolve the LIVE session Character object an update_player targets.

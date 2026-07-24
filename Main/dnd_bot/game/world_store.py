@@ -592,6 +592,43 @@ class WorldStateStore:
         self._state.npcs[npc.id] = npc
         return npc
 
+    @staticmethod
+    def _append_non_npc_description(
+        world_state: WorldState,
+        entity_id: str,
+        addition: str,
+    ) -> None:
+        """Append a narrator description to a scene item or the current place.
+
+        The executor's ``update_entity`` world-reference fallback resolves
+        these targets, so this is the writer that makes its
+        ``description_appended`` receipt true. Slug-tolerant like the
+        resolver, and idempotent: a restated addition is a no-op.
+        """
+        from .knowledge.models import slugify
+
+        text = (addition or "").strip()
+        if not text:
+            return
+        query_slug = slugify(entity_id)
+
+        for name in world_state.scene_items:
+            if entity_id == name or (query_slug and query_slug == slugify(name)):
+                existing = world_state.scene_items[name] or ""
+                if text not in existing:
+                    world_state.scene_items[name] = (
+                        (existing + " " if existing else "") + text
+                    ).strip()
+                return
+
+        location = (world_state.current_location or "").strip()
+        if location and query_slug == slugify(location):
+            existing = world_state.location_description or ""
+            if text not in existing:
+                world_state.location_description = (
+                    (existing + " " if existing else "") + text
+                ).strip()
+
     # ── The narrator-effect sync seam ─────────────────────────────────────
 
     def apply_effect(self, effect: ProposedEffect) -> None:
@@ -770,6 +807,16 @@ class WorldStateStore:
                                 i for i in npc_state.inventory
                                 if i.strip().lower() != item_norm
                             ]
+                elif effect.update_description_addition:
+                    # Non-NPC targets reachable through the executor's world
+                    # reference (a scene item, the current location). Without
+                    # this branch the executor reported description_appended
+                    # with nothing behind it (post-merge review, seam 3).
+                    self._append_non_npc_description(
+                        world_state,
+                        entity_id,
+                        effect.update_description_addition,
+                    )
 
         elif etype == EffectType.UPDATE_PLAYER:
             # Consolidated player-state mutation. The Character object lives

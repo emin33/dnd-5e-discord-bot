@@ -725,13 +725,40 @@ HIGH ones were a single root cause, fixed here:
 - **Cross-type binding.** Candidates now carry entity type; an item-shaped
   id cannot rewrite onto an NPC.
 
-Open (confirmed, separate seams — NOT fixed here): a LOCATION target accepts
-NPC-only semantics so DeltaBridge stamps status/disposition onto locations;
-`_resolve_invented_scene_ids` ignores `ref_alias_used`; non-NPC
-`update_entity` populates a description/inventory `applied` receipt with no
-writer behind it (and its dedup never fires, so it is non-idempotent);
-`campaign_dead_npcs` is accepted by the validator but resolved by neither
-executor helper.
+The four remaining seams are now closed as well (20 pinning tests in
+`tests/unit/test_update_entity_target_contract.py`; 13 of them fail against
+the pre-fix source, the other 7 are the no-regression guards):
+
+- **A LOCATION target accepted NPC-only semantics.** `update_entity` now
+  carries a target-kind contract: `disposition`, `add_items` and
+  `remove_items` are person semantics and require an NPC; a LOCATION accepts
+  only `description_addition` and `importance` (its `status` enum is creature
+  liveness, and DeltaBridge translated 'dead' into `alive=false` on the
+  place). Item `status` stays accepted — that was the soak-#4 gate fix.
+  Unknown target kind abstains rather than guessing.
+- **Validator and executor now share one resolver.** `resolve_world_npc` /
+  `resolve_world_reference` are module-level and called by both, so the
+  target-kind rejection lands at validation instead of as a validate-then-die,
+  and the two cannot drift apart again.
+- **`campaign_dead_npcs` resolves.** That shared resolver consults it (by id
+  and by unique name), closing the asymmetry with `_is_known_entity`. The
+  resurrection guard moved onto the same helper, so the newly reachable
+  departed roster cannot be revived through `update_status='alive'`.
+- **`_resolve_invented_scene_ids` respects `ref_alias_used`.** A rewrite
+  whose winner has no label comparable to the alias the narrator actually put
+  in prose now abstains — previously a mis-bound ref permanently grafted the
+  wrong alias onto the resolved entity, compounding across the campaign.
+- **`applied` is a receipt, not a wish list.** Scene-item and current-location
+  description appends got a real writer in `WorldStateStore` (idempotent,
+  slug-tolerant); everything without a writer — a graph-only node's
+  description, a graph-only NPC's inventory — is logged and no longer claimed.
+  The dedup reads the text that actually persists instead of
+  `getattr(None, "description")`, so re-execution is a no-op. The pre-existing
+  graph-only-NPC path was deliberately brought along.
+
+Post-fix: 1203 green (+20), mypy clean, live reliability PASS 11/11 at 100.0%
+(45/45 effects, zero rejections, `update_entity` exercised 6x) —
+`20260724_025846_deepseek_v4_flash_qwen9b`.
 
 Soak matrix:
 | run | seed | score | recall | reliability | structural | grade |
