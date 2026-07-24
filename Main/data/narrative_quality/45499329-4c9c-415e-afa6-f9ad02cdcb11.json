@@ -1,0 +1,148 @@
+{
+  "turn_log": "data\\turn_logs\\45499329-4c9c-415e-afa6-f9ad02cdcb11.jsonl",
+  "judge_model": "gemini-2.5-flash",
+  "verdict": "PASS",
+  "overall_average": 4.76,
+  "dimension_means": {
+    "continuity": 5.0,
+    "contradiction_free": 5.0,
+    "npc_voice": 4.6,
+    "prose_freshness": 4.2,
+    "player_agency": 5.0
+  },
+  "gates": [
+    {
+      "name": "judge_coverage_complete",
+      "passed": true,
+      "detail": "windows graded=5; failed=0"
+    },
+    {
+      "name": "overall_average",
+      "passed": true,
+      "detail": "avg=4.76 (gate >= 4.0)"
+    },
+    {
+      "name": "no_dimension_below_minimum",
+      "passed": true,
+      "detail": "means={'continuity': 5.0, 'contradiction_free': 5.0, 'npc_voice': 4.6, 'prose_freshness': 4.2, 'player_agency': 5.0} (gate >= 3.0)"
+    },
+    {
+      "name": "zero_severe_contradictions",
+      "passed": true,
+      "detail": "severe=[]"
+    },
+    {
+      "name": "prose_repetition_bounded",
+      "passed": true,
+      "detail": "worst 8-gram repeat ratio=0.014 (gate <= 0.35)"
+    }
+  ],
+  "worst_repeat_ratio": 0.014,
+  "opening_bigrams": {
+    "the grey": 4,
+    "the compass": 2,
+    "the gear": 2,
+    "the morning": 1,
+    "you prise": 1,
+    "sera follows": 1,
+    "the pigeons": 1,
+    "you crane": 1
+  },
+  "windows": [
+    {
+      "turns": [
+        1,
+        6
+      ],
+      "scores": {
+        "continuity": 5,
+        "contradiction_free": 5,
+        "npc_voice": 4,
+        "prose_freshness": 4,
+        "player_agency": 5
+      },
+      "contradictions": [],
+      "flags": [
+        "T2: The DM states the compass is 'mechanically broken by some spell or impact' and 'feels dead in your hand', which is a strong declaration of its state. However, in T6, it 'shifts' and the needle 'turns' and 'spins' again, which, while still 'aimless', slightly reintroduces ambiguity about its 'broken' state. It's not a contradiction, but a slight tonal shift that could be read as the DM walking back the certainty of its brokenness.",
+        "T4: Sera's 'eyes flicker with uncertainty as she looks back down at you \u2014 she's not entirely sure, and she knows it. There's something she's not quite putting together, some detail at the edge of her memory that won't surface.' This is a strong hint that Sera has more information or a memory she's suppressing/forgetting. However, in T5, she states with 'certainty' that the tower is locked and no one has been up there. While not a direct contradiction, the DM's earlier hint of uncertainty isn't fully explored or resolved, making her later certainty feel a little less earned or consistent with the earlier setup."
+      ],
+      "summary": "The player character investigates a dead courier in Veyr. They find no identifying documents, but retrieve a mysteriously spinning compass. An NPC, Sera Venn, witnessed the courier stumble from an alley and heard a 'glass breaking underwater' sound from above. The bell tower above the alley is supposedly locked for repairs, but pigeons were startled from its archway. The PC finds no physical evidence of recent activity on the walkway or tower."
+    },
+    {
+      "turns": [
+        7,
+        12
+      ],
+      "scores": {
+        "continuity": 5,
+        "contradiction_free": 5,
+        "npc_voice": 4,
+        "prose_freshness": 4,
+        "player_agency": 5
+      },
+      "contradictions": [],
+      "flags": [
+        "T7: Sera's description of Father Aldric as 'quiet' and 'keeps to himself' feels a little generic for a long-term resident describing a local priest. It could be more specific or evocative.",
+        "T9: The description of rain falling 'up' and beading on the underside of steps is a cool image, but the physics of it aren't quite clear. It's a minor nit, but 'defying the city's strange gravity' feels like a bit of a hand-wave rather than a clear explanation of the phenomenon.",
+        "T10: The man in the apron is described as 'wiping blood from his jaw' and 'watching you with the wary stillness of someone who's been hit before and knows when to stay quiet.' This is good, but then the woman says 'He's lucky I used the ladle. Next time I'll use the rendering hook.' This implies the ladle was a *less* severe weapon, but the description of the man's injury and demeanor suggests he took a significant blow. The severity of the 'hit' feels slightly mismatched with the 'lucky' comment.",
+        "T12: Hesk's sudden willingness to offer information about Orin, despite the woman's clear disapproval and his earlier 'wary stillness,' feels a little abrupt. While he shrugs it off, it's a slight shift in his established demeanor."
+      ],
+      "summary": "The PC learns about Saint Orra's Wake, its priest Father Aldric, and the Chain Stair. They then abandon this lead to explore the Tallow Warrens, where they encounter a dispute between a woman (who runs a tallow shop) and a man named Hesk. The PC's spinning compass is recognized as 'Archive-work,' and they are directed to a tinsmith named Orin."
+    },
+    {
+      "turns": [
+        13,
+        18
+      ],
+      "scores": {
+        "continuity": 5,
+        "contradiction_free": 5,
+        "npc_voice": 5,
+        "prose_freshness": 4,
+        "player_agency": 5
+      },
+      "contradictions": [],
+      "flags": [
+        "T13: The description of the Tallow Warrens narrowing and the buildings leaning is good, but the transition to 'Two streets' feels a little abrupt and could use a smoother lead-in.",
+        "T14: 'You hook your fingers through the cold ring and heave.' This is a minor nit, but the player's action was 'I descend the stone steps beneath the iron hatch,' implying the hatch was already open or easily opened. The DM's narration adds the action of opening it, which isn't a major agency violation but slightly reinterprets the player's intent.",
+        "T16: 'He doesn't offer you a seat.' This is a good detail for NPC characterization, but it feels a little out of place as a direct statement rather than implied by his actions or lack thereof."
+      ],
+      "summary": "The PC finds Orin, a tinsmith, in his cellar workshop. Orin identifies the PC's spinning compass as 'Archive-work' and a 'key' to something forgotten. He reveals he's been waiting thirty years for its match, possessing a fractured gear from a similar compass, and that both the gear and some ceramic fragments are now reacting to the PC's compass, indicating the 'lock' is close and in distress."
+    },
+    {
+      "turns": [
+        19,
+        24
+      ],
+      "scores": {
+        "continuity": 5,
+        "contradiction_free": 5,
+        "npc_voice": 5,
+        "prose_freshness": 5,
+        "player_agency": 5
+      },
+      "contradictions": [],
+      "flags": [],
+      "summary": "The PC learns from Orin that the Archive sealed away a person, not a memory, thirty years ago, and that this person is now trying to break free. The PC gathers the reacting artifacts and is directed to the Archive's inner door via the Chain Stair and Night Market, with warnings about discretion and a specific toll-taker named Marta Pell. Orin provides a satchel and a key to a side exit, sending the PC on their way."
+    },
+    {
+      "turns": [
+        25,
+        30
+      ],
+      "scores": {
+        "continuity": 5,
+        "contradiction_free": 5,
+        "npc_voice": 5,
+        "prose_freshness": 4,
+        "player_agency": 5
+      },
+      "contradictions": [],
+      "flags": [
+        "T26: The description of the compass being 'warm' and 'steady' feels a bit redundant after 'No longer spinning \u2014 just waiting.' The latter phrase already conveys its state effectively.",
+        "T27: 'The tallow shop's green shutters stare back at you' is a slightly clich\u00e9d personification. While not bad, it's a minor dip in freshness."
+      ],
+      "summary": "The PC successfully navigates to Sera Venn's tallow shop, using information from a local boy. Sera, initially wary, confirms her knowledge of the 'knocking' from the bell tower and the courier's message, recognizing the PC's Archive-compass and inviting them inside for a private conversation."
+    }
+  ]
+}
