@@ -335,6 +335,10 @@ def _resolve_invented_scene_ids(
     # item-shaped id from rewriting onto an NPC, and the proper-name flag
     # gates the one-token subset direction.
     candidates: list[tuple[str, frozenset, str, bool]] = []
+    # Registered aliases participate in alias-agreement ONLY, never in
+    # matching: a recorded epithet ('the innkeeper') is evidence about who a
+    # prose alias meant, but must not widen the id-matching surface.
+    alias_labels: dict[str, list[frozenset]] = {}
     if world_state is not None:
         for item_id in world_state.scene_items:
             known_ids.add(item_id)
@@ -348,6 +352,10 @@ def _resolve_invented_scene_ids(
                 candidates.append((
                     npc_id, tokens, "npc", not is_generic_npc_label(npc.name),
                 ))
+            for alias in npc.aliases:
+                alias_label = _id_tokens(alias)
+                if alias_label:
+                    alias_labels.setdefault(npc_id, []).append(alias_label)
     for entity in (getattr(knowledge_graph, "_entities", {}) or {}).values():
         node_id = str(getattr(entity, "node_id", "") or "")
         if not node_id:
@@ -362,6 +370,10 @@ def _resolve_invented_scene_ids(
             tokens = _id_tokens(label)
             if tokens:
                 candidates.append((node_id, tokens, entity_type, proper))
+        for alias in getattr(entity, "aliases", None) or []:
+            alias_label = _id_tokens(alias)
+            if alias_label:
+                alias_labels.setdefault(node_id, []).append(alias_label)
     known_token_ids = {_id_tokens(kid): kid for kid in known_ids}
 
     normalized: list[ProposedEffect] = []
@@ -418,14 +430,20 @@ def _resolve_invented_scene_ids(
             resolved_id = next(iter(matched))
             # Alias agreement: the prose name the narrator actually used must
             # be comparable to one of the winner's labels — 'low wooden door'
-            # inside 'low wooden door', 'Gideon Hask' against 'Gideon Hask'.
-            # A disjoint alias ('Mira' resolving onto 'Gideon Hask') is
-            # evidence the rewrite is wrong, so it abstains.
+            # inside 'low wooden door', 'Gideon Hask' against 'Gideon Hask',
+            # and a REGISTERED alias counts: naming promotion stores old
+            # epithets ('the innkeeper') on the entity precisely so later
+            # paraphrases resolve. A disjoint alias ('Mira' resolving onto
+            # 'Gideon Hask') is evidence the rewrite is wrong, so it abstains.
             alias_tokens = _id_tokens(getattr(effect, "ref_alias_used", "") or "")
-            if alias_tokens and not any(
-                alias_tokens <= label_tokens or label_tokens <= alias_tokens
+            winner_labels = [
+                label_tokens
                 for candidate_id, label_tokens, _type, _proper in candidates
                 if candidate_id == resolved_id
+            ] + alias_labels.get(resolved_id, [])
+            if alias_tokens and not any(
+                alias_tokens <= label_tokens or label_tokens <= alias_tokens
+                for label_tokens in winner_labels
             ):
                 logger.debug(
                     "invented_id_alias_mismatch_abstained",

@@ -604,6 +604,13 @@ class WorldStateStore:
         these targets, so this is the writer that makes its
         ``description_appended`` receipt true. Slug-tolerant like the
         resolver, and idempotent: a restated addition is a no-op.
+
+        Precedence MUST mirror ``resolve_world_reference`` (current location,
+        then connected locations, then scene items): if the two disagree
+        about which target an id names — a scene item sharing its name with
+        a location — the executor's receipt and this writer desynchronize
+        (a write the receipt withheld, or a receipt re-claimed forever
+        because the dedup baseline never gains the text).
         """
         from .knowledge.models import slugify
 
@@ -611,6 +618,23 @@ class WorldStateStore:
         if not text:
             return
         query_slug = slugify(entity_id)
+
+        location = (world_state.current_location or "").strip()
+        if location and query_slug == slugify(location):
+            existing = world_state.location_description or ""
+            if text not in existing:
+                world_state.location_description = (
+                    (existing + " " if existing else "") + text
+                ).strip()
+            return
+
+        for known_location in world_state.connected_locations:
+            if query_slug and query_slug == slugify(known_location):
+                # The resolver classifies this id as a (non-current)
+                # location, which has no description storage; the executor
+                # withheld the receipt, so writing a same-named scene item
+                # here would be a write the receipt denies.
+                return
 
         for name in world_state.scene_items:
             if entity_id == name or (query_slug and query_slug == slugify(name)):
@@ -620,14 +644,6 @@ class WorldStateStore:
                         (existing + " " if existing else "") + text
                     ).strip()
                 return
-
-        location = (world_state.current_location or "").strip()
-        if location and query_slug == slugify(location):
-            existing = world_state.location_description or ""
-            if text not in existing:
-                world_state.location_description = (
-                    (existing + " " if existing else "") + text
-                ).strip()
 
     # ── The narrator-effect sync seam ─────────────────────────────────────
 

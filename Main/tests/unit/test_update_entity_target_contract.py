@@ -253,6 +253,47 @@ class TestInventedIdRespectsAlias:
 
         assert out[0].ref_entity_id == "low wooden door"
 
+    def test_recorded_npc_alias_agrees_with_the_winner(self):
+        # Naming promotion and the REF_ENTITY store branch record prose
+        # epithets on npc.aliases precisely so later paraphrases resolve.
+        # An alias the winner itself carries is agreement, not conflict —
+        # vetoing on it would make MORE correct evidence fail a rewrite
+        # that succeeds without the alias (pre-merge review of this fix).
+        npc = NPCState(
+            id="npc-1", name="Old Bram", aliases=["the innkeeper"]
+        )
+        world = WorldState(campaign_id="camp", npcs={"npc-1": npc})
+        effect = ProposedEffect(
+            effect_type=EffectType.REF_ENTITY,
+            ref_entity_id="old-bram-the-innkeeper",
+            ref_alias_used="the innkeeper",
+        )
+
+        out = _resolve_invented_scene_ids([effect], world, None)
+
+        assert out[0].ref_entity_id == "npc-1"
+
+    def test_registered_graph_alias_agrees_with_the_winner(self):
+        # Same contract for a departed NPC living only in the graph.
+        node = SimpleNamespace(
+            node_id="vex-harlow",
+            name="Vex Harlow",
+            aliases=["the Gray Broker"],
+            entity_type=SimpleNamespace(value="npc"),
+        )
+        graph = SimpleNamespace(_entities={"vex-harlow": node})
+        effect = ProposedEffect(
+            effect_type=EffectType.REF_ENTITY,
+            ref_entity_id="vex-harlow-gray-broker",
+            ref_alias_used="the Gray Broker",
+        )
+
+        out = _resolve_invented_scene_ids(
+            [effect], WorldState(campaign_id="camp"), graph
+        )
+
+        assert out[0].ref_entity_id == "vex-harlow"
+
 
 # ── Seam 3: `applied` is a receipt, not a wish list ──────────────────────
 
@@ -357,6 +398,74 @@ class TestNonNpcUpdateReceiptHasAWriter:
         assert result.success is True
         assert "items_added" not in result.details["applied"]
         assert "description_appended" not in result.details["applied"]
+
+
+@pytest.mark.asyncio
+class TestLocationItemNameCollision:
+    """Resolver and writer must agree on which target an id names.
+
+    ``resolve_world_reference`` classifies locations before scene items;
+    the store's writer must apply the same precedence, or the executor's
+    receipt and the persisted state desynchronize whenever a scene item
+    shares its name with a location (pre-merge review of this fix).
+    """
+
+    async def test_connected_location_collision_neither_claims_nor_writes(self):
+        world = WorldState(
+            campaign_id="camp",
+            current_location="Courtyard",
+            connected_locations=["Iron Gate"],
+            scene_items={"iron gate": "A heavy iron gate."},
+        )
+        store = WorldStateStore(world)
+        executor = EffectExecutor(
+            scene_registry=_registry(),
+            session=SimpleNamespace(world_state=world),
+        )
+        effect = _update("iron-gate", update_description_addition="now barred shut")
+
+        result = await executor.execute(effect)
+        store.apply_effect(effect)
+
+        # 'iron-gate' classifies as the connected location, which has no
+        # description storage: the receipt is withheld, and the writer must
+        # not append to the same-named scene item behind the receipt's back.
+        assert result.success is True
+        assert "description_appended" not in result.details["applied"]
+        assert world.scene_items["iron gate"] == "A heavy iron gate."
+
+    async def test_current_location_collision_writes_the_location_idempotently(self):
+        world = WorldState(
+            campaign_id="camp",
+            current_location="Old Well",
+            location_description="A mossy well.",
+            scene_items={"old well": "A stone-rimmed well."},
+        )
+        store = WorldStateStore(world)
+        executor = EffectExecutor(
+            scene_registry=_registry(),
+            session=SimpleNamespace(world_state=world),
+        )
+        effect = _update(
+            "old-well", update_description_addition="The rope is freshly cut."
+        )
+
+        first = await executor.execute(effect)
+        store.apply_effect(effect)
+
+        # Both sides classify 'old-well' as the CURRENT location: the
+        # receipt is claimed and the location description carries the text.
+        assert first.details["applied"]["description_appended"]
+        assert "freshly cut" in world.location_description
+        assert "freshly cut" not in world.scene_items["old well"]
+
+        second = await executor.execute(effect)
+        store.apply_effect(effect)
+
+        # The dedup baseline gained the text, so re-execution is a no-op
+        # instead of a receipt re-claimed forever.
+        assert "description_appended" not in second.details["applied"]
+        assert world.location_description.count("freshly cut") == 1
 
 
 # ── Seam 4: what the validator accepts, the executor must resolve ────────
