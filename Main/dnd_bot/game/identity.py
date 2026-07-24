@@ -129,6 +129,11 @@ def identity_keys(value: str) -> frozenset[str]:
     return frozenset(keys)
 
 
+# Prepositions that attach a wardrobe/position descriptor to a generic role
+# noun ("man in apron", "woman with the lantern", "figure by the door").
+_DESCRIPTOR_PREPOSITIONS = {"in", "with", "by", "at", "near", "behind"}
+
+
 def is_generic_npc_label(value: str) -> bool:
     """Return whether *value* is only an unnamed NPC role/description.
 
@@ -137,11 +142,26 @@ def is_generic_npc_label(value: str) -> bool:
     ``"Mira"`` and ``"Warden Elara"`` are not.
     """
     words = _normalized_words(value)
+    if not words:
+        return False
     # Bare numerals are spawn-numbering artifacts ("acolyte 1", "guard 2"),
     # not identity-bearing tokens.
-    return bool(words) and all(
-        word in _GENERIC_NPC_TERMS or word.isdigit() for word in words
-    )
+    if all(word in _GENERIC_NPC_TERMS or word.isdigit() for word in words):
+        return True
+    # A generic role noun plus a prepositional descriptor ("man in apron")
+    # is still an unnamed placeholder: the descriptor names clothing or
+    # position, not a person. Any capitalized token beyond the label's
+    # leading character abstains — "man in Orin's shop" carries an identity.
+    if any(character.isupper() for character in value.strip()[1:]):
+        return False
+    for index, word in enumerate(words):
+        if index and word in _DESCRIPTOR_PREPOSITIONS:
+            head_is_generic = all(
+                head in _GENERIC_NPC_TERMS or head.isdigit()
+                for head in words[:index]
+            )
+            return head_is_generic and bool(words[index + 1:])
+    return False
 
 
 def explicit_npc_naming_link(

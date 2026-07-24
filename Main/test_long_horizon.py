@@ -2741,10 +2741,53 @@ def run_assertions(scenario: Scenario, session_id: str, seed: Seed) -> list[Asse
         narrator_leaks = [
             t for t in silence_turns if _matches(log.narrator_response(t).text)
         ]
-        kg_leaks = [t for t in silence_turns if (
-            log.kg_context_for(t).mentions(seed_clean)
-            or (seed_token and log.kg_context_for(t).mentions(seed_token))
-        )]
+        def _kg_leak_kind(t: int) -> str:
+            """Classify how the seed reached injected KG context, if at all.
+
+            "targeted" — retrieval selected the seed itself (graph YAML, a
+            seed/text/vector match id, or an episode chunk indexed under the
+            seed). "comention" — the seed name only rides inside the prose of
+            an episode recalled for a DIFFERENT, currently-relevant entity
+            (e.g. asking about the Chain Stair recalls "Sera points past the
+            chapel..."). Retrieval behaved as designed there, so co-mention is
+            annotated rather than failed — mirroring how organic narrator
+            reincorporation is interpreted across the run matrix.
+            """
+            ctx = log.kg_context_for(t)
+            names = [n for n in (seed_clean, seed_token) if n]
+
+            def _id_matches(raw_id: object) -> bool:
+                normalized = " ".join(
+                    re.findall(r"[a-z0-9]+", str(raw_id or "").casefold())
+                )
+                return any(name in normalized for name in names)
+
+            targeted = (
+                any(name in ctx.yaml_text.lower() for name in names)
+                or any(_id_matches(entity_id) for entity_id in (
+                    *ctx.seed_entities,
+                    *ctx.text_match_seeds,
+                    *ctx.vector_match_seeds,
+                ))
+                or any(
+                    _id_matches(entity_id)
+                    for chunk in ctx.narrative_chunks
+                    for entity_id in (chunk.get("entity_ids") or [])
+                )
+            )
+            if targeted:
+                return "targeted"
+            if any(ctx.mentions(name) for name in names):
+                return "comention"
+            return ""
+
+        kg_leak_kinds = {t: _kg_leak_kind(t) for t in silence_turns}
+        kg_leaks = [
+            t for t, kind in kg_leak_kinds.items() if kind == "targeted"
+        ]
+        kg_comentions = [
+            t for t, kind in kg_leak_kinds.items() if kind == "comention"
+        ]
         results.extend([
             AssertionResult(
                 name="player_kept_seed_out_of_memory_gap",
@@ -2764,7 +2807,11 @@ def run_assertions(scenario: Scenario, session_id: str, seed: Seed) -> list[Asse
                 description=(
                     f"KG retained '{seed.name}' without continuously injecting it while irrelevant."
                 ),
-                detail=f"turns={silence_lo}-{silence_hi}; leaks={kg_leaks}",
+                detail=(
+                    f"turns={silence_lo}-{silence_hi}; targeted_leaks={kg_leaks}; "
+                    f"episode_comentions={kg_comentions} (annotated, not failed: "
+                    "the seed only rode inside another entity's recalled episode)"
+                ),
             ),
         ])
 

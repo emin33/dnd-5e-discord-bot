@@ -247,6 +247,25 @@ def test_role_vocabulary_and_narrative_name_confirmation_are_shared():
     )
 
 
+def test_generic_role_noun_with_prepositional_descriptor_is_generic():
+    """Live case (run 20260723_223012 T12): 'man in apron' named as Hesk.
+
+    A generic role noun plus a wardrobe/position descriptor is still an
+    unnamed placeholder; the identity-grounding gate exempts such catalog
+    labels because the naming cue is validated in production.
+    """
+    assert is_generic_npc_label("man in apron")
+    assert is_generic_npc_label("the man in the apron")
+    assert is_generic_npc_label("woman with the lantern")
+    assert is_generic_npc_label("figure by the door")
+    # A capitalized descriptor token carries identity — abstain.
+    assert not is_generic_npc_label("man in Orin's shop")
+    # A non-generic head noun is not a role label.
+    assert not is_generic_npc_label("Hesk in apron")
+    # A bare preposition with no descriptor is not a role label.
+    assert not is_generic_npc_label("man in")
+
+
 def test_returning_add_npc_carries_the_existing_graph_uuid_into_world_state():
     canonical_id = "11111111-2222-4333-8444-555555555555"
     graph_entity = SimpleNamespace(
