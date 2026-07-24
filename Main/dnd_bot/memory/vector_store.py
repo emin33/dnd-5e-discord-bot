@@ -1,5 +1,6 @@
 """Vector store for campaign knowledge RAG using ChromaDB."""
 
+import hashlib
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 import structlog
@@ -34,6 +35,11 @@ class VectorStore:
         self._client: Optional["ClientAPI"] = None
         self._collection: Optional["Collection"] = None
         self._initialized = False
+        # campaign_id -> {memory_id: content_hash}: the skip-unchanged gate
+        # for entity embeddings. Seeded once per campaign from stored
+        # metadata, so the session-start full re-sync and the per-turn KG
+        # sync only pay for entities whose indexed text actually changed.
+        self._entity_hashes: dict[str, dict[str, str]] = {}
 
     def _ensure_initialized(self) -> None:
         """Lazily initialize ChromaDB."""
@@ -141,6 +147,7 @@ class VectorStore:
 
         try:
             collection.delete(ids=[memory_id])
+            self._entity_hashes.get(campaign_id, {}).pop(memory_id, None)
             return True
         except Exception as e:
             logger.error(
@@ -175,6 +182,7 @@ class VectorStore:
             self._client.delete_collection(name=collection_name)
             if self._collection is not None and self._collection.name == collection_name:
                 self._collection = None
+            self._entity_hashes.pop(campaign_id, None)
             logger.info("campaign_vectors_deleted", campaign_id=campaign_id)
             return True
         except Exception as e:
@@ -398,6 +406,36 @@ class VectorStore:
                 found.add(str(memory_id)[len("entity_"):])
         return found
 
+    def _seeded_entity_hashes(
+        self, campaign_id: str, collection: "Collection"
+    ) -> dict[str, str]:
+        """The campaign's {memory_id: content_hash} map, seeded on first use.
+
+        One batched metadata read per process per campaign. Records written
+        before the hash gate existed carry no ``content_hash`` and simply
+        re-embed once, gaining one. Seed failure degrades to an empty map —
+        every write proceeds, same as before the gate.
+        """
+        cached = self._entity_hashes.get(campaign_id)
+        if cached is not None:
+            return cached
+        hashes: dict[str, str] = {}
+        try:
+            result = collection.get(
+                where={"type": "entity"}, include=["metadatas"]
+            )
+            for memory_id, metadata in zip(
+                (result or {}).get("ids") or [],
+                (result or {}).get("metadatas") or [],
+            ):
+                content_hash = (metadata or {}).get("content_hash")
+                if content_hash:
+                    hashes[str(memory_id)] = str(content_hash)
+        except Exception as e:
+            logger.warning("entity_hash_seed_failed", error=str(e))
+        self._entity_hashes[campaign_id] = hashes
+        return hashes
+
     def add_entity_description(
         self,
         campaign_id: str,
@@ -411,6 +449,12 @@ class VectorStore:
 
         Enables semantic matching: player says "the scarred dwarf" and
         vector search finds the entity whose description mentions scars.
+
+        Skip-unchanged: the orchestrator re-syncs an entity whenever it
+        appears in any graph op and the session start re-syncs the whole
+        graph, so most calls carry text that is already indexed. Hashing
+        the exact indexed document (type + name + description + aliases)
+        turns those into no-ops instead of embedding recomputes.
         """
         alias_text = f"\nAlso known as: {', '.join(aliases)}" if aliases else ""
         content = f"{entity_type}: {name}\n{description}{alias_text}"
@@ -420,6 +464,10 @@ class VectorStore:
             return False
 
         memory_id = f"entity_{node_id}"
+        content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        hashes = self._seeded_entity_hashes(campaign_id, collection)
+        if hashes.get(memory_id) == content_hash:
+            return True
         try:
             # ChromaDB 1.4+ update() silently no-ops on missing IDs,
             # so use upsert() which adds-or-updates in one call.
@@ -431,8 +479,10 @@ class VectorStore:
                     "node_id": node_id,
                     "entity_type": entity_type,
                     "name": name,
+                    "content_hash": content_hash,
                 }],
             )
+            hashes[memory_id] = content_hash
             return True
         except Exception as e:
             logger.error("entity_description_add_failed", node_id=node_id, error=str(e), exc_info=True)
@@ -588,6 +638,7 @@ class VectorStore:
             self._collection = None
             self._client = None
             self._initialized = False
+            self._entity_hashes.clear()
 
 
 # Singleton instance

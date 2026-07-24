@@ -366,15 +366,26 @@ class GameSessionManager:
                 try:
                     from ..memory import get_vector_store
                     vs = get_vector_store()
-                    for entity in session.knowledge_graph.get_entities_for_indexing():
-                        vs.add_entity_description(
-                            campaign_id=campaign_id,
-                            node_id=entity.node_id,
-                            entity_type=entity.entity_type.value,
-                            name=entity.name,
-                            description=entity.properties.get("description", ""),
-                            aliases=entity.aliases,
-                        )
+                    entities = list(
+                        session.knowledge_graph.get_entities_for_indexing()
+                    )
+
+                    def _sync_entity_descriptions() -> None:
+                        for entity in entities:
+                            vs.add_entity_description(
+                                campaign_id=campaign_id,
+                                node_id=entity.node_id,
+                                entity_type=entity.entity_type.value,
+                                name=entity.name,
+                                description=entity.properties.get("description", ""),
+                                aliases=entity.aliases,
+                            )
+
+                    # Chroma client init + per-entity embedding upserts are
+                    # blocking work; a large campaign froze the event loop
+                    # for the whole re-sync (audit AQ-ASYNC-03). The store's
+                    # content-hash gate makes the steady-state pass skip-only.
+                    await asyncio.to_thread(_sync_entity_descriptions)
                 except Exception as e:
                     logger.warning("kg_entity_description_sync_failed", error=str(e), exc_info=True)
 

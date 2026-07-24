@@ -198,6 +198,97 @@ class TestEntityDescriptionIndexing:
 
 
 # ======================================================================
+# Entity content-hash gate (audit AQ-ASYNC-03: redundant re-embeds)
+# ======================================================================
+
+
+@pytest.fixture
+def upsert_spy(monkeypatch):
+    """Count every real Collection.upsert, whatever instance it lands on."""
+    from chromadb.api.models.Collection import Collection
+
+    calls: list[list[str]] = []
+    real_upsert = Collection.upsert
+
+    def counted(self, *args, **kwargs):
+        ids = kwargs.get("ids")
+        if ids is None and args:
+            ids = args[0]
+        calls.append(list(ids or []))
+        return real_upsert(self, *args, **kwargs)
+
+    monkeypatch.setattr(Collection, "upsert", counted)
+    return calls
+
+
+class TestEntityContentHashGate:
+    """Unchanged entity text must not re-embed.
+
+    The orchestrator re-syncs an entity whenever it appears in any graph op
+    and session start re-syncs the entire graph, so without a change gate
+    every turn and every restart re-embeds the whole roster.
+    """
+
+    def _add(self, vs, description="A scarred dwarf", aliases=None, name="Grimjaw"):
+        return vs.add_entity_description(
+            campaign_id=CAMPAIGN_ID,
+            node_id="grimjaw",
+            entity_type="npc",
+            name=name,
+            description=description,
+            aliases=aliases,
+        )
+
+    def test_unchanged_entity_skips_the_upsert(self, vector_store, upsert_spy):
+        assert self._add(vector_store) is True
+        assert self._add(vector_store) is True
+
+        assert len(upsert_spy) == 1
+
+    def test_changed_description_reembeds(self, vector_store, upsert_spy):
+        self._add(vector_store, description="A scarred dwarf")
+        self._add(vector_store, description="A scarred dwarf, now missing an ear")
+
+        assert len(upsert_spy) == 2
+        col = vector_store._get_collection(CAMPAIGN_ID)
+        stored = col.get(ids=["entity_grimjaw"])
+        assert "missing an ear" in stored["documents"][0]
+
+    def test_alias_change_reembeds(self, vector_store, upsert_spy):
+        self._add(vector_store)
+        self._add(vector_store, aliases=["old one-eye"])
+
+        assert len(upsert_spy) == 2
+
+    def test_restart_seeds_hashes_from_stored_metadata(
+        self, tmp_path, upsert_spy
+    ):
+        # Same persist directory, fresh store instance — the restart shape:
+        # session start re-syncs every entity through a brand-new process.
+        first = VectorStore(persist_directory=str(tmp_path / "chroma"))
+        self._add(first, description="A scarred dwarf")
+        assert len(upsert_spy) == 1
+
+        second = VectorStore(persist_directory=str(tmp_path / "chroma"))
+        assert self._add(second, description="A scarred dwarf") is True
+        assert len(upsert_spy) == 1  # unchanged across restart: no re-embed
+
+        self._add(second, description="A scarred dwarf with a new scar")
+        assert len(upsert_spy) == 2  # real change still lands
+
+    def test_delete_campaign_clears_the_gate(self, vector_store, upsert_spy):
+        self._add(vector_store)
+        assert vector_store.delete_campaign(CAMPAIGN_ID)
+
+        # The collection is gone; an identical add must write again rather
+        # than being skipped by a stale hash.
+        assert self._add(vector_store) is True
+        assert len(upsert_spy) == 2
+        col = vector_store._get_collection(CAMPAIGN_ID)
+        assert col.get(ids=["entity_grimjaw"])["ids"] == ["entity_grimjaw"]
+
+
+# ======================================================================
 # Entity vector search
 # ======================================================================
 

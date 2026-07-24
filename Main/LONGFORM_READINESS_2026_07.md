@@ -154,8 +154,11 @@ product experience and how well authored canon evolves under play.
 - add durable feature resources before claiming class-feature rest recovery;
 - add restart checkpoints and graph-projection convergence assertions;
 - expand tool coverage beyond the current NPC-reference-heavy trajectory;
-- cap/retract established facts and move synchronous vector work off the event
-  loop so a long soak measures product quality rather than accumulated latency;
+- ~~cap/retract established facts and move synchronous vector work off the
+  event loop~~ DONE 2026-07-24 (see the dated section below): fact
+  supersession + the scene-anchored fact projection had already landed; the
+  last on-loop vector site (session-start re-sync) now runs in a worker
+  thread behind a content-hash skip-unchanged gate;
 - establish a multi-run pass-rate threshold, cost budget, and p95 latency gate.
 - migrate the Flash-Lite player driver from the end-of-support
   `google.generativeai` SDK to `google.genai` before it becomes a long-term CI
@@ -820,3 +823,43 @@ Post-fix: 1207 green (+4 pinning tests, all four fail against `fca380f`),
 mypy clean, live reliability PASS 11/11 at 100.0% (39/39 effects, zero
 rejections, 6 families) — `20260724_164644_deepseek_v4_flash_qwen9b`.
 Merged to master with `fca380f`.
+
+### 2026-07-24 (later still): the latency blocker — facts + vector work
+
+Re-verified the "cap/retract established facts and move synchronous vector
+work off the event loop" blocker against the current tree before doing
+anything, because both halves had drifted since the 07-16 worklist:
+
+**Facts half — already closed by intervening work, now recorded as such.**
+Supersession retires contradicted facts with provenance; live prompts carry
+only the scene-anchored ≤20 projection (the memory manager's
+`<established_facts>` block renders only for empty-input diagnostic views,
+so the narrator no longer sees facts twice); the per-turn memory→world sync
+respects retirement. The raw ledger stays append-only by design.
+
+**Vector half — closed this session.** A fresh verification sweep found the
+per-turn call sites already wrapped in `asyncio.to_thread`; what remained:
+
+- the session-start entity re-sync (`session.py::_load_knowledge_graph`)
+  still ran Chroma client init + one embedding upsert per entity directly
+  on the event loop, on BOTH the start and recovery paths — now a single
+  worker-thread call;
+- nothing gated re-embeds: any graph op touching an entity re-embedded its
+  unchanged description every turn, name-promotion re-indexed every
+  `ref_entity` target unconditionally, and every restart re-embedded the
+  whole graph. `VectorStore.add_entity_description` now hashes the exact
+  indexed document (type + name + description + aliases) into Chroma
+  metadata and skips the upsert when unchanged; the per-campaign hash map
+  seeds once from stored metadata, so restarts skip too. Invalidation on
+  delete_memory / delete_campaign / close.
+- the `EntityNameMatcher` twice-per-turn rebuild was examined and LEFT: the
+  second build runs after the turn's graph ops and must see the updated
+  graph; construction is O(N log N) pure CPU. Not a seam, a feature.
+
+5 pinning tests (1212 green); the two skip-behavior tests fail against the
+pre-fix store, the three write-behavior tests are the no-regression guards
+(changed description / changed aliases still re-embed; delete-then-readd
+still writes). Adversarial pass (out-of-band entity_ writers, Chroma 1.4.0
+get(where=, include=) semantics verified live, to_thread exception/ordering
+semantics, test isolation): no defects; the two theoretical races degrade
+to one redundant re-embed, never a wrong skip.
