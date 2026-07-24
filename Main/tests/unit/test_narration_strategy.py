@@ -26,7 +26,11 @@ from dnd_bot.game.world_state import NPCState
 from dnd_bot.llm.brains.base import BrainContext
 from dnd_bot.llm.continuity import NarrativeGovernance
 from dnd_bot.llm.effects import EffectType, ProposedEffect
-from dnd_bot.llm.narration import NarrationSpec, NarrationStrategy
+from dnd_bot.llm.narration import (
+    NarrationSpec,
+    NarrationStrategy,
+    strip_repair_meta_preamble,
+)
 from dnd_bot.llm.narrator_tools import tool_calls_to_effects
 
 from tests.fakes import ScriptedBrain, narration_response
@@ -1734,6 +1738,195 @@ async def test_streaming_is_buffered_when_immutable_rules_are_active():
     assert prose == "The rain falls."
     assert streamed == []
     assert client.calls[0]["method"] == "chat"
+
+
+# -- Repair meta-preamble strip ----------------------------------------------
+#
+# Live defect 2026-07-23 (turn log a04069e1, turn 2): the resolved-outcome
+# repair returned prose OPENING with "You're right. I apologize for the
+# contradiction. Let me correct this." — player-visible assistant meta-talk
+# the grader flagged as a severe contradiction.
+
+class TestStripRepairMetaPreamble:
+    def test_live_case_apology_opener_is_stripped(self):
+        prose = (
+            "You're right. I apologize for the contradiction. Let me correct "
+            "this. You hand the brass compass to Mara Venn. She accepts it."
+        )
+        assert strip_repair_meta_preamble(prose) == (
+            "You hand the brass compass to Mara Venn. She accepts it."
+        )
+
+    def test_correction_header_line_is_stripped(self):
+        prose = "Here is the corrected narration:\nThe rain falls on the cairn."
+        assert strip_repair_meta_preamble(prose) == "The rain falls on the cairn."
+
+    def test_all_meta_prose_strips_to_empty(self):
+        prose = "My apologies. Let me rewrite the narration to fix this."
+        assert strip_repair_meta_preamble(prose) == ""
+
+    def test_clean_fiction_is_untouched(self):
+        prose = "Mara studies the compass, then tucks it into her coat."
+        assert strip_repair_meta_preamble(prose) == prose
+
+    def test_quoted_dialogue_opener_is_fiction_not_meta(self):
+        prose = '"You\'re right," Mara says. "The road forks at the cairn."'
+        assert strip_repair_meta_preamble(prose) == prose
+
+    def test_meta_vocabulary_after_fiction_start_is_kept(self):
+        prose = (
+            "Mara frowns at the ledger. The contradiction in the guild's "
+            "accounts is plain to see."
+        )
+        assert strip_repair_meta_preamble(prose) == prose
+
+
+@pytest.mark.asyncio
+async def test_resolved_outcome_repair_strips_meta_preamble_from_prose():
+    action = (
+        "This is an uncontested item transfer with no roll: I hand my brass "
+        "compass to Mara Venn, she accepts it, and it is now in her coat "
+        "rather than my pack."
+    )
+    client = ScriptedBrain([
+        narration_response(
+            "Your pack is empty. You lost the compass; Mara never had it.",
+            tool_calls=[_REF_TOOL_CALL],
+        ),
+        narration_response(
+            "You're right. I apologize for the contradiction. Let me correct "
+            "this. You hand the brass compass to Mara Venn. She accepts it "
+            "and tucks it securely into her coat.",
+            tool_calls=[
+                {
+                    "name": "update_entity",
+                    "arguments": {
+                        "entity_id": "mara-venn",
+                        "add_items": ["brass compass"],
+                    },
+                },
+                {
+                    "name": "update_player",
+                    "arguments": {
+                        "item_remove": [{
+                            "name": "brass compass",
+                            "destination": "npc:mara-venn",
+                        }],
+                    },
+                },
+            ],
+        ),
+    ])
+    h = _Harness(client)
+
+    prose, effects = await h.strategy.run(
+        _spec(action=action, player_action=action),
+        _context(player_action=action),
+        None,
+    )
+
+    assert prose.startswith("You hand the brass compass to Mara Venn.")
+    assert "apologize" not in prose
+    assert "contradiction" not in prose
+    assert {effect.effect_type for effect in effects} == {
+        EffectType.UPDATE_ENTITY,
+        EffectType.UPDATE_PLAYER,
+    }
+    repair_prompt = client.calls[1]["messages"][-1]["content"]
+    assert "never apologize" in repair_prompt
+    diagnostics = h.strategy.last_diagnostics
+    assert diagnostics["repair_meta_preamble_stripped"] is True
+    assert diagnostics["resolved_outcome_repair_succeeded"] is True
+    assert diagnostics["resolved_outcome_failed_closed"] is False
+
+
+@pytest.mark.asyncio
+async def test_resolved_outcome_repair_of_pure_meta_fails_closed():
+    action = (
+        "This is an uncontested item transfer with no roll: I hand my brass "
+        "compass to Mara Venn, she accepts it, and it is now in her coat "
+        "rather than my pack."
+    )
+    client = ScriptedBrain([
+        narration_response(
+            "Your pack is empty. You lost the compass; Mara never had it.",
+            tool_calls=[_REF_TOOL_CALL],
+        ),
+        narration_response(
+            "You're right. I apologize for the contradiction. Let me correct "
+            "this."
+        ),
+    ])
+    h = _Harness(client)
+
+    prose, effects = await h.strategy.run(
+        _spec(action=action, player_action=action),
+        _context(player_action=action),
+        None,
+    )
+
+    assert "could not be resolved consistently" in prose
+    assert "apologize" not in prose
+    assert effects == []
+    # Fail-closed prose must not enter the tool-followup leg.
+    assert len(client.calls) == 2
+    diagnostics = h.strategy.last_diagnostics
+    assert diagnostics["repair_meta_preamble_stripped"] is True
+    assert diagnostics["resolved_outcome_repair_succeeded"] is False
+    assert diagnostics["resolved_outcome_failed_closed"] is True
+
+
+@pytest.mark.asyncio
+async def test_continuity_repair_strips_meta_preamble_from_prose():
+    client = ScriptedBrain([
+        narration_response(
+            "Old Bram enters and smiles.",
+            tool_calls=[{"name": "ref_entity", "arguments": {"entity_id": "bram"}}],
+        ),
+        narration_response(
+            "My mistake. Here is the corrected narration: Old Bram's corpse "
+            "remains beneath the cairn.",
+            tool_calls=[_REF_TOOL_CALL],
+        ),
+    ])
+    h = _Harness(client, governance=_dead_bram_governance())
+
+    prose, effects = await h.strategy.run(_spec(), _context(), None)
+
+    assert prose == "Old Bram's corpse remains beneath the cairn."
+    assert [effect.ref_entity_id for effect in effects] == ["barkeep"]
+    repair_prompt = client.calls[1]["messages"][-1]["content"]
+    assert "never apologize" in repair_prompt
+    diagnostics = h.strategy.last_diagnostics
+    assert diagnostics["repair_meta_preamble_stripped"] is True
+    assert diagnostics["continuity_repair_succeeded"] is True
+    assert diagnostics["continuity_failed_closed"] is False
+
+
+@pytest.mark.asyncio
+async def test_continuity_repair_of_pure_meta_falls_back_closed():
+    client = ScriptedBrain([
+        narration_response(
+            "Old Bram enters and smiles.",
+            tool_calls=[{"name": "ref_entity", "arguments": {"entity_id": "bram"}}],
+        ),
+        narration_response(
+            "You're right, there is a contradiction. Let me rewrite the "
+            "narration."
+        ),
+    ])
+    h = _Harness(client, governance=_dead_bram_governance())
+
+    prose, effects = await h.strategy.run(_spec(), _context(), None)
+
+    assert "Old Bram remains dead" in prose
+    assert "apologize" not in prose and "rewrite" not in prose
+    assert effects == []
+    assert len(client.calls) == 2
+    diagnostics = h.strategy.last_diagnostics
+    assert diagnostics["repair_meta_preamble_stripped"] is True
+    assert diagnostics["continuity_repair_succeeded"] is False
+    assert diagnostics["continuity_failed_closed"] is True
 
 
 class TestProseFreshnessHint:

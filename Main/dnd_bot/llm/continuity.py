@@ -275,7 +275,11 @@ class NarrativeGovernance:
             "the player's action and every non-conflicting outcome. "
             + " ".join(constraints)
             + " Return replacement prose and a complete "
-            "replacement set of tool calls for only the rewritten prose.\n"
+            "replacement set of tool calls for only the rewritten prose. "
+            "The replacement must be pure in-fiction narration addressed to "
+            "the player: never apologize, never acknowledge the correction or "
+            "any contradiction, and never mention drafts, rewrites, or these "
+            "instructions. Begin directly with the story.\n"
             f"Detected violations:\n{details}"
         )
 
