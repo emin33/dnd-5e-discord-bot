@@ -1,0 +1,313 @@
+{
+  "turn_log": "data\\turn_logs\\3caca1a9-ab3c-4686-8556-02870d5b52c2.jsonl",
+  "judge_model": "gemini-2.5-flash",
+  "verdict": "PASS",
+  "overall_average": 4.86,
+  "dimension_means": {
+    "continuity": 5.0,
+    "contradiction_free": 4.93,
+    "npc_voice": 5.0,
+    "prose_freshness": 4.43,
+    "player_agency": 4.93
+  },
+  "gates": [
+    {
+      "name": "judge_coverage_complete",
+      "passed": true,
+      "detail": "windows graded=14; failed=0"
+    },
+    {
+      "name": "overall_average",
+      "passed": true,
+      "detail": "avg=4.86 (gate >= 4.0)"
+    },
+    {
+      "name": "no_dimension_below_minimum",
+      "passed": true,
+      "detail": "means={'continuity': 5.0, 'contradiction_free': 4.93, 'npc_voice': 5.0, 'prose_freshness': 4.43, 'player_agency': 4.93} (gate >= 3.0)"
+    },
+    {
+      "name": "zero_severe_contradictions",
+      "passed": true,
+      "detail": "severe=[]"
+    },
+    {
+      "name": "prose_repetition_bounded",
+      "passed": true,
+      "detail": "worst 8-gram repeat ratio=0.01 (gate <= 0.35)"
+    }
+  ],
+  "worst_repeat_ratio": 0.01,
+  "opening_bigrams": {
+    "the compass": 12,
+    "elara holds": 4,
+    "gideon's eyes": 3,
+    "the question": 3,
+    "the woman's": 2,
+    "you turn": 2,
+    "the man's": 2,
+    "gideon's fingers": 2
+  },
+  "windows": [
+    {
+      "turns": [
+        1,
+        6
+      ],
+      "scores": {
+        "continuity": 5,
+        "contradiction_free": 5,
+        "npc_voice": 5,
+        "prose_freshness": 4,
+        "player_agency": 5
+      },
+      "contradictions": [],
+      "flags": [
+        "T1: The description of 'inverted wetness \u2014 water crawling toward the sky, not the ground' is a strong, evocative image, but it's not immediately clear if this is a persistent environmental effect or a momentary illusion. Clarifying its nature could enhance continuity.",
+        "T2: The description of the compass as 'a warding spell given form, an active tracker keyed to intruders' is a bit of a sudden reveal. While it's interesting, the DM could have hinted at its magical nature earlier, perhaps with a subtle description of its unusual properties, to make this reveal feel more integrated.",
+        "T5: The DM's narration of the player's attempt to collect the magical residue, stating 'your pressure spreads it into a thin, useless film across the iron' and 'much of the sample is gone,' feels a little heavy-handed in its negative outcome. While failure is part of the game, the phrasing could be softened to allow for more player interpretation of the 'fragments' they did collect."
+      ],
+      "summary": "The player investigates a collapsed courier in Saint Orra's Wake, discovering a magical compass, a Choir of Anchors brand, and evidence that the Archive's inner door was opened from within. A Choir scholar named Elms confronts the player, demanding the compass and the collected evidence, claiming the courier was carrying stolen Choir property."
+    },
+    {
+      "turns": [
+        7,
+        12
+      ],
+      "scores": {
+        "continuity": 5,
+        "contradiction_free": 5,
+        "npc_voice": 5,
+        "prose_freshness": 5,
+        "player_agency": 5
+      },
+      "contradictions": [],
+      "flags": [],
+      "summary": "The player escapes the Choir scholar and meets Gideon Hask in the Knot Market. Gideon, an apparent investigator, reveals the significance of the Archive door grease and the courier's compass, linking them to a seventeen-year-old incident involving scholar Orris Vane and a sealed corridor. Gideon directs the player to Elara Venn, a former colleague of Vane, in the Sunken Tier."
+    },
+    {
+      "turns": [
+        13,
+        18
+      ],
+      "scores": {
+        "continuity": 5,
+        "contradiction_free": 5,
+        "npc_voice": 5,
+        "prose_freshness": 5,
+        "player_agency": 5
+      },
+      "contradictions": [],
+      "flags": [],
+      "summary": "The player descends into the Sunken Tier and finds Elara Venn's shop. Elara, a former colleague of Orris Vane, confirms the compass's significance and reveals Vane's fate after entering the sealed corridor. She shares Vane's final written message, detailing a 'living heart' fed by the city's memories and the repeated warning 'WAKE' found by others."
+    },
+    {
+      "turns": [
+        19,
+        24
+      ],
+      "scores": {
+        "continuity": 5,
+        "contradiction_free": 5,
+        "npc_voice": 5,
+        "prose_freshness": 5,
+        "player_agency": 5
+      },
+      "contradictions": [],
+      "flags": [],
+      "summary": "Elara reveals the 'heart' is a sleeping leviathan dreaming the city into existence, fed by the Choir's Night of Unburdening ritual. The Choir's agent from Saint Orra's Wake arrives at Elara's shop, forcing the player and Elara to escape through a hidden passage in the floor."
+    },
+    {
+      "turns": [
+        25,
+        30
+      ],
+      "scores": {
+        "continuity": 5,
+        "contradiction_free": 5,
+        "npc_voice": 5,
+        "prose_freshness": 4,
+        "player_agency": 5
+      },
+      "contradictions": [],
+      "flags": [
+        "T25: The description of the tunnel as 'carved through pale, veined bone' and 'studded with fossilized nodules' is good, but the later description of the floor as 'smooth, worn by centuries of use' feels slightly at odds with the idea of fossilized nodules. It's a minor nit, but could be smoother.",
+        "T26: 'The passage narrows as she speaks, her voice taking on the cadence of someone who has recited these facts to herself many times.' This is a good character beat, but the 'as she speaks' part feels a little clunky. It's a minor stylistic point.",
+        "T27: 'The flame inside wavers, sending shadows skittering across the fossil-studded ceiling like startled insects.' This is a strong image, but the 'fossil-studded ceiling' was mentioned in T25. While not a contradiction, it's a slight repetition of a specific detail that could have been varied or built upon.",
+        "T29: 'You close your eyes, trying to pin it down, to find its source, its rhythm, its direction. Nothing. It's everywhere at once.' This is effective, but the phrasing 'Nothing. It's everywhere at once' is a common trope for this kind of sensory overload. It's not bad, but not particularly fresh."
+      ],
+      "summary": "Elara and the player escape into the leviathan's 'old roads' beneath the city. Elara reveals the tunnels are ancient, leading a mile down to the heart chamber, which is guarded by 'attendants' that are extensions of the leviathan itself. They encounter a humming black iron hatch, which Elara believes is connected to the Choir's collected memories."
+    },
+    {
+      "turns": [
+        31,
+        36
+      ],
+      "scores": {
+        "continuity": 5,
+        "contradiction_free": 5,
+        "npc_voice": 5,
+        "prose_freshness": 4,
+        "player_agency": 4
+      },
+      "contradictions": [],
+      "flags": [
+        "T33: The description of the wax seal's impression as 'geometric, a pattern of interlocking lines' is a bit vague and could be more evocative or specific, especially given the player's focus on it.",
+        "T34: The DM's narration of the knife slipping and the seal being ruined feels a little heavy-handed in its description of player failure, potentially overstating the player's 'haste' when the player was attempting to be careful. While the outcome is valid, the framing could be softer.",
+        "T34: The phrase 'A flaw that anyone who knew Orris would notice' feels like a slight overreach, as it implies a level of scrutiny and knowledge about Orris's habits that might not be fully established or relevant to the immediate moment."
+      ],
+      "summary": "Elara presents the player with Orris's sealed letter, given to her seventeen years ago. The player attempts to carefully open the letter, but the seal crumbles and the letter tears. Elara questions the player about the incident, then instructs them to read the letter."
+    },
+    {
+      "turns": [
+        37,
+        42
+      ],
+      "scores": {
+        "continuity": 5,
+        "contradiction_free": 5,
+        "npc_voice": 5,
+        "prose_freshness": 4,
+        "player_agency": 5
+      },
+      "contradictions": [],
+      "flags": [
+        "T37: The description of the letter's physical state (fragile, worn through fold lines) is good, but the immediate follow-up that 'every word is legible' feels slightly at odds with the extreme fragility. It's not a contradiction, but a slight tonal dissonance.",
+        "T37: The phrase 'Not a metaphor, not a symbol \u2014 a heart' is a bit clunky in the letter itself. While it's Orris's writing, it feels a little too on-the-nose for a dramatic reveal.",
+        "T38: 'Not an instruction. A reminder.' This distinction feels a little forced. It's both, and the DM explicitly states it's 'a message from a dead man to whoever would hold this next,' which implies instruction/guidance.",
+        "T40: 'The hum vibrates up through your boots, through your spine, settling somewhere behind your teeth. It's not a sound so much as a pressure \u2014 a presence, patient and vast, breathing on the other side of a membrane.' This is a strong description, but the 'not a sound so much as a pressure' has been used before to describe the hum, making it slightly less fresh here.",
+        "T41: 'The hum continues. Steady. Patient. Unchanged.' This is a good beat, but 'patient' has been used multiple times to describe the hum/presence, bordering on repetitive."
+      ],
+      "summary": "The player reads Orris's letter, revealing a massive, living 'heart' beneath the Archive that consumes memories. The compass is revealed to be a key, with 'Breathe' inscribed on it. Elara confirms the compass was meant to find the player. The player attempts to open a hatch leading to the heart, initially failing, but then the hatch reacts when the compass is pressed against it."
+    },
+    {
+      "turns": [
+        43,
+        48
+      ],
+      "scores": {
+        "continuity": 5,
+        "contradiction_free": 4,
+        "npc_voice": 5,
+        "prose_freshness": 4,
+        "player_agency": 5
+      },
+      "contradictions": [
+        {
+          "turn": 47,
+          "severity": "minor",
+          "detail": "The player attempts to retrieve cipher notes from their pack, implying they believed they had them. While the DM correctly points out the notes are not there, the player's action itself is a minor continuity break from the player's perspective, though the DM handles it well."
+        }
+      ],
+      "flags": [],
+      "summary": "The player attempts to open a hatch with the compass, which 'recognizes' them but doesn't open. Elara explains Orris's prophecy-like knowledge of the player and reveals he left cipher notes, which she still possesses. The player, after a brief confusion about the notes' location, is offered a choice: retrieve the notes or try the hatch again."
+    },
+    {
+      "turns": [
+        49,
+        54
+      ],
+      "scores": {
+        "continuity": 5,
+        "contradiction_free": 5,
+        "npc_voice": 5,
+        "prose_freshness": 4,
+        "player_agency": 5
+      },
+      "contradictions": [],
+      "flags": [
+        "T50: The description of the tunnel as 'the slow, organic curve of a throat' is a bit clich\u00e9.",
+        "T50: 'a familiar wooden ladder materializes in the lantern light' -- 'materializes' feels a bit too magical for a mundane ladder, even if it's just appearing from the dark.",
+        "T51: 'The symbols blur. You're tired. The lantern light flickers. The shapes refuse to resolve into patterns your mind can hold.' This section feels a little like it's telling the player what their character is experiencing rather than describing the scene and letting the player infer the character's state. While it's a reasonable inference, it borders on inventing player experience."
+      ],
+      "summary": "The player chooses to retrieve Orris's cipher notes with Elara. They return to Elara's shop, where she presents the notes, which the player attempts to decipher but struggles with due to fatigue. Elara then shares her theory that Orris was hiding a 'door' in the Archive, not the ritual itself, and that the cipher is the key. The player and Elara begin to piece together Orris's plan, realizing he may have intentionally allowed himself to be 'contained' by the Choir while leaving the real path to be found by someone else, using the compass."
+    },
+    {
+      "turns": [
+        55,
+        60
+      ],
+      "scores": {
+        "continuity": 5,
+        "contradiction_free": 5,
+        "npc_voice": 5,
+        "prose_freshness": 5,
+        "player_agency": 5
+      },
+      "contradictions": [],
+      "flags": [],
+      "summary": "The player and Elara continue to unravel Orris's plan, realizing he anticipated not only the Choir's actions but also the player's arrival and their meeting with Elara. Elara reveals a new note indicating Orris's 'door' is an 'invitation' for the person the compass chooses, which is the player. The ultimate goal is for the player to see what Orris saw and decide the city's fate."
+    },
+    {
+      "turns": [
+        61,
+        66
+      ],
+      "scores": {
+        "continuity": 5,
+        "contradiction_free": 5,
+        "npc_voice": 5,
+        "prose_freshness": 5,
+        "player_agency": 5
+      },
+      "contradictions": [],
+      "flags": [],
+      "summary": "The player decides to reveal the truth to Veyr, accepting the potential cost. Elara, having made her own choice to stop burying the past, pledges her support and prepares to open the hatch leading to the next stage of Orris's plan. The party is at the shop, with the hatch on the floor as their immediate next step."
+    },
+    {
+      "turns": [
+        67,
+        72
+      ],
+      "scores": {
+        "continuity": 5,
+        "contradiction_free": 5,
+        "npc_voice": 5,
+        "prose_freshness": 5,
+        "player_agency": 5
+      },
+      "contradictions": [],
+      "flags": [],
+      "summary": "The party descends into a hidden chamber beneath Elara's shop, discovering a mysterious wooden door with a unique 'O' symbol, sealed with beeswax and charcoal, suggesting Orris's recent presence. The player then decides to leave the chamber and seek out Gideon Hask in the Knot Market, finding him at his tea cart by the old bone arch."
+    },
+    {
+      "turns": [
+        73,
+        78
+      ],
+      "scores": {
+        "continuity": 5,
+        "contradiction_free": 5,
+        "npc_voice": 5,
+        "prose_freshness": 4,
+        "player_agency": 5
+      },
+      "contradictions": [],
+      "flags": [
+        "T73: The description of the crowd moving past, then Gideon not shifting or blinking, creates a slight awkwardness. It implies he's frozen, which isn't quite the intent.",
+        "T74: 'The steam curls around his face' is a bit generic and similar to previous descriptions of steam.",
+        "T77: 'The key sits in your palm, cold and light.' This is a minor nit, but the player's action was 'turning the tarnished brass key over in my gloved hand,' so the key wouldn't be directly in their palm or cold to the touch through a glove."
+      ],
+      "summary": "The player, Kael Windrunner, meets Gideon Hask at his tea cart in the Knot Market. After some probing, Gideon reveals he delivered a tarnished brass key with a feather-shaped bow to Veyr five days ago, sent by a scarred woman. The woman's only message was 'He'll know where it goes. Tell him the door's already open.'"
+    },
+    {
+      "turns": [
+        79,
+        80
+      ],
+      "scores": {
+        "continuity": 5,
+        "contradiction_free": 5,
+        "npc_voice": 5,
+        "prose_freshness": 4,
+        "player_agency": 5
+      },
+      "contradictions": [],
+      "flags": [
+        "T79: The description of the scarred woman is solid, but the DM could have pushed for a more evocative simile than 'like a blade had drawn a line' for the scar, or 'like she'd been holding ice' for her fingers. They are functional but not particularly fresh.",
+        "T80: 'He holds there for a beat, then slowly sets it down without drinking.' This is a minor nit, but 'holds there for a beat' is a slightly clunky phrasing. 'He freezes for a beat' or 'He pauses, cup suspended' might flow better."
+      ],
+      "summary": "Kael presses Gideon for more details on the scarred woman. Gideon describes her physical appearance and demeanor, noting her cold touch and commanding presence. Kael then reveals knowledge of a distinctive ring (Ouroboros) worn by the woman, which Gideon did not observe. Gideon connects the symbol to 'The Choir' and warns Kael about pursuing her."
+    }
+  ]
+}

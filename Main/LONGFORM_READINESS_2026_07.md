@@ -608,3 +608,33 @@ raw ref-emission quality measured — a hallucinated-ref flood must fail
 something even though every instance self-heals. Healthy runs measure
 0-2%; the pre-fix noisy runs would have measured ~6-8%. This closes the
 adversarial review's watch-item.
+
+## Soak #4 (20260723_230351, seed "Gideon Hask"): 25/27 on merged master
+
+First 80-turn soak with ALL 2026-07-23 fixes active (supersession, repair
+meta-strip, seed retry, gate classifiers landed mid-run so evaluated with
+the pre-refinement gates). Complete and trusted; recall 6/6; KG washout
+clean; identity gates clean.
+
+- `tool_structural_failure_budget` **3.2%** (7/220) at 80-turn scale —
+  was 5.7-8.3% on comparable pre-fix runs. `tool_followup_refs_superseded`
+  = 8 with 17 deterministic ref recoveries; the new supersede budget
+  measures 3.5% (<=15%).
+- Narrative grade **PASS 4.86 — highest soak grade yet** (4.67/4.70/4.77
+  before), zero severe contradictions, continuity 5.0, freshness 4.43.
+- Residual fails, both documented classes: `narrator_kept_seed_out_of_
+  memory_gap` (single leak at T15, the washout boundary — organic
+  thread-finish, Mira-Vex class); `tool_effect_execution_reliability`
+  97.7% vs 98% — five rejections, ALL the invented/partial-id-at-
+  execution class ('masked_courier', 'living-brass-compass',
+  'orris-vanes-hidden-note', 'carved-wooden-door', ref 'gideon'). That
+  id-resolution cluster (extractor id-field sloppiness + narrator
+  embellishment at the store seam) is now the top open item.
+
+Soak matrix:
+| run | seed | score | recall | identity unique | omission | grade | notes |
+|-----|------|-------|--------|-----------------|----------|-------|-------|
+| 20260722_230128 | Sera Vellik | 22/26 | 6/6 | FAIL (pre-fix) | FAIL (pre-fix) | 4.67 | baseline |
+| 20260723_005611 | Tomas Vex | 24/26 | 6/6 | PASS | PASS | - | pre-seams |
+| 20260723_122931 | Pell | 24/26 | 6/6 | PASS | PASS | 4.77 | naming seams |
+| 20260723_230351 | Gideon Hask | 25/27 | 6/6 | PASS | PASS | 4.86 | all fixes merged |
