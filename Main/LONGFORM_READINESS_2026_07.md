@@ -665,6 +665,16 @@ All five live shapes pinned in `test_invented_id_rescue.py` and
 `test_scene_entity_update.py`. Rerunning soak #4's tape, 4/5 rejections
 now execute → hypothetical 212/213 = 99.5% (gate needs 98%).
 
+Live validation (20260724_010137, targeted_relevance_callback, seed
+"Tess Greymark", 30 turns): `tool_effect_execution_reliability` **98.8%
+PASS** (80/81); the run's sole rejection is the alias-canonical-conflict
+guard correctly refusing a T28 misbinding — the invented/partial-id class
+had zero occurrences and the rescue fired zero times, so the 25/28 run's
+three fails (seed-gap organic reincorporation, structural budget 6.9% on
+a small 87-proposal denominator, and three narrator alias misbinds at
+T25/T28/T30) are all pre-existing stochastic classes untouched by this
+change. Off-scene `update_entity` executed 4x through the widened seam.
+
 Soak matrix:
 | run | seed | score | recall | identity unique | omission | grade | notes |
 |-----|------|-------|--------|-----------------|----------|-------|-------|
