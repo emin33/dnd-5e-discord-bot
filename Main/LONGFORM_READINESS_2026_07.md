@@ -150,7 +150,13 @@ product experience and how well authored canon evolves under play.
 
 ## Remaining blockers before the expensive soak
 
-- implement the committed mutation receipt and pin ordering/conflict tests;
+- ~~implement the committed mutation receipt and pin ordering/conflict
+  tests~~ RESOLVED 2026-07-24 by re-verification + conflict hardening (see
+  the dated section below): the receipt design assumed the extractor runs
+  after tools; the pipeline actually commits tools LAST, so tools already
+  win every scalar field by construction. The genuine race was accumulator
+  idempotency plus one pre-validation write — both closed, with 13
+  ordering/conflict pinning tests;
 - add durable feature resources before claiming class-feature rest recovery;
 - add restart checkpoints and graph-projection convergence assertions;
 - expand tool coverage beyond the current NPC-reference-heavy trajectory;
@@ -863,3 +869,61 @@ still writes). Adversarial pass (out-of-band entity_ writers, Chroma 1.4.0
 get(where=, include=) semantics verified live, to_thread exception/ordering
 semantics, test isolation): no defects; the two theoretical races degrade
 to one redundant re-embed, never a wrong skip.
+
+### 2026-07-24 (night): the mutation-receipt blocker, re-scoped and closed
+
+Before implementing the committed-mutation-receipt design from the
+"State ownership" section above, the turn pipeline was re-mapped end to
+end. The map invalidated the design's premise: the extractor does NOT run
+after narrator tools — it commits at Step 3.6 and `apply_effect` commits
+at Step 4, deliberately last, so **tools already win every scalar field by
+construction** (world_store.py documents this at the CHANGE_LOCATION
+branch). A receipt gating the extractor is structurally impossible (the
+receipt doesn't exist yet when the delta applies) and unnecessary for
+scalars. What the last-writer design actually leans on is per-field
+idempotency in the ACCUMULATOR fields — and five confirmed defects lived
+exactly there:
+
+- **`[status]` notes markers had no membership check at all** — every
+  restated "wounded" appended another `[wounded]` until the 80-char YAML
+  truncation crowded out the real note.
+- **Alias and inventory membership was exact-case on both writers** —
+  extractor `add_aliases=["Old Bram"]` + tool `ref_alias_used="old Bram"`
+  fanned out into duplicates; same for `brass key`/`Brass Key` via
+  `update_add_items` and the `update_player` npc-destination mirror.
+- **A restated move appended a phantom self-edge and lost the origin.**
+  The tool's CHANGE_LOCATION compared raw strings, so after the extractor
+  applied `location_change='the tavern'`, the tool restating `'Tavern'`
+  appended the place the party is standing in as a "connection" (leaking
+  into the narrator YAML and a bogus KG edge) while the true origin was
+  never recorded. Both paths now record the origin equivalence-checked;
+  `new_connections` skips self-edges and spelling variants.
+- **`dedup_effect` grafted the paraphrase alias BEFORE validation** (three
+  sites). A rewrite the validator then rejected left a permanently wrong
+  alias — and worse, the pre-graft put the alias into the target's own
+  label set, which made `_alias_canonical_conflict` structurally unable
+  to fire on dedup rewrites (the Lyra<-Elara misbind gate was
+  self-defeating on exactly the path it was built for). The alias now
+  rides on `ref_alias_used` and lands via `apply_effect` only after the
+  rewrite validates and executes.
+
+13 pinning tests in `tests/unit/test_double_writer_conflicts.py` replay
+real both-writers-in-one-turn sequences in pipeline order; 12 fail against
+the pre-fix source (the 13th is the distinct-statuses guard). 1225 green,
+mypy clean, live reliability PASS 11/11 at 100.0% (43/43, zero
+rejections) — `20260724_173600_deepseek_v4_flash_qwen9b`. Adversarial
+review across five attack surfaces: no defects; two advisories recorded —
+(1) dedup rewrites whose alias is another NPC's canonical name now REJECT
+(fail-closed, by design) and will show up as a new rejection-reason class
+in reliability telemetry; (2) `locations_equivalent` treats
+base ⊂ base+qualifier names (`Old Mill`/`Old Mill Road`) as one place —
+pre-existing model, now also governs the origin-edge append.
+
+Residuals (recorded, not fixed): the extractor's NPC `description` REPLACE
+vs the tool's APPEND has no shared representation — a paraphrased
+double-describe is LLM-text-level and needs a judge, not string logic; a
+CHANGE_LOCATION later in a tool batch still rescopes away a spawn_object
+earlier in the same batch (narrator tool order); numeric player resources
+remain tool/mechanic-only by construction (StateDelta has no player
+fields — the player-prose extractor design should keep it that way for
+numerics when it lands).

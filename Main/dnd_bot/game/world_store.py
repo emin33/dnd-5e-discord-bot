@@ -441,13 +441,12 @@ class WorldStateStore:
             world_state.npcs.values(),
         )
         if deterministic is not None:
+            # The paraphrased name reaches the roster as an alias through
+            # apply_effect's REF_ENTITY leg — which runs only after the
+            # rewritten effect validates and executes. Appending here would
+            # graft an alias the validator may still reject (e.g. another
+            # NPC's canonical name), an unreceipted write nothing undoes.
             alias = (effect.npc_name or "").strip()
-            if (
-                alias
-                and alias.casefold() != deterministic.name.casefold()
-                and alias not in deterministic.aliases
-            ):
-                deterministic.aliases.append(alias)
             logger.info(
                 "dedup_deterministic_rewrite",
                 original_name=effect.npc_name,
@@ -473,13 +472,9 @@ class WorldStateStore:
             effect.npc_name, scene_registry
         )
         if registry_npc is not None:
+            # Same contract as the deterministic arm: alias accumulation
+            # belongs to apply_effect, after validation.
             alias = (effect.npc_name or "").strip()
-            if (
-                alias
-                and alias.casefold() != registry_npc.name.casefold()
-                and alias not in registry_npc.aliases
-            ):
-                registry_npc.aliases.append(alias)
             logger.info(
                 "dedup_scene_registry_rewrite",
                 original_name=effect.npc_name,
@@ -519,9 +514,9 @@ class WorldStateStore:
         if not decision.is_rewrite:
             return effect
 
-        # Rewrite ADD_NPC → REF_ENTITY pointing at the existing id.
-        # Also accumulate the paraphrased name as an alias on the
-        # existing NPCState so future paraphrases match more easily.
+        # Rewrite ADD_NPC → REF_ENTITY pointing at the existing id. The
+        # paraphrased name rides on ref_alias_used; apply_effect
+        # accumulates it as an alias once the rewrite survives validation.
         target_id = decision.target_id
         existing = world_state.npcs.get(target_id)
         if existing is None:
@@ -531,9 +526,6 @@ class WorldStateStore:
                 target_id=target_id,
             )
             return effect
-
-        if decision.alias and decision.alias != existing.name and decision.alias not in existing.aliases:
-            existing.aliases.append(decision.alias)
 
         logger.info(
             "dedup_rewrite_applied",
@@ -737,13 +729,20 @@ class WorldStateStore:
             new_loc = (effect.location_name or "").strip()
             if new_loc:
                 previous_location = world_state.current_location
-                if previous_location != new_loc:
-                    # Track previous location as a connected one (it's reachable)
-                    if (
-                        previous_location
-                        and previous_location not in world_state.connected_locations
-                    ):
-                        world_state.connected_locations.append(previous_location)
+                moved = bool(
+                    previous_location
+                    and not locations_equivalent(previous_location, new_loc)
+                )
+                # Track the origin as reachable — equivalence, not raw
+                # string compare: when the extractor already applied this
+                # move ('the tavern') and the tool restates it ('Tavern'),
+                # a raw compare appended the current location back as a
+                # phantom self-edge under the variant spelling.
+                if moved and not any(
+                    locations_equivalent(previous_location, known)
+                    for known in world_state.connected_locations
+                ):
+                    world_state.connected_locations.append(previous_location)
                 world_state.current_location = new_loc
                 if effect.location_description:
                     world_state.location_description = effect.location_description
@@ -754,9 +753,7 @@ class WorldStateStore:
                 # AFTER this, so a spawn_object/add_npc for the new scene
                 # survives; a restated same location (the extractor already
                 # applied this move earlier in the turn) never re-rescopes.
-                if previous_location and not locations_equivalent(
-                    previous_location, new_loc
-                ):
+                if moved:
                     world_state.rescope_scene()
 
         elif etype == EffectType.REF_ENTITY:
@@ -770,8 +767,16 @@ class WorldStateStore:
                     npc_state.last_seen_turn = world_state.turn
                     # If the prose used a different alias than the canonical
                     # name, accumulate it. Helps future paraphrase resolution.
+                    # Casefold membership: the extractor's add_aliases writes
+                    # the same list earlier in the turn, and 'Old Bram' /
+                    # 'old Bram' must not fan out into duplicates.
                     alias = (effect.ref_alias_used or "").strip()
-                    if alias and alias != npc_state.name and alias not in npc_state.aliases:
+                    if (
+                        alias
+                        and alias.casefold() != npc_state.name.casefold()
+                        and alias.casefold()
+                        not in (a.casefold() for a in npc_state.aliases)
+                    ):
                         npc_state.aliases.append(alias)
 
         elif etype == EffectType.UPDATE_ENTITY:
@@ -792,11 +797,16 @@ class WorldStateStore:
                         if status in ("dead",):
                             npc_state.alive = False
                         elif status in ("alive", "wounded", "unconscious", "fled", "captured"):
-                            # Keep alive=True but record status in notes for narrator visibility
-                            if status != "alive":
+                            # Keep alive=True but record status in notes for
+                            # narrator visibility. Membership-checked: a
+                            # restated status (every turn the narrator
+                            # mentions the wound) must not pile up markers
+                            # until they crowd out the real note.
+                            marker = f"[{status}]"
+                            if status != "alive" and marker not in (npc_state.notes or ""):
                                 npc_state.notes = (
                                     (npc_state.notes + " " if npc_state.notes else "")
-                                    + f"[{status}]"
+                                    + marker
                                 ).strip()
                     if effect.update_importance is not None:
                         npc_state.important = bool(effect.update_importance)
@@ -813,7 +823,12 @@ class WorldStateStore:
                     if effect.update_add_items:
                         for item in effect.update_add_items:
                             item_norm = item.strip()
-                            if item_norm and item_norm not in npc_state.inventory:
+                            # Casefold membership — the extractor's
+                            # add_inventory writes this list earlier in the
+                            # turn ('brass key' vs 'Brass Key').
+                            if item_norm and item_norm.casefold() not in (
+                                i.strip().casefold() for i in npc_state.inventory
+                            ):
                                 npc_state.inventory.append(item_norm)
                     if effect.update_remove_items:
                         for item in effect.update_remove_items:
@@ -872,7 +887,9 @@ class WorldStateStore:
                         npc_state = world_state.npcs.get(npc_id) or world_state._find_npc(npc_id)
                         if npc_state is not None:
                             item = entry.get("name", "").strip()
-                            if item and item not in npc_state.inventory:
+                            if item and item.casefold() not in (
+                                i.strip().casefold() for i in npc_state.inventory
+                            ):
                                 npc_state.inventory.append(item)
             if effect.player_currency_delta:
                 log_parts.append(f"currency: {effect.player_currency_delta}")

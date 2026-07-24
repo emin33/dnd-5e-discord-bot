@@ -323,11 +323,34 @@ class WorldState(BaseModel):
                     previous_location, delta.location_change
                 )
             )
+            # A real move records the origin as reachable — mirroring the
+            # tool path (WorldStateStore.apply_effect CHANGE_LOCATION), so
+            # the map edge exists no matter which writer performed the
+            # move. Previously only the tool path recorded it, and a
+            # double-fire (extractor then tool) lost the true origin
+            # because the tool read an already-moved current_location.
+            if scene_changed and not any(
+                locations_equivalent(previous_location, known)
+                for known in self.connected_locations
+            ):
+                self.connected_locations.append(previous_location)
 
-        # New connections
+        # New connections. Membership is equivalence-based ('the tavern'
+        # vs 'Tavern' is one place), and a connection naming the place the
+        # party is standing in is a phantom self-edge, not map knowledge.
         for conn in delta.new_connections:
-            if conn and conn not in self.connected_locations:
-                self.connected_locations.append(conn)
+            if not conn:
+                continue
+            if self.current_location and locations_equivalent(
+                conn, self.current_location
+            ):
+                continue
+            if any(
+                locations_equivalent(conn, known)
+                for known in self.connected_locations
+            ):
+                continue
+            self.connected_locations.append(conn)
 
         # New NPCs — keyed by stable UUID. Dedup is the job of the
         # orchestrator's brain dedup judge BEFORE the delta lands here;
@@ -383,23 +406,40 @@ class WorldState(BaseModel):
                 existing.important = update.important
 
             # Identity changes — narrator renamed the entity. Old name → aliases.
+            # Alias/inventory membership is casefold: the extractor and the
+            # narrator tools both write these lists in the same turn, and
+            # exact-case tests let 'Old Bram'/'old Bram' or 'Brass Key'/
+            # 'brass key' fan out into duplicates the narrator then reads
+            # back as distinct evidence.
             if update.new_name and update.new_name.strip() and update.new_name != existing.name:
                 old_name = existing.name
                 existing.name = update.new_name.strip()
-                if old_name and old_name not in existing.aliases:
+                if (
+                    old_name
+                    and old_name.casefold() != existing.name.casefold()
+                    and old_name.casefold()
+                    not in (a.casefold() for a in existing.aliases)
+                ):
                     existing.aliases.append(old_name)
             # Additional aliases observed in prose paraphrases
             if update.add_aliases:
                 for alias in update.add_aliases:
                     a = (alias or "").strip()
-                    if a and a != existing.name and a not in existing.aliases:
+                    if (
+                        a
+                        and a.casefold() != existing.name.casefold()
+                        and a.casefold()
+                        not in (x.casefold() for x in existing.aliases)
+                    ):
                         existing.aliases.append(a)
 
             # Inventory deltas
             if update.add_inventory:
                 for item in update.add_inventory:
                     item_norm = (item or "").strip()
-                    if item_norm and item_norm not in existing.inventory:
+                    if item_norm and item_norm.casefold() not in (
+                        i.strip().casefold() for i in existing.inventory
+                    ):
                         existing.inventory.append(item_norm)
             if update.remove_inventory:
                 lower_targets = {(i or "").strip().lower() for i in update.remove_inventory}

@@ -153,8 +153,11 @@ class TestDedupRewrite:
         # Dialogue tracking carried through — those quotes still belong to Bron
         assert rewritten.dialogue_indices == [1, 2]
         assert rewritten.dialogue_emotions == ["wry", "tired"]
-        # The judge's alias was stashed on the existing NPC so future
-        # paraphrases match faster
+        # The alias is NOT grafted at dedup time — the rewrite has not been
+        # validated yet, and a rejected ref must leave no residue. It rides
+        # on ref_alias_used and lands via apply_effect after validation.
+        assert ws.npcs["bron-uuid"].aliases == []
+        WorldStateStore(ws).apply_effect(rewritten)
         assert "Old Bron" in ws.npcs["bron-uuid"].aliases
 
     async def test_accept_leaves_effect_unchanged(self, reset_dedup_singleton):
@@ -717,6 +720,10 @@ class TestSceneRegistryNamingPromotion:
         assert result.effect_type == EffectType.REF_ENTITY
         assert result.ref_entity_id == "woman-uuid"
         assert result.ref_alias_used == "Orris"
+        # Not grafted at dedup time — validation hasn't run yet. It lands
+        # through apply_effect's REF_ENTITY leg on the accepted path.
+        assert "Orris" not in ws.npcs["woman-uuid"].aliases
+        WorldStateStore(ws).apply_effect(result)
         assert "Orris" in ws.npcs["woman-uuid"].aliases
         assert brain.call_count == 0
 
