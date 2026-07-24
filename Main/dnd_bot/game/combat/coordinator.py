@@ -424,7 +424,13 @@ class CombatTurnCoordinator:
                 error=f"Cannot act while {blocking_condition.value}",
             )
 
-        # Validate and consume resources
+        # Validate and consume resources, tracking what was consumed so an
+        # action that never actually happens can give it back. Pre-fix the
+        # economy was burned before routing, so a precondition rejection
+        # (missing target, unknown spell) or a handler crash still cost
+        # the turn's action — and the player's retry then failed with
+        # "No action available" (audit AQ-ERR-03).
+        consumed: list[str] = []
         if action.uses_action:
             if not self.manager.use_action(action.combatant_id):
                 return ActionResult(
@@ -432,57 +438,94 @@ class CombatTurnCoordinator:
                     success=False,
                     error="No action available",
                 )
+            consumed.append("action")
 
         if action.uses_bonus_action:
             if not self.manager.use_bonus_action(action.combatant_id):
+                self._refund_action_economy(combatant, consumed)
                 return ActionResult(
                     action=action,
                     success=False,
                     error="No bonus action available",
                 )
+            consumed.append("bonus_action")
 
         if action.uses_reaction:
             if not self.manager.use_reaction(action.combatant_id):
+                self._refund_action_economy(combatant, consumed)
                 return ActionResult(
                     action=action,
                     success=False,
                     error="No reaction available",
                 )
+            consumed.append("reaction")
 
         # Route to specific handler
         try:
-            if action.action_type == CombatActionType.ATTACK:
-                result = await self._execute_attack(action, combatant)
-                # Mark recharge ability as used AFTER successful execution
-                if action.ability_name and not combatant.is_player:
-                    combatant.use_recharge_ability(action.ability_name)
-                return result
-            elif action.action_type == CombatActionType.CAST_SPELL:
-                return await self._execute_spell(action, combatant)
-            elif action.action_type == CombatActionType.DASH:
-                return self._execute_dash(action, combatant)
-            elif action.action_type == CombatActionType.DISENGAGE:
-                return self._execute_disengage(action, combatant)
-            elif action.action_type == CombatActionType.DODGE:
-                return self._execute_dodge(action, combatant)
-            elif action.action_type == CombatActionType.HELP:
-                return self._execute_help(action, combatant)
-            elif action.action_type == CombatActionType.HIDE:
-                return await self._execute_hide(action, combatant)
-            elif action.action_type == CombatActionType.END_TURN:
-                return ActionResult(action=action, success=True)
-            else:
-                return ActionResult(
-                    action=action,
-                    success=False,
-                    error=f"Unknown action type: {action.action_type}",
-                )
+            result = await self._route_action(action, combatant)
         except Exception as e:
             logger.error("action_execution_failed", error=str(e), action=action.action_type, exc_info=True)
+            self._refund_action_economy(combatant, consumed)
             return ActionResult(
                 action=action,
                 success=False,
                 error=str(e),
+            )
+
+        # The handler contract this refund leans on: a failed result WITH
+        # an error is a precondition rejection — no dice were rolled, no
+        # damage applied, no slot spent — so the economy comes back. An
+        # outcome failure (a missed attack, a failed stealth roll) carries
+        # no error: that action genuinely happened and stays spent.
+        if not result.success and result.error:
+            self._refund_action_economy(combatant, consumed)
+        return result
+
+    @staticmethod
+    def _refund_action_economy(combatant: Combatant, consumed: list[str]) -> None:
+        """Give back economy consumed for an action that never happened.
+
+        Only for precondition rejections and handler crashes — an
+        executed-but-unsuccessful action (a miss) keeps its cost.
+        """
+        for resource in consumed:
+            setattr(combatant.turn_resources, resource, True)
+
+    async def _route_action(
+        self, action: CombatAction, combatant: Combatant
+    ) -> ActionResult:
+        """Dispatch to the per-type handler; no economy mutation here."""
+        if action.action_type == CombatActionType.ATTACK:
+            result = await self._execute_attack(action, combatant)
+            # Mark the recharge ability used whenever the attack actually
+            # executed — a miss still consumes a 5-6 recharge, but a
+            # precondition rejection (error set) must not burn it.
+            if (
+                action.ability_name
+                and not combatant.is_player
+                and (result.success or not result.error)
+            ):
+                combatant.use_recharge_ability(action.ability_name)
+            return result
+        elif action.action_type == CombatActionType.CAST_SPELL:
+            return await self._execute_spell(action, combatant)
+        elif action.action_type == CombatActionType.DASH:
+            return self._execute_dash(action, combatant)
+        elif action.action_type == CombatActionType.DISENGAGE:
+            return self._execute_disengage(action, combatant)
+        elif action.action_type == CombatActionType.DODGE:
+            return self._execute_dodge(action, combatant)
+        elif action.action_type == CombatActionType.HELP:
+            return self._execute_help(action, combatant)
+        elif action.action_type == CombatActionType.HIDE:
+            return await self._execute_hide(action, combatant)
+        elif action.action_type == CombatActionType.END_TURN:
+            return ActionResult(action=action, success=True)
+        else:
+            return ActionResult(
+                action=action,
+                success=False,
+                error=f"Unknown action type: {action.action_type}",
             )
 
     # ==================== Attack Execution ====================
@@ -1021,18 +1064,34 @@ class CombatTurnCoordinator:
                 error=reason,
             )
 
-        # Expend spell slot (if not cantrip) and PERSIST immediately. Combat
-        # mutates this cached Character; _sync_player_characters persists a
-        # separately-fetched Character that never saw the expenditure, so
-        # without this targeted write slots refill on reload (audit #3).
-        if spell.level > 0:
-            character.spell_slots.expend_slot(slot_level)
-            try:
-                repo = await get_character_repo()
-                new_current = character.spell_slots.get_slots(slot_level)[0]
-                await repo.update_spell_slot(character.id, slot_level, new_current)
-            except Exception as e:
-                logger.error("persist_failed", entity="spell_slots", character_id=character.id, error=str(e), exc_info=True)
+        # Resolve targets BEFORE anything is spent. The slot write below
+        # persists to the DB and the concentration break strips real
+        # effects — a cast rejected on targeting must leave both intact.
+        # Pre-fix, a "failed" cast burned the slot and a retry burned a
+        # second one (audit AQ-ERR-03).
+        attack_target = None
+        if spell.attack_type:
+            attack_target = (
+                self.manager.get_combatant(action.target_ids[0])
+                if action.target_ids
+                else None
+            )
+            if not attack_target:
+                return ActionResult(
+                    action=action,
+                    success=False,
+                    error="No target for attack spell",
+                )
+        elif spell.save_dc_ability and action.target_ids:
+            if not any(
+                self.manager.get_combatant(target_id)
+                for target_id in action.target_ids
+            ):
+                return ActionResult(
+                    action=action,
+                    success=False,
+                    error="No valid targets for spell",
+                )
 
         result = ActionResult(
             action=action,
@@ -1056,14 +1115,10 @@ class CombatTurnCoordinator:
 
         # Determine spell type and execute
         if spell.attack_type:
-            # Attack spell
-            target = self.manager.get_combatant(action.target_ids[0]) if action.target_ids else None
-            if not target:
-                return ActionResult(
-                    action=action,
-                    success=False,
-                    error="No target for attack spell",
-                )
+            # Attack spell — target resolved (and validated) above, before
+            # the slot was spent.
+            target = attack_target
+            assert target is not None
 
             # Get advantage/disadvantage
             adv, dis = self._get_spell_attack_advantage(caster, target)
@@ -1199,6 +1254,24 @@ class CombatTurnCoordinator:
         else:
             # Utility spell
             result.spell_effect = f"{spell.name} takes effect"
+
+        # Expend spell slot (if not cantrip) and PERSIST immediately. Combat
+        # mutates this cached Character; _sync_player_characters persists a
+        # separately-fetched Character that never saw the expenditure, so
+        # without this targeted write slots refill on reload (audit #3).
+        # This deliberately runs AFTER the mechanical branches (which take
+        # slot_level as a parameter and never read remaining slots): a
+        # crash inside a cast_* call must leave the slot untouched, or the
+        # coordinator's crash-path economy refund would invite same-turn
+        # retries that each burn a persisted slot for zero effect.
+        if spell.level > 0:
+            character.spell_slots.expend_slot(slot_level)
+            try:
+                repo = await get_character_repo()
+                new_current = character.spell_slots.get_slots(slot_level)[0]
+                await repo.update_spell_slot(character.id, slot_level, new_current)
+            except Exception as e:
+                logger.error("persist_failed", entity="spell_slots", character_id=character.id, error=str(e), exc_info=True)
 
         # Handle concentration (old concentration was already broken above,
         # before the spell's mechanical execution)

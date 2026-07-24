@@ -697,3 +697,313 @@ class TestSpellConditionMap:
         assert "command" not in SPELL_CONDITION_MAP
         # Canary: unambiguous entries are untouched.
         assert SPELL_CONDITION_MAP["hold-person"][0] == Condition.PARALYZED
+
+
+class TestActionEconomyRefund:
+    """AQ-ERR-03: an action that never happened gives its economy back.
+
+    The refund keys on the handler contract: success=False WITH an error
+    string is a precondition rejection (no dice, no damage, no slot), so
+    the action/bonus/reaction comes back and a retry works; success=False
+    with NO error is an outcome failure (a miss, a failed stealth roll)
+    and the cost stays. Pre-fix, economy was consumed before routing and
+    never refunded - a targeting mistake or handler crash burned the
+    whole turn, and a failed cast burned the spell slot too.
+    """
+
+    def _setup(self, channel_id, character):
+        manager = _make_combat(channel_id, character)
+        player = next(c for c in manager.combat.combatants if c.is_player)
+        goblin = next(c for c in manager.combat.combatants if not c.is_player)
+        session = _make_session(channel_id, character)
+        return manager, player, goblin, session
+
+    async def test_attack_at_unknown_target_refunds_the_action(
+        self, mock_character, unique_channel_id
+    ):
+        manager, player, goblin, session = self._setup(
+            unique_channel_id, mock_character
+        )
+        coordinator = _coordinator(manager, session, _ScriptedRoller())
+
+        result = await coordinator.execute_action(
+            _attack(player.id, "no-such-combatant")
+        )
+
+        assert result.success is False
+        assert result.error == "Target not found"
+        # Pre-fix the action was consumed before routing, so this turn was
+        # spent on a targeting mistake and the retry died with
+        # "No action available".
+        assert player.turn_resources.action is True
+
+    async def test_missed_attack_keeps_the_action_spent(
+        self, mock_character, unique_channel_id, equipped_longsword
+    ):
+        manager, player, goblin, session = self._setup(
+            unique_channel_id, mock_character
+        )
+        # Natural 1: guaranteed miss that genuinely executed.
+        coordinator = _coordinator(
+            manager, session, _ScriptedRoller(attack_faces=[1])
+        )
+
+        result = await coordinator.execute_action(_attack(player.id, goblin.id))
+
+        assert result.success is False
+        assert not result.error
+        assert player.turn_resources.action is False
+
+    async def test_handler_crash_refunds_the_action(
+        self, mock_character, unique_channel_id, monkeypatch
+    ):
+        manager, player, goblin, session = self._setup(
+            unique_channel_id, mock_character
+        )
+        coordinator = _coordinator(manager, session, _ScriptedRoller())
+
+        async def _boom(action, combatant):
+            raise RuntimeError("handler exploded")
+
+        monkeypatch.setattr(coordinator, "_execute_attack", _boom)
+
+        result = await coordinator.execute_action(_attack(player.id, goblin.id))
+
+        assert result.success is False
+        assert "handler exploded" in (result.error or "")
+        assert player.turn_resources.action is True
+
+    async def test_bonus_action_rejection_refunds_the_consumed_action(
+        self, mock_character, unique_channel_id
+    ):
+        manager, player, goblin, session = self._setup(
+            unique_channel_id, mock_character
+        )
+        coordinator = _coordinator(manager, session, _ScriptedRoller())
+        player.turn_resources.bonus_action = False  # already spent
+
+        result = await coordinator.execute_action(CombatAction(
+            action_type=CombatActionType.DASH,
+            combatant_id=player.id,
+            uses_action=True,
+            uses_bonus_action=True,
+        ))
+
+        assert result.error == "No bonus action available"
+        # The action consumed a moment earlier comes back with it.
+        assert player.turn_resources.action is True
+
+    async def test_precondition_rejection_does_not_burn_recharge(
+        self, mock_character, unique_channel_id
+    ):
+        from dnd_bot.models.combat import RechargeAbility
+
+        manager, player, goblin, session = self._setup(
+            unique_channel_id, mock_character
+        )
+        goblin.recharge_abilities.append(RechargeAbility(name="Fire Breath"))
+        coordinator = _coordinator(manager, session, _ScriptedRoller())
+
+        result = await coordinator.execute_action(CombatAction(
+            action_type=CombatActionType.ATTACK,
+            combatant_id=goblin.id,
+            target_ids=[],
+            ability_name="Fire Breath",
+        ))
+
+        assert result.success is False
+        assert result.error == "No target specified"
+        # Pre-fix the 5-6 recharge was marked used on a rejected attack.
+        assert goblin.get_recharge_ability("Fire Breath").is_available is True
+
+    async def test_missed_ability_attack_still_burns_recharge(
+        self, mock_character, unique_channel_id
+    ):
+        from dnd_bot.models.combat import RechargeAbility
+
+        manager, player, goblin, session = self._setup(
+            unique_channel_id, mock_character
+        )
+        goblin.recharge_abilities.append(RechargeAbility(name="Fire Breath"))
+        coordinator = _coordinator(
+            manager, session, _ScriptedRoller(attack_faces=[1])
+        )
+
+        result = await coordinator.execute_action(CombatAction(
+            action_type=CombatActionType.ATTACK,
+            combatant_id=goblin.id,
+            target_ids=[player.id],
+            ability_name="Fire Breath",
+        ))
+
+        # A miss is an executed action: the breath was used, it just missed.
+        assert result.success is False
+        assert not result.error
+        assert goblin.get_recharge_ability("Fire Breath").is_available is False
+
+    async def test_failed_cast_leaves_slot_and_concentration_intact(
+        self, mock_character, unique_channel_id, monkeypatch
+    ):
+        from dnd_bot.models import AbilityScore, SpellSlots
+
+        mock_character.spellcasting_ability = AbilityScore.WISDOM
+        mock_character.spell_slots = SpellSlots(level_2=(3, 3))
+        mock_character.prepared_spells = ["hold-person"]
+        mock_character.concentration_spell_id = "bless"
+
+        manager, player, goblin, session = self._setup(
+            unique_channel_id, mock_character
+        )
+        player.effects.append(CombatEffect(
+            name="Bless",
+            effect_type="buff",
+            source_combatant_id=player.id,
+            is_concentration=True,
+        ))
+        coordinator = _coordinator(manager, session, _ScriptedRoller())
+        monkeypatch.setattr(
+            "dnd_bot.game.magic.spellcasting.get_srd", lambda: _StubSRD()
+        )
+        char_repo = _FakeCharacterRepo()
+
+        async def _get_repo():
+            return char_repo
+
+        monkeypatch.setattr(
+            "dnd_bot.game.combat.coordinator.get_character_repo", _get_repo
+        )
+
+        result = await coordinator.execute_action(CombatAction(
+            action_type=CombatActionType.CAST_SPELL,
+            combatant_id=player.id,
+            target_ids=["vanished-combatant"],
+            spell_index="hold-person",
+            slot_level=2,
+        ))
+
+        assert result.success is False
+        assert result.error == "No valid targets for spell"
+        # Pre-fix: the slot was expended AND persisted, the old
+        # concentration (Bless) was broken, and a retry burned a second
+        # slot. All of it must be untouched.
+        assert mock_character.spell_slots.get_slots(2)[0] == 3
+        assert char_repo.slot_calls == []
+        assert mock_character.concentration_spell_id == "bless"
+        assert any(e.name == "Bless" for e in player.effects)
+        assert player.turn_resources.action is True
+
+    async def test_attack_spell_with_no_target_keeps_the_slot(
+        self, mock_character, unique_channel_id, monkeypatch
+    ):
+        from types import SimpleNamespace as _NS
+
+        from dnd_bot.game.magic.spellcasting import SpellcastingManager
+        from dnd_bot.models import SpellSlots
+
+        mock_character.spell_slots = SpellSlots(level_2=(3, 3))
+        stub_bolt = _NS(
+            name="Stub Bolt",
+            level=2,
+            attack_type="ranged",
+            save_dc_ability=None,
+            concentration=False,
+            heal_at_slot_level=None,
+        )
+        monkeypatch.setattr(
+            SpellcastingManager, "get_spell_info", lambda self, idx: stub_bolt
+        )
+        monkeypatch.setattr(
+            SpellcastingManager,
+            "can_cast",
+            lambda self, character, idx, lvl: (True, ""),
+        )
+
+        manager, player, goblin, session = self._setup(
+            unique_channel_id, mock_character
+        )
+        coordinator = _coordinator(manager, session, _ScriptedRoller())
+        char_repo = _FakeCharacterRepo()
+
+        async def _get_repo():
+            return char_repo
+
+        monkeypatch.setattr(
+            "dnd_bot.game.combat.coordinator.get_character_repo", _get_repo
+        )
+
+        result = await coordinator.execute_action(CombatAction(
+            action_type=CombatActionType.CAST_SPELL,
+            combatant_id=player.id,
+            target_ids=[],
+            spell_index="stub-bolt",
+            slot_level=2,
+        ))
+
+        assert result.success is False
+        assert result.error == "No target for attack spell"
+        assert mock_character.spell_slots.get_slots(2)[0] == 3
+        assert char_repo.slot_calls == []
+        assert player.turn_resources.action is True
+
+    async def test_crash_inside_cast_leaves_the_slot_intact(
+        self, mock_character, unique_channel_id, monkeypatch
+    ):
+        from types import SimpleNamespace as _NS
+
+        from dnd_bot.game.magic.spellcasting import SpellcastingManager
+        from dnd_bot.models import SpellSlots
+
+        mock_character.spell_slots = SpellSlots(level_1=(2, 2))
+        stub_cure = _NS(
+            name="Stub Cure",
+            level=1,
+            attack_type=None,
+            save_dc_ability=None,
+            concentration=False,
+            heal_at_slot_level={1: "1d8"},
+        )
+        monkeypatch.setattr(
+            SpellcastingManager, "get_spell_info", lambda self, idx: stub_cure
+        )
+        monkeypatch.setattr(
+            SpellcastingManager,
+            "can_cast",
+            lambda self, character, idx, lvl: (True, ""),
+        )
+
+        def _crash(self, **kwargs):
+            raise ValueError("Invalid dice notation")
+
+        monkeypatch.setattr(SpellcastingManager, "cast_healing_spell", _crash)
+
+        manager, player, goblin, session = self._setup(
+            unique_channel_id, mock_character
+        )
+        coordinator = _coordinator(manager, session, _ScriptedRoller())
+        char_repo = _FakeCharacterRepo()
+
+        async def _get_repo():
+            return char_repo
+
+        monkeypatch.setattr(
+            "dnd_bot.game.combat.coordinator.get_character_repo", _get_repo
+        )
+
+        result = await coordinator.execute_action(CombatAction(
+            action_type=CombatActionType.CAST_SPELL,
+            combatant_id=player.id,
+            target_ids=[player.id],
+            spell_index="stub-cure",
+            slot_level=1,
+        ))
+
+        assert result.success is False
+        assert "Invalid dice notation" in (result.error or "")
+        # The expend runs AFTER the mechanical branches, so a crash inside
+        # a cast_* call leaves the slot untouched — which is what makes the
+        # crash-path action refund honest. Pre-reorder, the slot was
+        # expended AND persisted first, so the refunded action invited
+        # same-turn retries that each drained another slot for zero effect.
+        assert mock_character.spell_slots.get_slots(1)[0] == 2
+        assert char_repo.slot_calls == []
+        assert player.turn_resources.action is True
