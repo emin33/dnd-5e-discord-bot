@@ -768,3 +768,55 @@ Soak matrix:
 | 20260723_122931 | Pell | 24/26 | 6/6 | 99.7% | - | 4.77 |
 | 20260723_230351 | Gideon Hask | 25/27 | 6/6 | 97.7% | 3.2% | 4.86 |
 | 20260724_013045 | Sera Venn | 27/28 | 6/6 | **98.7%** | 2.6% | 4.76 |
+
+### 2026-07-24 (later): pre-merge review of the seam-closure branch
+
+`fca380f` was reviewed before merging (the standing rule after the unguarded
+inverse-arm episode): pin verification first — 13 of its 20 contract tests
+fail against the pre-fix source, the other 7 are no-regression guards — then
+a 20-agent / 4-lens adversarial workflow (gate correctness, alias agreement,
+receipt-writer symmetry, blast radius; every finding attacked by two
+independent refuters). Two findings survived as real regressions introduced
+by the branch itself, fixed in `e7af6ed`:
+
+- **The alias-agreement veto ignored registered aliases.** It compared
+  `ref_alias_used` only against name/node_id labels; `npc.aliases` and KG
+  `Entity.aliases` — populated by naming promotion and the REF_ENTITY store
+  branch precisely so later paraphrases resolve — never entered the label
+  set. A narrator using a recorded epithet ("the innkeeper") plus an
+  embellished id abstained and was rejected downstream, where master
+  resolved it: more correct evidence made resolution fail, feeding the
+  rejection budget the gate measures. Registered aliases now join the
+  agreement label set only — never the matching candidates, so the
+  id-matching surface is unchanged.
+- **Writer/resolver precedence mismatch.** `_append_non_npc_description`
+  checked scene items before locations; `resolve_world_reference` classifies
+  locations first. A scene item sharing its name with a connected location
+  got a write the receipt withheld; sharing with the CURRENT location got a
+  receipt re-claimed on every re-execution (the dedup baseline never gained
+  the text) — the seam-3 shape resurfacing at the precedence seam. The
+  writer now mirrors the resolver exactly.
+
+Recorded as residual, deliberately NOT fixed (each had a grounded
+refutation): (1) fuzzy dead-roster resolution can shadow an exact graph
+match for a title-stripped namesake, but only in hand-assembled/legacy
+states — the KG's proper-name collision seam merges or abstains the
+colliding identities in every production write path, and reordering would
+weaken the revive guard in exactly those legacy states; (2) name-addressed
+departed-dead NPCs get disposition/status/importance receipts with no
+writer, but that path is unreachable through the real pipeline (the
+validator's dead-roster check is key-only, so such names validate only via
+the KG — where master produced byte-identical receipts); (3)
+`update_status='dead'` stamps `alive=false` onto QUEST nodes via the item
+carve-out — byte-identical master behavior the gate narrows, and widening
+the carve-out risks new false rejections against the soak-pinned item fix.
+
+Follow-up worth taking separately: `_resolve_invented_scene_ids` candidates
+could legitimately MATCH on registered multi-token aliases (not just agree
+with them) — an id embellished from an epithet ("the-gray-broker-of-the-
+docks") still abstains today. Fail-closed, but recoverable hits.
+
+Post-fix: 1207 green (+4 pinning tests, all four fail against `fca380f`),
+mypy clean, live reliability PASS 11/11 at 100.0% (39/39 effects, zero
+rejections, 6 families) — `20260724_164644_deepseek_v4_flash_qwen9b`.
+Merged to master with `fca380f`.
