@@ -682,3 +682,62 @@ Soak matrix:
 | 20260723_005611 | Tomas Vex | 24/26 | 6/6 | PASS | PASS | - | pre-seams |
 | 20260723_122931 | Pell | 24/26 | 6/6 | PASS | PASS | 4.77 | naming seams |
 | 20260723_230351 | Gideon Hask | 25/27 | 6/6 | PASS | PASS | 4.86 | all fixes merged |
+
+## Soak #5 (20260724_013045, seed "Sera Venn"): 27/28 — reliability gate closed
+
+First soak with the id-resolution fix. **Every tool gate passes at 80-turn
+scale**, including the one that had never cleared:
+
+- `tool_effect_execution_reliability` **98.7%** (224/227, 3 rejected) — was
+  97.7% in soak #4 and the sole remaining product miss.
+- `tool_structural_failure_budget` 2.6% (6/233); `tool_followup_supersede_
+  budget` 10.0% (26/259); `tool_omission_signal_coverage` 7/7;
+  `tool_reference_identity_grounding` misbound=[];
+  `canonical_npc_identity_unique` collisions={}; `cross_store_consistency`
+  violations=[] with 19/19 Chroma coverage and 2/2 world NPCs graph-backed.
+- `kg_kept_seed_out_of_irrelevant_context` PASS with targeted_leaks=[] AND
+  episode_comentions=[] — the refined classifier was not even load-bearing
+  here.
+- Narrative grade PASS 4.76, zero severe contradictions, repeat ratio 0.0.
+
+Sole fail: `narrator_kept_seed_out_of_memory_gap` (turns 17-18) — the
+organic-reincorporation class (Mira-Vex/Pell). Per the matrix
+interpretation, clean-washout runs carry the cold-recall claim; this run's
+player and KG washout gates are both clean.
+
+### Adversarial review of the id-resolution change (post-merge)
+
+The change had been merged on its reported result without code review. A
+4-lens / 18-agent adversarial review found 12 confirmed defects; the three
+HIGH ones were a single root cause, fixed here:
+
+- **Inverse arm had no strength bar.** `(len(ct) >= 2 and ct < value) or
+  value < ct` — precedence put the guard only on the forward arm, so a bare
+  token (`door`, `man`, `brass`) rewrote onto whichever entity contained it,
+  binding effects to unrelated entities and permanently poisoning alias
+  lists. One-token ids now resolve only when the token is identity-bearing
+  (>=4 chars, not a generic role noun, not a common object noun) AND the
+  candidate is a proper-named NPC. `gideon` -> `Gideon Hask` still resolves.
+- **Union regressed the soak-#1 fix.** Pooling both directions into one
+  `matched` set let an unrelated superset count as a second match and veto a
+  good containment resolution. Containment is now authoritative and tried
+  first; subset is a fallback only.
+- **Cross-type binding.** Candidates now carry entity type; an item-shaped
+  id cannot rewrite onto an NPC.
+
+Open (confirmed, separate seams — NOT fixed here): a LOCATION target accepts
+NPC-only semantics so DeltaBridge stamps status/disposition onto locations;
+`_resolve_invented_scene_ids` ignores `ref_alias_used`; non-NPC
+`update_entity` populates a description/inventory `applied` receipt with no
+writer behind it (and its dedup never fires, so it is non-idempotent);
+`campaign_dead_npcs` is accepted by the validator but resolved by neither
+executor helper.
+
+Soak matrix:
+| run | seed | score | recall | reliability | structural | grade |
+|-----|------|-------|--------|-------------|-----------|-------|
+| 20260722_230128 | Sera Vellik | 22/26 | 6/6 | - | - | 4.67 |
+| 20260723_005611 | Tomas Vex | 24/26 | 6/6 | 97.7% | - | - |
+| 20260723_122931 | Pell | 24/26 | 6/6 | 99.7% | - | 4.77 |
+| 20260723_230351 | Gideon Hask | 25/27 | 6/6 | 97.7% | 3.2% | 4.86 |
+| 20260724_013045 | Sera Venn | 27/28 | 6/6 | **98.7%** | 2.6% | 4.76 |

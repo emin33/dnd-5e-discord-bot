@@ -157,6 +157,48 @@ class TestInventedIdRescue:
         out = _resolve_invented_scene_ids([_update("masked_courier")], world, None)
         assert out[0].update_entity_id == "masked_courier"
 
+    def test_bare_common_noun_never_truncate_resolves(self):
+        # Adversarial review: the subset direction shipped with no minimum
+        # bar, so 'door' silently rewrote onto the one item containing it.
+        # A common object noun is not an identity claim.
+        world = _world(scene_items={"carved wooden door": "A door."})
+        out = _resolve_invented_scene_ids([_update("door")], world, None)
+        assert out[0].update_entity_id == "door"
+
+    def test_bare_generic_role_noun_never_truncate_resolves(self):
+        # 'man' inside 'Marcus Guard' — the identity layer refuses to bind
+        # generic role nouns, and this path must agree with it.
+        npc = NPCState(name="Marcus Guard")
+        world = _world(npcs={npc.id: npc})
+        out = _resolve_invented_scene_ids([_ref("man")], world, None)
+        assert out[0].ref_entity_id == "man"
+
+    def test_short_bare_token_never_truncate_resolves(self):
+        npc = NPCState(name="Kae Windrunner")
+        world = _world(npcs={npc.id: npc})
+        out = _resolve_invented_scene_ids([_ref("kae")], world, None)
+        assert out[0].ref_entity_id == "kae"
+
+    def test_bare_token_matching_only_an_item_does_not_resolve(self):
+        # The subset direction is for truncated PROPER NAMES; an item whose
+        # label merely contains the token is not a proper-named referent.
+        world = _world(scene_items={"orris vane hidden note": "A note."})
+        out = _resolve_invented_scene_ids([_update("hidden")], world, None)
+        assert out[0].update_entity_id == "hidden"
+
+    def test_containment_match_is_not_vetoed_by_a_superset_candidate(self):
+        # Pooling both directions into one `matched` set let an unrelated
+        # superset count as a second match and defeat a good containment
+        # resolution. Containment is authoritative and tried first.
+        world = _world(scene_items={
+            "low wooden door": "A low wooden door.",
+            "low wooden door with token indentation and brass fittings": "x",
+        })
+        out = _resolve_invented_scene_ids(
+            [_update("low-wooden-door-with-token-indentation")], world, None
+        )
+        assert out[0].update_entity_id == "low wooden door"
+
     def test_non_id_effects_pass_through(self):
         effect = ProposedEffect(
             effect_type=EffectType.CHANGE_LOCATION,

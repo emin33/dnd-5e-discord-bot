@@ -1,0 +1,312 @@
+{
+  "turn_log": "data\\turn_logs\\6df73689-2120-43c3-91d3-716a92cc0cb4.jsonl",
+  "judge_model": "gemini-2.5-flash",
+  "verdict": "PASS",
+  "overall_average": 4.76,
+  "dimension_means": {
+    "continuity": 4.79,
+    "contradiction_free": 4.93,
+    "npc_voice": 4.86,
+    "prose_freshness": 4.36,
+    "player_agency": 4.86
+  },
+  "gates": [
+    {
+      "name": "judge_coverage_complete",
+      "passed": true,
+      "detail": "windows graded=14; failed=0"
+    },
+    {
+      "name": "overall_average",
+      "passed": true,
+      "detail": "avg=4.76 (gate >= 4.0)"
+    },
+    {
+      "name": "no_dimension_below_minimum",
+      "passed": true,
+      "detail": "means={'continuity': 4.79, 'contradiction_free': 4.93, 'npc_voice': 4.86, 'prose_freshness': 4.36, 'player_agency': 4.86} (gate >= 3.0)"
+    },
+    {
+      "name": "zero_severe_contradictions",
+      "passed": true,
+      "detail": "severe=[]"
+    },
+    {
+      "name": "prose_repetition_bounded",
+      "passed": true,
+      "detail": "worst 8-gram repeat ratio=0.0 (gate <= 0.35)"
+    }
+  ],
+  "worst_repeat_ratio": 0.0,
+  "opening_bigrams": {
+    "the lantern": 10,
+    "the scarred": 5,
+    "you turn": 5,
+    "the stitcher's": 4,
+    "the paper": 3,
+    "you slide": 2,
+    "you reach": 2,
+    "the stitcher": 2
+  },
+  "windows": [
+    {
+      "turns": [
+        1,
+        6
+      ],
+      "scores": {
+        "continuity": 4,
+        "contradiction_free": 4,
+        "npc_voice": 4,
+        "prose_freshness": 4,
+        "player_agency": 5
+      },
+      "contradictions": [],
+      "flags": [
+        "T1: The DM states the compass 'falls silent' then in T2, the player slides it from the courier's grip and it's 'beating'. This isn't a contradiction if the silence was momentary, but the phrasing in T1 could imply a permanent silence. It's a minor nit."
+      ],
+      "summary": "The player character, Kael Windrunner, is investigating a suspicious death in Saint Orra's Wake. They've found an 'Anchor-compass' on the deceased courier and discovered the courier's satchel was intentionally cleaned. Kael has encountered Sera Venn, a Choir investigator, who initially suspects Kael but is now considering an alliance to find out who is using Choir property. An unknown party is observing them from a nearby tenement."
+    },
+    {
+      "turns": [
+        7,
+        12
+      ],
+      "scores": {
+        "continuity": 5,
+        "contradiction_free": 5,
+        "npc_voice": 5,
+        "prose_freshness": 4,
+        "player_agency": 5
+      },
+      "contradictions": [],
+      "flags": [
+        "T7: The description of the compass falling feels a little forced. The player just 'shifted their weight to glance at the shutter' and the compass 'fell when you shifted your weight to glance at the shutter.' It feels like a contrivance to get the compass on the ground for the new NPC to comment on, rather than a natural consequence of the player's action.",
+        "T10: The description of the Ragpicker's smell ('rain on his vest, old leather, and something metallic \u2014 trace of blood, maybe, or copper coins') is a bit clich\u00e9 for a mysterious, street-wise character.",
+        "T11: The phrase 'a slow, knowing thing that doesn't reach his eyes' for the Ragpicker's smile is a common trope and feels a little uninspired."
+      ],
+      "summary": "Kael and Sera are interrupted by a mysterious man, implied to be a Ragpicker, who demonstrates knowledge of the Anchor-compass and the courier's death. He offers to lead Kael to 'the Stitcher,' a contact for courier contracts, in exchange for a piece of information Kael hasn't shared with the Choir. Kael reveals the courier was carrying a sealed package that was never found, which the Ragpicker deems sufficient payment."
+    },
+    {
+      "turns": [
+        13,
+        18
+      ],
+      "scores": {
+        "continuity": 5,
+        "contradiction_free": 5,
+        "npc_voice": 5,
+        "prose_freshness": 5,
+        "player_agency": 5
+      },
+      "contradictions": [],
+      "flags": [],
+      "summary": "Kael follows the Ragpicker to the Stitcher's stall, a contact for courier contracts. The Stitcher, a sharp and knowledgeable woman, quickly deduces Kael's connection to the Choir and the dead courier. Kael offers the Anchor-compass and reveals the courier was carrying a vanished sealed package, which the Stitcher confirms was a contract for 'the Lantern Keeper' to deliver to the Glass Archive, but was intercepted."
+    },
+    {
+      "turns": [
+        19,
+        24
+      ],
+      "scores": {
+        "continuity": 5,
+        "contradiction_free": 5,
+        "npc_voice": 5,
+        "prose_freshness": 4,
+        "player_agency": 5
+      },
+      "contradictions": [],
+      "flags": [
+        "T20: The description of the Stitcher's stillness and silence is a bit repetitive from previous turns. While consistent with her character, a slight variation in phrasing could enhance prose freshness.",
+        "T23: The phrase 'The compass *is* the message... Or it isn't.' feels a little too coy and slightly breaks the Stitcher's otherwise direct and insightful manner. It's a minor nit, but it stands out."
+      ],
+      "summary": "Kael pays the Ragpicker to investigate 'Lantern Keeper.' The Ragpicker agrees, sets a meeting point, and departs. The Stitcher then presses Kael on the vanished package, offering three theories. Kael leans towards the idea that the package was never physical, prompting the Stitcher to reframe the inquiry: the message is in the 'gaps.' Kael then discovers a hidden lantern symbol on the compass, confirming the 'Lantern Keeper' as the employer."
+    },
+    {
+      "turns": [
+        25,
+        30
+      ],
+      "scores": {
+        "continuity": 5,
+        "contradiction_free": 5,
+        "npc_voice": 5,
+        "prose_freshness": 4,
+        "player_agency": 5
+      },
+      "contradictions": [],
+      "flags": [
+        "T26: The description of the money-changer district as 'two tiers down and a half-mile east' is a bit clunky. 'Two tiers down, half a mile east' would flow better.",
+        "T28: The description of the light splitting into 'one branch leading up a set of slick stone stairs, the other descending into a tunnel throat where the upward rain glimmers like falling sparks' is a bit abstract and hard to visualize clearly. 'Branch' feels more suited to a path than light."
+      ],
+      "summary": "Kael learns from the Stitcher that the Lantern Keeper paid in pre-Choir silver, suggesting a trail backward. On the way to the money-changer district, Kael is intercepted by a mysterious woman who offers to help access the Lantern Keeper's ledger in exchange for the Lantern Keeper's true name. Kael agrees and is given details about a counting-house in the Nailwright's Ward. Kael investigates the counting-house, finding a solid, shuttered building with a faint light on the third floor."
+    },
+    {
+      "turns": [
+        31,
+        36
+      ],
+      "scores": {
+        "continuity": 5,
+        "contradiction_free": 5,
+        "npc_voice": 5,
+        "prose_freshness": 4,
+        "player_agency": 5
+      },
+      "contradictions": [],
+      "flags": [
+        "T31: The description of the mud smear is very detailed, but the player's action was to examine the shutter for pry marks, not specifically the mud. While the mud is found in the process, the DM's focus shifts heavily to it.",
+        "T32: The DM's description of the mud's origin and age is very specific, almost leading the player to a conclusion rather than just providing sensory details.",
+        "T33: The DM's narration about the forced shutter being on the second floor, not the third, feels a bit like a correction or clarification that could have been made earlier if the player's initial observation was ambiguous. It also feels a bit like the DM is telling the player what *didn't* happen rather than just describing what is.",
+        "T35: The DM's description of the shutter slamming open with a 'long, piercing creak' and the player being 'caught mid-climb like a fish in a net' feels a bit dramatic and potentially overstates the player's precariousness given they were already 'half-hanging, one arm inside the dark room, the other gripping the sill.'"
+      ],
+      "summary": "Kael investigates a counting-house, finding evidence of a recent break-in via a second-story shutter. The mud left behind suggests the intruder came from a wet, iron-rich area. Kael climbs to the second-story window, making a loud entrance, and finds a dusty office with a metallic smell, while a light still burns on the third floor."
+    },
+    {
+      "turns": [
+        37,
+        42
+      ],
+      "scores": {
+        "continuity": 5,
+        "contradiction_free": 5,
+        "npc_voice": 5,
+        "prose_freshness": 4,
+        "player_agency": 5
+      },
+      "contradictions": [],
+      "flags": [
+        "T37: The description of the floorboards as 'dark with age, their edges worn smooth by decades of boots and chair legs' feels a bit generic and could apply to many old buildings. It lacks a specific detail that grounds it uniquely in this counting-house.",
+        "T39: 'The floor protests beneath your weight as you cross to the door, but the sound is muted, careful.' This sentence structure is a bit clunky, with the 'but the sound is muted, careful' feeling like an afterthought. It could be smoother.",
+        "T40: 'The candle near the stairwell flickers as you pass, casting your shadow long and wavering against the floral wallpaper.' This is a good image, but the DM has used 'wavering' to describe light/shadows a few times already in this and previous windows. A different verb or image could add variety.",
+        "T41: The description of the residue on the sleeve forming a 'faint, near-invisible pattern \u2014 a series of tiny lines and dots, the kind of mark a ragpicker might leave to track a package's passage through the city' is a bit of an info-dump. It tells the player exactly what it is and its significance, rather than letting them discover or deduce it. It also feels like a very specific, almost meta-game detail to just drop on the player without them having any context for it."
+      ],
+      "summary": "Kael attempts to pry a loose floorboard but is interrupted by footsteps descending from the third floor. He hides, observing a figure leave the counting-house. Investigating the second-floor hallway, Kael finds a recently opened storage closet with a damp, vinegar-smelling stain and a loose ventilation grate large enough for a person."
+    },
+    {
+      "turns": [
+        43,
+        48
+      ],
+      "scores": {
+        "continuity": 4,
+        "contradiction_free": 5,
+        "npc_voice": 4,
+        "prose_freshness": 4,
+        "player_agency": 5
+      },
+      "contradictions": [],
+      "flags": [
+        "T43: The description of the scent is a bit long-winded, repeating similar ideas ('acrid, chemical,' 'something manufactured,' 'unfamiliar compound').",
+        "T43: The final paragraph feels a little redundant, reiterating that the rug tells nothing more after already stating it.",
+        "T44: The description of the grate's sound as a 'sharp, ringing CLANG' followed by 'echoes through the closet, through the crack in the door, through the hallway beyond' is a bit much for a single grate clatter, even a loud one.",
+        "T45: The description of the silhouette as 'barely visible' and 'a silhouette against the dim light from the far end' is slightly contradictory. A silhouette is by definition a dark shape against a lighter background, so 'barely visible' feels at odds with being a clear silhouette.",
+        "T46: The phrase 'betraying every attempt at purchase' is a little dramatic for slipping fingers.",
+        "T48: 'Not words. Just... acknowledgment.' is a slightly clunky way to describe the sound."
+      ],
+      "summary": "Kael investigates a mysterious stain and a loose ventilation grate, accidentally making noise that alerts someone in the shaft and another figure in the hallway. He repeatedly tries to remove the grate, injuring himself, while the hallway figure watches him, unmoving."
+    },
+    {
+      "turns": [
+        49,
+        54
+      ],
+      "scores": {
+        "continuity": 5,
+        "contradiction_free": 5,
+        "npc_voice": 5,
+        "prose_freshness": 5,
+        "player_agency": 5
+      },
+      "contradictions": [],
+      "flags": [],
+      "summary": "Kael encounters a mysterious woman in the closet who reveals herself to be hunting the same target, the 'Lantern Keeper.' She informs him that there are three Lantern Keepers, not one, and that the third, most reckless one, is currently in the counting-house above them. She directs Kael to a specific ledger containing information about their activities."
+    },
+    {
+      "turns": [
+        55,
+        60
+      ],
+      "scores": {
+        "continuity": 5,
+        "contradiction_free": 5,
+        "npc_voice": 5,
+        "prose_freshness": 4,
+        "player_agency": 4
+      },
+      "contradictions": [],
+      "flags": [
+        "T55: The DM's description of the ledger's contents is a bit too vague and repetitive. Phrases like 'maze of dates, coded abbreviations, and sums that refuse to arrange themselves into meaning' and 'terminology opaque' are good, but then listing examples like 'Contract 47-C \u2014 15 silver \u2014 destination: unmarked' and 'threshold fee,' 'hollow passage,' 'echo weight' doesn't quite land the intended effect of being unreadable. It feels like the DM is trying to describe unreadability by giving examples of things that *could* be read, even if their meaning is obscure. A more effective approach might be to describe the script as alien or the organization as nonsensical, rather than providing seemingly coherent (if cryptic) entries.",
+        "T58: The description of the stairs as 'a tight spiral of worn stone steps climbing into shadow, the kind that groans under every footfall' is immediately followed by 'The first step doesn't protest under your weight. Neither does the second.' This creates a slight disconnect between the initial characterization of the stairs and the immediate experience. While the third step does groan, the initial description sets an expectation that isn't met for the first two steps.",
+        "T60: The narration states 'Your boot connects with the warped wood \u2014 but the door is older and denser than it looks. The impact shudders up your leg as the heavy planks absorb the blow, barely shifting.' This strongly implies the kick was ineffective. However, the very next sentence is 'Then the door swings open anyway. Not from your kick \u2014 from the natural sag of its hinges, the weight of it carrying forward on its own.' While the DM is trying to honor the player's action by having the door open, the explanation that it opened 'anyway' and 'not from your kick' diminishes the player's agency. It feels like the DM is negating the player's attempt to force the door open, even if the outcome is the same. A more integrated approach might have been to describe the kick as *loosening* the already-sagging door, causing it to finally give way, rather than completely divorcing the player's action from the door opening."
+      ],
+      "summary": "Kael attempts to read the green ledger but fails, leading the mysterious woman to distrust him and depart, warning him about the Lantern Keeper upstairs. Kael then ascends the stairs, encountering the Lantern Keeper who was expecting him, setting up a confrontation."
+    },
+    {
+      "turns": [
+        61,
+        66
+      ],
+      "scores": {
+        "continuity": 5,
+        "contradiction_free": 5,
+        "npc_voice": 5,
+        "prose_freshness": 5,
+        "player_agency": 5
+      },
+      "contradictions": [],
+      "flags": [],
+      "summary": "Kael confronts the Lantern Keeper, who reveals the 'Lantern Keeper' is a mantle, not a person. He shares a cryptic note about 'they' coming through a 'door' and admits to witnessing the Glass Archive's inner door open three nights prior, from which a dying courier (matching the one Kael found) emerged with a brass compass."
+    },
+    {
+      "turns": [
+        67,
+        72
+      ],
+      "scores": {
+        "continuity": 4,
+        "contradiction_free": 5,
+        "npc_voice": 5,
+        "prose_freshness": 4,
+        "player_agency": 4
+      },
+      "contradictions": [],
+      "flags": [
+        "T71: The DM's narration of the player getting lost feels a bit heavy-handed, almost punishing the player for attempting to leave the scene. While the city being confusing is fine, the extent of the failure and the 'swallowed her tracks' phrasing feels like a slight overreach, bordering on inventing player intent (that they *failed* rather than just got lost)."
+      ],
+      "summary": "Kael continues to question the Lantern Keeper about the courier and the mysterious 'door.' The Lantern Keeper offers three possibilities for what happened, with the third (the courier *was* the door) being the most unsettling. Kael attempts to find Sera Venn but gets lost in the city, returning to the Lantern Keeper for more specific directions and answers."
+    },
+    {
+      "turns": [
+        73,
+        78
+      ],
+      "scores": {
+        "continuity": 5,
+        "contradiction_free": 5,
+        "npc_voice": 5,
+        "prose_freshness": 5,
+        "player_agency": 5
+      },
+      "contradictions": [],
+      "flags": [],
+      "summary": "Kael continues to press the Lantern Keeper for information about Sera Venn and the Choir of Anchors. The Keeper reveals that Sera Venn is investigating the manufacturing of Archive-grade compasses, a breach of security. He provides Kael with a map and directions to find Sera Venn at the eastern market, where Kael successfully locates her."
+    },
+    {
+      "turns": [
+        79,
+        80
+      ],
+      "scores": {
+        "continuity": 5,
+        "contradiction_free": 5,
+        "npc_voice": 5,
+        "prose_freshness": 5,
+        "player_agency": 5
+      },
+      "contradictions": [],
+      "flags": [],
+      "summary": "Kael successfully locates Sera Venn at the eastern market. Sera Venn, a member of the Choir of Anchors, immediately questions Kael's motives and knowledge regarding the compass, indicating she is investigating its significance to the Choir and a dead courier. She presses Kael for information about who sent him and what he knows about her investigation."
+    }
+  ]
+}

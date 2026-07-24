@@ -267,6 +267,18 @@ def _canonicalize_npc_effect_ids(
 
 _ID_FILLER_TOKENS = {"the", "a", "an", "of", "with", "and", "in", "on", "at", "to"}
 
+# Everyday object/material nouns that identify a THING only in context. A bare
+# one of these must never truncate-resolve onto a tracked entity the way a
+# proper name token ('gideon') legitimately does.
+_ID_COMMON_NOUNS = {
+    "blade", "book", "boot", "bottle", "box", "brass", "candle", "chain",
+    "cloak", "coat", "coin", "compass", "cup", "door", "gate", "gear",
+    "glass", "hatch", "iron", "key", "knife", "lamp", "lantern", "ledger",
+    "letter", "lock", "mask", "note", "page", "paper", "pouch", "ring",
+    "rope", "sack", "seal", "shard", "silver", "staff", "stair", "stone",
+    "sword", "table", "token", "vial", "wood", "wooden",
+}
+
 
 def _id_tokens(value: object) -> frozenset:
     words = re.findall(r"[a-z0-9]+", str(value or "").lower())
@@ -284,40 +296,65 @@ def _resolve_invented_scene_ids(
     ``low-wooden-door-with-token-indentation`` for the scene item
     ``low wooden door`` (soak 20260723_005611, turns 22-32) — and also
     truncate names to a bare identifying token — ``gideon`` for the
-    tracked NPC ``Gideon Hask`` (soak 20260723_230351, turn 77). When the
-    proposed id resolves to nothing on its own and exactly ONE known
-    entity matches in either direction — its full token set (>=2 tokens)
-    is contained in the proposed id, or the proposed id's tokens are a
-    strict subset of its name — the effect is rewritten onto that entity.
-    Anything else keeps the fail-closed rejection: ``corvins-hallway``
-    contains no known entity and still rejects; two candidates (a
-    ``sera`` when two Seras are tracked) are ambiguous and abstain.
+    tracked NPC ``Gideon Hask`` (soak 20260723_230351, turn 77).
+
+    The two directions are tried in order and never pooled, because they
+    carry different evidence and different risk:
+
+    1. CONTAINMENT (embellishment): exactly one known entity's full token
+       set (>=2 tokens) sits inside the proposed id. This is the original
+       soak-#1 rule and stays authoritative — an inverse candidate must
+       never be able to out-vote it (pooling the two into one ``matched``
+       set let an unrelated superset veto a good containment match).
+    2. SUBSET (truncation), only when containment found nothing: the
+       proposed id's tokens are a strict subset of one candidate's. A
+       single bare token is the dangerous shape here — ``door`` sits
+       inside ``carved wooden door`` and ``man`` inside half a roster — so
+       one-token ids resolve ONLY when the token is identity-bearing
+       (not a generic role/common noun, >=4 chars) and the candidate is a
+       proper-named NPC. ``gideon`` -> ``Gideon Hask`` passes; ``door``,
+       ``man``, ``brass`` do not.
+
+    Both directions require a unique winner and a type-compatible one: an
+    item-shaped id never rewrites onto an NPC. Anything else keeps the
+    fail-closed rejection — ``corvins-hallway`` contains no known entity
+    and still rejects; a ``sera`` with two tracked Seras abstains.
     """
     if not effects:
         return effects
 
     known_ids: set[str] = set()
-    candidates: list[tuple[str, frozenset]] = []
+    # (id, tokens, entity_type, is_proper_named) — the type keeps an
+    # item-shaped id from rewriting onto an NPC, and the proper-name flag
+    # gates the one-token subset direction.
+    candidates: list[tuple[str, frozenset, str, bool]] = []
     if world_state is not None:
         for item_id in world_state.scene_items:
             known_ids.add(item_id)
             tokens = _id_tokens(item_id)
             if tokens:
-                candidates.append((item_id, tokens))
+                candidates.append((item_id, tokens, "item", False))
         for npc_id, npc in world_state.npcs.items():
             known_ids.add(npc_id)
             tokens = _id_tokens(npc.name)
             if tokens:
-                candidates.append((npc_id, tokens))
+                candidates.append((
+                    npc_id, tokens, "npc", not is_generic_npc_label(npc.name),
+                ))
     for entity in (getattr(knowledge_graph, "_entities", {}) or {}).values():
         node_id = str(getattr(entity, "node_id", "") or "")
         if not node_id:
             continue
         known_ids.add(node_id)
-        for label in (node_id, str(getattr(entity, "name", "") or "")):
+        entity_type = str(
+            getattr(getattr(entity, "entity_type", None), "value", "") or ""
+        )
+        entity_name = str(getattr(entity, "name", "") or "")
+        proper = entity_type == "npc" and not is_generic_npc_label(entity_name)
+        for label in (node_id, entity_name):
             tokens = _id_tokens(label)
             if tokens:
-                candidates.append((node_id, tokens))
+                candidates.append((node_id, tokens, entity_type, proper))
     known_token_ids = {_id_tokens(kid): kid for kid in known_ids}
 
     normalized: list[ProposedEffect] = []
@@ -343,24 +380,70 @@ def _resolve_invented_scene_ids(
             # to the normal validation path.
             normalized.append(effect)
             continue
+        # Direction 1 — containment (narrator embellished a real name).
+        # Authoritative: never pooled with the subset direction, so an
+        # unrelated superset candidate cannot veto a good match here.
         matched = {
             candidate_id
-            for candidate_id, candidate_tokens in candidates
-            if (
-                len(candidate_tokens) >= 2
-                and candidate_tokens < value_tokens
-            )
-            or value_tokens < candidate_tokens
+            for candidate_id, candidate_tokens, _type, _proper in candidates
+            if len(candidate_tokens) >= 2 and candidate_tokens < value_tokens
         }
+        direction = "containment"
+        if not matched:
+            # Direction 2 — subset (narrator truncated a real name). A bare
+            # one-token id is only identity-bearing when it is a distinctive
+            # proper-name token: 'gideon' resolves, 'door'/'man' must not.
+            single = len(value_tokens) == 1
+            token = next(iter(value_tokens)) if single else ""
+            single_ok = (
+                len(token) >= 4
+                and not is_generic_npc_label(token)
+                and token not in _ID_COMMON_NOUNS
+            )
+            matched = {
+                candidate_id
+                for candidate_id, candidate_tokens, _type, proper in candidates
+                if value_tokens < candidate_tokens
+                and (not single or (single_ok and proper))
+            }
+            direction = "subset"
         if len(matched) == 1:
             resolved_id = next(iter(matched))
-            logger.info(
-                "invented_id_resolved",
-                proposed_id=value,
-                resolved_id=resolved_id,
-                effect_type=effect.effect_type.value,
-            )
-            normalized.append(effect.model_copy(update={field: resolved_id}))
+            # Type compatibility: an item-shaped id must not rewrite onto an
+            # NPC (and vice versa) just because their tokens overlap.
+            resolved_types = {
+                candidate_type
+                for candidate_id, _tokens, candidate_type, _proper in candidates
+                if candidate_id == resolved_id and candidate_type
+            }
+            proposed_types = {
+                candidate_type
+                for _id, candidate_tokens, candidate_type, _proper in candidates
+                if candidate_type and candidate_tokens & value_tokens
+            }
+            if (
+                len(proposed_types) > 1
+                or not resolved_types
+                or not proposed_types
+                or resolved_types & proposed_types
+            ):
+                logger.info(
+                    "invented_id_resolved",
+                    proposed_id=value,
+                    resolved_id=resolved_id,
+                    direction=direction,
+                    effect_type=effect.effect_type.value,
+                )
+                normalized.append(
+                    effect.model_copy(update={field: resolved_id})
+                )
+            else:
+                logger.debug(
+                    "invented_id_type_mismatch_abstained",
+                    proposed_id=value,
+                    resolved_id=resolved_id,
+                )
+                normalized.append(effect)
         else:
             normalized.append(effect)
     return normalized
