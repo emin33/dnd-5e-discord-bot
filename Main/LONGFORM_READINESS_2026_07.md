@@ -631,6 +631,40 @@ clean; identity gates clean.
   id-resolution cluster (extractor id-field sloppiness + narrator
   embellishment at the store seam) is now the top open item.
 
+### 2026-07-24: the soak-#4 rejection cluster diagnosed and closed
+
+Traced all five `tool_effect_execution_reliability` rejections through the
+turn log; two distinct defects, one correct rejection:
+
+1. **Executor/validator asymmetry (T16/T23/T69, stage=execution).**
+   'living-brass-compass', 'orris-vanes-hidden-note', and
+   'carved-wooden-door' were NOT invented ids — each is a real KG item
+   node with exactly that id (T16's is the twin of 'brass-compass' from a
+   turn-1 double-spawn). `_is_known_entity` accepts scene items and
+   any-type graph entities, so validation passed and
+   `_resolve_invented_scene_ids` correctly left them alone — but
+   `_execute_update_entity` resolved only scene-registry entities and
+   NPC-typed world/graph entities. Fix: execution now falls back to
+   `_resolve_known_world_reference` (items, locations, any graph type),
+   identity-only, same no-materialization contract as the world-NPC path.
+2. **Partial ids (T77, stage=validation).** ref 'gideon' for the tracked
+   NPC 'Gideon Hask' (canonical UUID id). The rescue's strict-containment
+   rule deliberately excluded subsets; `_canonicalize_npc_effect_ids`
+   abstains because identity_keys('gideon') doesn't intersect
+   {'gideon hask'}. Fix: `_resolve_invented_scene_ids` now also matches
+   the inverse direction — proposed tokens a strict subset of exactly one
+   known entity's name — under one shared uniqueness bar (a lone match
+   across BOTH directions resolves; 'sera' with two Seras tracked, or a
+   token shared by an item and an NPC, abstains).
+3. **Correctly rejected (T1).** 'masked_courier' at turn 1: the courier
+   existed only in seed prose — no NPC, no item, no graph node, and the
+   turn's delta recorded only a fact. Fail-closed rejection is right;
+   nothing to resolve onto.
+
+All five live shapes pinned in `test_invented_id_rescue.py` and
+`test_scene_entity_update.py`. Rerunning soak #4's tape, 4/5 rejections
+now execute → hypothetical 212/213 = 99.5% (gate needs 98%).
+
 Soak matrix:
 | run | seed | score | recall | identity unique | omission | grade | notes |
 |-----|------|-------|--------|-----------------|----------|-------|-------|

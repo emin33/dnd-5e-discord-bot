@@ -152,6 +152,101 @@ class TestUpdateEntityStatusImportance:
         assert result.details["found_in_world"] is True
         assert world.npcs == {}
 
+    async def test_graph_item_update_is_accepted(self):
+        # Soak 20260723_230351 turn 16: 'living-brass-compass' is a real KG
+        # item node (alongside its twin 'brass-compass'), so validation
+        # passed — but execution only resolved NPCs and rejected it.
+        def _item(node_id, name):
+            return SimpleNamespace(
+                node_id=node_id,
+                name=name,
+                aliases=[],
+                entity_type=SimpleNamespace(value="item"),
+            )
+        nodes = {
+            "living-brass-compass": _item(
+                "living-brass-compass", "living brass compass"
+            ),
+            "brass-compass": _item("brass-compass", "brass compass"),
+        }
+        graph = SimpleNamespace(
+            get_entity=lambda entity_id: nodes.get(entity_id),
+            resolve_entity_reference=lambda _reference: None,
+        )
+        executor = EffectExecutor(
+            scene_registry=SceneEntityRegistry(campaign_id="camp", channel_id=0),
+            session=SimpleNamespace(
+                world_state=WorldState(campaign_id="camp"),
+                knowledge_graph=graph,
+            ),
+        )
+
+        result = await executor.execute(ProposedEffect(
+            effect_type=EffectType.UPDATE_ENTITY,
+            update_entity_id="living-brass-compass",
+            update_description_addition="its needle now points down",
+        ))
+
+        assert result.success is True
+        assert result.details["found_in_scene"] is False
+        assert result.details["found_in_world"] is True
+        assert result.details["world_reference_type"] == "item"
+
+    async def test_graph_item_status_update_is_accepted(self):
+        # Soak 20260723_230351 turn 23: status change on the KG item
+        # 'orris-vanes-hidden-note' died the same execution-only death.
+        note = SimpleNamespace(
+            node_id="orris-vanes-hidden-note",
+            name="Orris Vane's hidden note",
+            aliases=[],
+            entity_type=SimpleNamespace(value="item"),
+        )
+        graph = SimpleNamespace(
+            get_entity=lambda entity_id: (
+                note if entity_id == "orris-vanes-hidden-note" else None
+            ),
+            resolve_entity_reference=lambda _reference: None,
+        )
+        executor = EffectExecutor(
+            scene_registry=SceneEntityRegistry(campaign_id="camp", channel_id=0),
+            session=SimpleNamespace(
+                world_state=WorldState(campaign_id="camp"),
+                knowledge_graph=graph,
+            ),
+        )
+
+        result = await executor.execute(ProposedEffect(
+            effect_type=EffectType.UPDATE_ENTITY,
+            update_entity_id="orris-vanes-hidden-note",
+            update_status="revealed",
+        ))
+
+        assert result.success is True
+        assert result.details["applied"]["status"] == "revealed"
+        assert result.details["world_reference_type"] == "item"
+
+    async def test_scene_item_slug_update_is_accepted(self):
+        # Soak 20260723_230351 turn 69: 'carved-wooden-door' is the slug
+        # dialect of the WorldState scene item 'carved wooden door'.
+        world = WorldState(
+            campaign_id="camp",
+            scene_items={"carved wooden door": "A dark oiled wooden door."},
+        )
+        executor = EffectExecutor(
+            scene_registry=SceneEntityRegistry(campaign_id="camp", channel_id=0),
+            session=SimpleNamespace(world_state=world),
+        )
+
+        result = await executor.execute(ProposedEffect(
+            effect_type=EffectType.UPDATE_ENTITY,
+            update_entity_id="carved-wooden-door",
+            update_description_addition="a compass-needle symbol glows faintly",
+        ))
+
+        assert result.success is True
+        assert result.details["found_in_world"] is True
+        assert result.details["world_reference_type"] == "item"
+
     async def test_unknown_off_scene_npc_update_is_rejected(self):
         world = WorldState(campaign_id="camp")
         executor = EffectExecutor(

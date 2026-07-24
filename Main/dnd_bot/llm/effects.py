@@ -1368,7 +1368,18 @@ class EffectExecutor:
             else None
         )
         world_npc = self._resolve_known_world_npc(entity_id)
-        if entity is None and world_npc is None:
+        # Validation accepts scene items and non-NPC graph entities
+        # (_is_known_entity), so execution must resolve them too — a
+        # narrator update to a known item ('carved-wooden-door') otherwise
+        # passes validation and then dies here (soak 20260723_230351,
+        # turns 16/23/69). Identity-only, same contract as the world_npc
+        # path: no scene materialization, WorldStateStore stays the writer.
+        world_reference = (
+            self._resolve_known_world_reference(entity_id)
+            if entity is None and world_npc is None
+            else None
+        )
+        if entity is None and world_npc is None and world_reference is None:
             _logger.warning(
                 "update_entity_target_not_found",
                 entity_id=entity_id,
@@ -1432,7 +1443,12 @@ class EffectExecutor:
                 "entity_id": entity_id,
                 "applied": applied,
                 "found_in_scene": entity is not None,
-                "found_in_world": world_npc is not None,
+                "found_in_world": (
+                    world_npc is not None or world_reference is not None
+                ),
+                "world_reference_type": (
+                    world_reference[0] if world_reference else None
+                ),
             },
         )
 

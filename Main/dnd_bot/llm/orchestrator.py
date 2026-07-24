@@ -278,16 +278,20 @@ def _resolve_invented_scene_ids(
     world_state,
     knowledge_graph,
 ) -> list[ProposedEffect]:
-    """Resolve narrator-embellished ids onto the unique entity they contain.
+    """Resolve narrator-embellished or partial ids onto their unique entity.
 
     Models compose descriptive slugs around a real referent's name —
     ``low-wooden-door-with-token-indentation`` for the scene item
-    ``low wooden door`` (soak 20260723_005611, turns 22-32). When the
-    invented id resolves to nothing on its own and exactly ONE known
-    entity's full token set (>=2 tokens) is contained in it, the effect is
-    rewritten onto that entity. Anything else keeps the fail-closed
-    rejection: ``corvins-hallway`` contains no known entity and still
-    rejects; two contained candidates are ambiguous and abstain.
+    ``low wooden door`` (soak 20260723_005611, turns 22-32) — and also
+    truncate names to a bare identifying token — ``gideon`` for the
+    tracked NPC ``Gideon Hask`` (soak 20260723_230351, turn 77). When the
+    proposed id resolves to nothing on its own and exactly ONE known
+    entity matches in either direction — its full token set (>=2 tokens)
+    is contained in the proposed id, or the proposed id's tokens are a
+    strict subset of its name — the effect is rewritten onto that entity.
+    Anything else keeps the fail-closed rejection: ``corvins-hallway``
+    contains no known entity and still rejects; two candidates (a
+    ``sera`` when two Seras are tracked) are ambiguous and abstain.
     """
     if not effects:
         return effects
@@ -339,13 +343,17 @@ def _resolve_invented_scene_ids(
             # to the normal validation path.
             normalized.append(effect)
             continue
-        contained = {
+        matched = {
             candidate_id
             for candidate_id, candidate_tokens in candidates
-            if len(candidate_tokens) >= 2 and candidate_tokens < value_tokens
+            if (
+                len(candidate_tokens) >= 2
+                and candidate_tokens < value_tokens
+            )
+            or value_tokens < candidate_tokens
         }
-        if len(contained) == 1:
-            resolved_id = next(iter(contained))
+        if len(matched) == 1:
+            resolved_id = next(iter(matched))
             logger.info(
                 "invented_id_resolved",
                 proposed_id=value,

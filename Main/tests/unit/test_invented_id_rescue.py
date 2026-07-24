@@ -107,6 +107,56 @@ class TestInventedIdRescue:
         )
         assert out[0].ref_entity_id == "cinder-row"
 
+    def test_partial_npc_token_resolves_to_unique_owner(self):
+        # Soak 20260723_230351 turn 77: ref_entity 'gideon' for the tracked
+        # NPC 'Gideon Hask' (canonical UUID id in the graph).
+        class _EntityType:
+            value = "npc"
+
+        node = SimpleNamespace(
+            node_id="d6434cfa-0ee2-4ebe-bd6c-90f7ad6bdaaf",
+            name="Gideon Hask",
+            entity_type=_EntityType(),
+        )
+        graph = SimpleNamespace(_entities={node.node_id: node})
+        out = _resolve_invented_scene_ids([_ref("gideon")], _world(), graph)
+        assert out[0].ref_entity_id == "d6434cfa-0ee2-4ebe-bd6c-90f7ad6bdaaf"
+
+    def test_partial_npc_token_resolves_via_world_state(self):
+        npc = NPCState(name="Gideon Hask")
+        world = _world(npcs={npc.id: npc})
+        out = _resolve_invented_scene_ids([_ref("gideon")], world, None)
+        assert out[0].ref_entity_id == npc.id
+
+    def test_partial_token_shared_by_two_entities_abstains(self):
+        # 'sera' when two Seras are tracked must stay rejected.
+        first = NPCState(name="Sera Brightwater")
+        second = NPCState(name="Sera Duskwalker")
+        world = _world(npcs={first.id: first, second.id: second})
+        out = _resolve_invented_scene_ids([_ref("sera")], world, None)
+        assert out[0].ref_entity_id == "sera"
+
+    def test_partial_token_matching_item_and_npc_abstains(self):
+        # A subset shared across entity kinds is just as ambiguous.
+        npc = NPCState(name="Brass Tomas")
+        world = _world(
+            npcs={npc.id: npc},
+            scene_items={"brass compass": "A compass."},
+        )
+        out = _resolve_invented_scene_ids([_update("brass")], world, None)
+        assert out[0].update_entity_id == "brass"
+
+    def test_entity_absent_from_every_store_stays_rejected(self):
+        # Soak 20260723_230351 turn 1: 'masked_courier' — the courier only
+        # ever existed in prose, never as an NPC/item/graph node. Nothing
+        # to resolve onto; the fail-closed rejection is correct.
+        world = _world(scene_items={
+            "living brass compass": "A compass.",
+            "brass compass": "A compass.",
+        })
+        out = _resolve_invented_scene_ids([_update("masked_courier")], world, None)
+        assert out[0].update_entity_id == "masked_courier"
+
     def test_non_id_effects_pass_through(self):
         effect = ProposedEffect(
             effect_type=EffectType.CHANGE_LOCATION,
