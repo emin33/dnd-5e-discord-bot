@@ -157,7 +157,18 @@ product experience and how well authored canon evolves under play.
   win every scalar field by construction. The genuine race was accumulator
   idempotency plus one pre-validation write — both closed, with 13
   ordering/conflict pinning tests;
-- add durable feature resources before claiming class-feature rest recovery;
+- ~~add durable feature resources before claiming class-feature rest
+  recovery~~ DONE 2026-07-24: the exact shape this doc's rest section
+  sketched — `feature_resources(character_id, resource_key, current,
+  maximum, recharge_rule, source)` (migration 006), a repository with
+  round-trip/upsert/cascade tests, SRD defaults per class/level
+  (`models/feature_resource.py`; Warlock Pact Magic stays on SpellSlots),
+  seeded lazily on first rest so existing characters need no backfill.
+  `RestManager` recovers rows by recharge rule (short rest → short_rest
+  rule only; long rest → everything) and reports only counters actually
+  below maximum. Spend-side combat wiring (a Second Wind action consuming
+  the counter) is future work — the counters now exist, persist, and
+  recover truthfully;
 - add restart checkpoints and graph-projection convergence assertions;
 - expand tool coverage beyond the current NPC-reference-heavy trajectory;
 - ~~cap/retract established facts and move synchronous vector work off the

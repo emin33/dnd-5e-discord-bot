@@ -5,11 +5,27 @@ from discord.ext import commands
 import structlog
 
 from ...data.repositories import get_character_repo
+from ...data.repositories.feature_resource_repo import get_feature_resource_repo
 from ...game.mechanics.rest import get_rest_manager
 from ...game.combat.manager import get_combat_for_channel
+from ...models.feature_resource import default_feature_resources
 from ..views.campaign_lobby import get_active_campaign_id
 
 logger = structlog.get_logger()
+
+
+async def _load_feature_resources(character):
+    """The character's durable feature counters, seeded on first use.
+
+    Lazy seeding keeps existing characters working with no backfill
+    migration: the first rest that finds no rows mints the SRD defaults
+    for the class/level, and the post-rest save persists them.
+    """
+    feature_repo = await get_feature_resource_repo()
+    resources = await feature_repo.list_for_character(character.id)
+    if not resources:
+        resources = default_feature_resources(character)
+    return feature_repo, resources
 
 
 class RestCog(commands.Cog):
@@ -78,8 +94,14 @@ class RestCog(commands.Cog):
             return
 
         # Take rest
-        result = self.rest_manager.short_rest(character, hit_dice_to_spend=hit_dice)
+        feature_repo, feature_resources = await _load_feature_resources(character)
+        result = self.rest_manager.short_rest(
+            character,
+            hit_dice_to_spend=hit_dice,
+            feature_resources=feature_resources,
+        )
         await repo.update(character)
+        await feature_repo.save_all(feature_resources)
 
         # Build response
         embed = discord.Embed(
@@ -174,8 +196,12 @@ class RestCog(commands.Cog):
             return
 
         # Take rest
-        result = self.rest_manager.long_rest(character)
+        feature_repo, feature_resources = await _load_feature_resources(character)
+        result = self.rest_manager.long_rest(
+            character, feature_resources=feature_resources
+        )
         await repo.update(character)
+        await feature_repo.save_all(feature_resources)
 
         # Build response
         embed = discord.Embed(

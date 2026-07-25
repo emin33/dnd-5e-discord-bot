@@ -5,6 +5,11 @@ from typing import Optional
 import structlog
 
 from ...models import Character, Condition
+from ...models.feature_resource import (
+    RECHARGE_LONG_REST,
+    RECHARGE_SHORT_REST,
+    FeatureResource,
+)
 from .dice import get_roller, DiceRoll
 
 logger = structlog.get_logger()
@@ -64,10 +69,35 @@ class RestManager:
         # For now, always allow
         return True, ""
 
+    def recover_feature_resources(
+        self,
+        feature_resources: Optional[list[FeatureResource]],
+        rest_type: str,
+    ) -> list[str]:
+        """Refill durable feature counters appropriate to *rest_type*.
+
+        A long rest recovers every resource; a short rest only those with
+        the short_rest recharge rule. Only rows actually below maximum are
+        refilled and reported — the recovered list is a receipt, not a
+        wish list. The caller owns loading and persisting the rows.
+        """
+        recovered: list[str] = []
+        for resource in feature_resources or []:
+            if (
+                rest_type == RECHARGE_SHORT_REST
+                and resource.recharge_rule != RECHARGE_SHORT_REST
+            ):
+                continue
+            if resource.current < resource.maximum:
+                resource.restore()
+                recovered.append(resource.name or resource.resource_key)
+        return recovered
+
     def short_rest(
         self,
         character: Character,
         hit_dice_to_spend: int = 0,
+        feature_resources: Optional[list[FeatureResource]] = None,
     ) -> ShortRestResult:
         """
         Take a short rest.
@@ -90,6 +120,9 @@ class RestManager:
         # Recover class features based on class
         features_recovered: list[str] = []
         features_recovered.extend(self._recover_short_rest_features(character))
+        features_recovered.extend(
+            self.recover_feature_resources(feature_resources, RECHARGE_SHORT_REST)
+        )
 
         logger.info(
             "short_rest_taken",
@@ -248,7 +281,11 @@ class RestManager:
             remaining_dice=character.hit_dice.remaining,
         )
 
-    def long_rest(self, character: Character) -> LongRestResult:
+    def long_rest(
+        self,
+        character: Character,
+        feature_resources: Optional[list[FeatureResource]] = None,
+    ) -> LongRestResult:
         """
         Take a long rest.
 
@@ -297,10 +334,14 @@ class RestManager:
         # Break concentration
         character.concentration_spell_id = None
 
-        # Restore only feature counters that actually exist on the model.
-        # The base Character schema currently persists none of the class-use
-        # counters, so claiming "All class features" here was a false success.
+        # Restore only feature counters that actually exist: the legacy
+        # extended-model probes, plus the durable feature_resources rows —
+        # a long rest recovers both recharge rules. Claiming "All class
+        # features" with no writer behind it was a false success.
         features_recovered = self._recover_short_rest_features(character)
+        features_recovered.extend(
+            self.recover_feature_resources(feature_resources, RECHARGE_LONG_REST)
+        )
 
         logger.info(
             "long_rest_taken",
