@@ -158,6 +158,16 @@ _ITEM_STOPWORDS = frozenset({
 })
 
 
+def _format_coin(copper: int) -> str:
+    """Render a copper amount in the largest denomination that divides it."""
+    copper = int(copper)
+    if copper and copper % 100 == 0:
+        return f"{copper // 100}gp"
+    if copper and copper % 10 == 0:
+        return f"{copper // 10}sp"
+    return f"{copper}cp"
+
+
 def _item_content_tokens(text: str) -> set[str]:
     """Lowercased tokens of an item phrase, minus articles/possessives.
 
@@ -222,26 +232,35 @@ def _resolve_transfer_item(
 ) -> Optional[str]:
     """Resolve which held item a transfer names, from real holdings only.
 
-    Names that literally appear in the action text win (longest first, so
-    "long sword" beats "sword"); a non-generic triage/pattern name may then
-    substring-match a holding. Generic phrases never match anything — the
-    old fallback matched 'unknown item' on the literal "item" and moved the
-    wrong row (run 20260724_231350 T9).
+    When triage named an item, that name decides WHICH holding is in play;
+    appearing in the sentence only breaks ties among holdings that already
+    match it. Letting any incidentally-mentioned holding win outright
+    transferred the wrong item — "I hand the compass to Mara, then draw an
+    arrow" moved the Arrow — and even "succeeded" for an item the player
+    does not hold. If the named item matches no holding, resolution fails
+    closed rather than substituting something else.
+
+    Only when triage named nothing usable does the longest holding mentioned
+    in the text win. Generic phrases never match anything — the old fallback
+    matched 'unknown item' on the literal "item" (run 20260724_231350 T9).
     """
-    named_in_text = [
-        name for name in candidate_names
-        if name and name.casefold() in action_lower
-    ]
-    if named_in_text:
-        return max(named_in_text, key=len)
+    held = [name for name in candidate_names if name]
+    mentioned = [name for name in held if name.casefold() in action_lower]
+
     if item_name and not _is_generic_item_phrase(item_name):
         item_lower = item_name.casefold()
         matching = [
-            name for name in candidate_names
-            if name and item_lower in name.casefold()
+            name for name in held
+            if item_lower in name.casefold() or name.casefold() in item_lower
         ]
-        if matching:
-            return matching[0]
+        if not matching:
+            return None  # named something the giver does not hold
+        preferred = [name for name in matching if name in mentioned]
+        pool = preferred or matching
+        return max(pool, key=len)
+
+    if mentioned:
+        return max(mentioned, key=len)
     return None
 
 
@@ -1017,7 +1036,7 @@ Discriminative cases people get wrong:
 - **saving_throw** — forced saves (resisting effects).
 - **purchase** — buying GOODS: the player pays AND receives a tangible item. Paying for help, information, services, or settling a debt is social (record the money in currency_spent). A player RECEIVING money is NEVER a purchase.
 - **sell** — selling items.
-- **inventory** — managing items (equip, drop, use).
+- **inventory** — managing or MOVING a physical item: equip, drop, use, pick up, hand an item to someone, or receive one. Money is not an item — coins changing hands are social, with the amount in currency_spent.
 - **movement** — tactical positioning.
 - **social** — conversation that doesn't require persuasion (asking prices, greeting, small talk).
 - **exploration** — observing visible things, no roll required.
@@ -1035,6 +1054,8 @@ Boundary discrimination:
 - "I buy a dagger from the smith" → purchase (goods received for money).
 - "I pay the guide two gold for her help" → social, currency_spent {"gold": 2}. Money for a service — no goods, not a purchase.
 - "The merchant counts five silver into my palm" → social. The player RECEIVES money: not a purchase, and never currency_spent.
+- "I hand my brass compass to Mara, she accepts it" → inventory. An ITEM changes hands, so it is an inventory transfer even though the moment is conversational. The money examples above are social ONLY because coins are not items.
+- "She takes the vial from her coat and hands it to me" → inventory. Receiving an item is a transfer too.
 
 ## FOR ATTACK ACTIONS (creature targets only)
 
@@ -1412,6 +1433,9 @@ class DMOrchestrator:
         # Step 5's receipted writes (deterministic consumption) — counted as
         # proposed too, so the turn's effect accounting stays balanced.
         self._last_deterministic_proposed: list[dict] = []
+        # Set when this turn is an acquisition whose row cannot exist yet, so
+        # PGI must not validate the item against current inventory.
+        self._pgi_acquisition_turn: bool = False
 
         # DM Scratchpad: session-scoped state for narrator continuity.
         # Inspired by coordinator scratchpad pattern from agentic orchestration.
@@ -1669,6 +1693,7 @@ class DMOrchestrator:
         self._last_effect_executions = []
         self._last_effect_rejections = []
         self._last_deterministic_proposed = []
+        self._pgi_acquisition_turn = False
 
         # ── Turn Logger: start recording ──
         session_id = context.session_id or context.campaign_id or "unknown"
@@ -1898,12 +1923,16 @@ class DMOrchestrator:
                 # Acquisitions can't require prior possession: transfers FROM
                 # an NPC and pickups both grant via authoritative effects that
                 # execute after this gate, so the row legitimately doesn't
-                # exist yet.
+                # exist yet. A DEFERRED acquisition has no mechanical_result
+                # to read the operation from, hence the flag.
                 item_name=(
                     None
-                    if mechanical_result
-                    and mechanical_result.get("operation")
-                    in ("transfer_from_npc", "pickup")
+                    if self._pgi_acquisition_turn
+                    or (
+                        mechanical_result
+                        and mechanical_result.get("operation")
+                        in ("transfer_from_npc", "pickup")
+                    )
                     else triage.item_name
                 ),
                 cost_gold=float(triage.item_cost) if triage.item_cost else 0,
@@ -2925,8 +2954,18 @@ class DMOrchestrator:
             )
             return None
 
-        item_cost = triage.item_cost or 0
-        quantity = max(1, triage.quantity or 1)
+        # Costs arrive as whatever the brain emitted: TriageSchema declares
+        # int, but _parse_triage_json falls back to the RAW dict when schema
+        # validation fails, so a float (an SRD 4cp ale, captured live) reaches
+        # here. A float currency delta is rejected by effect validation —
+        # which used to drop the purchase silently AFTER the narrator's own
+        # write had been scrubbed. Work in copper, the smallest real unit.
+        try:
+            cost_copper_each = max(0, round(float(triage.item_cost or 0) * 100))
+        except (TypeError, ValueError):
+            cost_copper_each = 0
+        item_cost = cost_copper_each / 100
+        quantity = max(1, int(triage.quantity or 1))
 
         # Resolve character
         resolved = self._resolve_character_by_name(player_name)
@@ -2942,15 +2981,18 @@ class DMOrchestrator:
         _, character = resolved
 
         # Funds check is read-only; the write happens once, in the effect
-        # pipeline. Gold-field only: the update_player currency executor
-        # applies {gp: -N} without breaking larger coins, so a mixed-coin
-        # balance must fail closed here rather than under-charge later.
-        total_cost = item_cost * quantity
+        # pipeline, which breaks larger coins. Gate on TOTAL wealth, matching
+        # PGI's validate_currency — gating on the gold column alone both
+        # refused affordable purchases from a platinum purse and disagreed
+        # with PGI about the same turn.
+        total_copper = cost_copper_each * quantity
+        total_cost = total_copper / 100
         inventory_repo = await get_inventory_repo()
         currency = await inventory_repo.get_currency(character.id)
-        if currency.gold < total_cost:
+        if currency.total_in_copper < total_copper:
             error = (
-                f"Not enough gold. Have {currency.gold}gp, need {total_cost}gp"
+                f"Not enough coin. Have {_format_coin(currency.total_in_copper)}, "
+                f"need {_format_coin(total_copper)}"
             )
             return {
                 "action_type": "purchase",
@@ -2965,11 +3007,12 @@ class DMOrchestrator:
                 ),
             }
 
-        gold_after = currency.gold - total_cost
+        copper_after = currency.total_in_copper - total_copper
+        gold_after = round(copper_after / 100, 2)
         effect = ProposedEffect(
             effect_type=EffectType.UPDATE_PLAYER,
             player_currency_delta=(
-                {"gp": -total_cost} if total_cost else {}
+                {"cp": -total_copper} if total_copper else {}
             ),
             player_item_grant=[{"name": item_name, "quantity": quantity}],
         )
@@ -2983,7 +3026,8 @@ class DMOrchestrator:
             "error": None,
             "narrative_hint": (
                 f"{player_name} successfully purchases {quantity}x {item_name} "
-                f"for {total_cost}gp. They have {gold_after}gp remaining."
+                f"for {_format_coin(total_copper)}. They have "
+                f"{_format_coin(copper_after)} remaining."
             ),
             "authoritative_effects": [effect],
         }
@@ -3247,6 +3291,11 @@ class DMOrchestrator:
                 # item name; the old "item" fallback minted a literal 'Item'
                 # inventory row here (live run 20260724_231350 T10). Defer:
                 # the narrator's receipted grant owns any acquisition.
+                # Keep PGI's acquisition exemption: a pickup's row does not
+                # exist yet by definition, so validating triage's item_name
+                # against inventory would hard-fail the turn with no
+                # narration at all — the worst failure this gate has.
+                self._pgi_acquisition_turn = True
                 logger.info(
                     "inventory_pickup_deferred_no_item", player=player_name
                 )
@@ -3311,6 +3360,10 @@ class DMOrchestrator:
                     effect_type=EffectType.UPDATE_PLAYER,
                     player_item_remove=[{
                         "name": item.item_name,
+                        # Carry the resolved ROW: a name-only removal is
+                        # re-resolved downstream and missed equipped rows and
+                        # SRD-indexed rows entirely (silent no-op drops).
+                        "item_index": item.item_index,
                         "quantity": drop_qty,
                     }],
                 )],
@@ -3467,8 +3520,13 @@ class DMOrchestrator:
             if self._current_session else None
         )
         session_key = getattr(self._current_session, "session_key", None)
+        # The acting character is part of the key: two players' turns can
+        # observe the SAME world turn number (begin_turn increments before
+        # the processing lock), and without it the second player's charge
+        # collapsed onto the first's key as an idempotency "duplicate" —
+        # logged as spent, never written.
         message_id = (
-            f"{session_key}:turn-{world_state.turn}:step5"
+            f"{session_key}:{character_id}:turn-{world_state.turn}:step5"
             if session_key and world_state is not None
             else f"step5:{uuid.uuid4()}"
         )
@@ -3479,6 +3537,26 @@ class DMOrchestrator:
         if not result.success:
             logger.warning(
                 "deterministic_player_effect_failed",
+                effect_type=effect.effect_type.value,
+                details=result.details,
+            )
+            return False
+
+        # success=True is not proof a write landed: the executor reports
+        # success even when a removal resolved to no row. Callers log
+        # "consumed"/"spent" off this return, so it must mean "state moved".
+        applied = (result.details or {}).get("applied") or {}
+        landed = any(
+            applied.get(key)
+            for key in (
+                "currency_delta", "items_granted", "items_removed",
+                "conditions_added", "conditions_removed", "hp_delta",
+                "spell_slot_used",
+            )
+        )
+        if not landed and not result.was_duplicate:
+            logger.warning(
+                "deterministic_player_effect_no_op",
                 effect_type=effect.effect_type.value,
                 details=result.details,
             )
@@ -3592,6 +3670,7 @@ class DMOrchestrator:
                     effect_type=EffectType.UPDATE_PLAYER,
                     player_item_remove=[{
                         "name": item.item_name,
+                        "item_index": item.item_index,
                         "quantity": quantity,
                     }],
                 ),
@@ -3656,28 +3735,29 @@ class DMOrchestrator:
         if total_gold <= 0:
             return
 
-        # Round up to nearest gold piece for removal
-        gold_to_remove = max(1, int(total_gold)) if total_gold > 0 else 0
+        # Charge in copper so sub-gold amounts aren't rounded up to 1gp, and
+        # gate on TOTAL wealth — the executor breaks larger coins, so a purse
+        # holding platinum but no gold can still pay. Gating on the gold
+        # column alone silently gave the service away for free.
+        copper_to_remove = round(total_gold * 100)
+        if copper_to_remove <= 0:
+            return
 
-        # Funds check is read-only; the receipted write happens once, in the
-        # effect pipeline. Gold-field only — the currency executor applies
-        # {gp: -N} without breaking larger coins, and a receipt must never
-        # claim more than the write moved.
         currency = await inventory_repo.get_currency(char_id)
-        if currency.gold < gold_to_remove:
+        if currency.total_in_copper < copper_to_remove:
             logger.warning(
                 "insufficient_currency",
                 character=character.name,
                 wanted=currency_spent,
-                gold_equivalent=gold_to_remove,
-                have=currency.gold,
+                copper_equivalent=copper_to_remove,
+                have_copper=currency.total_in_copper,
             )
             return
 
         spent = await self._execute_deterministic_player_effect(
             ProposedEffect(
                 effect_type=EffectType.UPDATE_PLAYER,
-                player_currency_delta={"gp": -gold_to_remove},
+                player_currency_delta={"cp": -copper_to_remove},
             ),
             char_id,
         )
@@ -3686,8 +3766,8 @@ class DMOrchestrator:
                 "currency_spent",
                 character=character.name,
                 amount=currency_spent,
-                gold_equivalent=gold_to_remove,
-                gold_remaining=currency.gold - gold_to_remove,
+                copper_equivalent=copper_to_remove,
+                copper_remaining=currency.total_in_copper - copper_to_remove,
             )
 
     # Action types Phase B vetoes as definitely-mundane. The brain can still
@@ -3993,6 +4073,13 @@ Write your narration directly."""
             prompt_role="user",
             empty_prose_fallback=narrative_hint,
             continue_on_empty_prose=True,
+            # The handler already owns these mutations; the obligation net
+            # must not demand a duplicate narrator tool for them (a probe on
+            # a handler-driven transfer showed it entering a repair leg for
+            # exactly that, whose failure branch discards the claim).
+            claimed_effects=list(
+                mechanical_result.get("authoritative_effects") or []
+            ),
         )
 
         try:

@@ -33,6 +33,7 @@ import os
 from pathlib import Path
 import sys
 import time
+from typing import Optional
 import uuid
 
 if sys.platform == "win32":
@@ -633,9 +634,14 @@ def _cost_summary(events: list) -> dict:
     }
 
 
-async def run(profile: str, scenario: str = "baseline") -> tuple[dict, bool]:
+async def run(
+    profile: str,
+    scenario: str = "baseline",
+    artifact_path: Optional[Path] = None,
+) -> tuple[dict, bool]:
     os.environ["ACTIVE_PROFILE"] = profile
     actions, expected_effects = SCENARIOS[scenario]
+    report: dict = {}
 
     from dnd_bot.llm import usage_recorder
     from dnd_bot.llm.continuity import NarrativeGovernance
@@ -677,20 +683,93 @@ async def run(profile: str, scenario: str = "baseline") -> tuple[dict, bool]:
                 continue
             responses[turn] = response.narrative or ""
     finally:
-        # Capture live state before isolated storage is removed.
-        live = harness.manager.get_session(harness.channel_id)
-        world_snapshot = (
-            live.world_state.model_dump(mode="json")
-            if live is not None and live.world_state is not None
-            else {}
-        )
-        if scenario == "player_state_sweep":
-            final_player_state = await _capture_player_state(
-                harness.character.id
+        # Capture live state before isolated storage is removed. Each step is
+        # guarded: a raise here used to skip cleanup entirely (leaking the
+        # test campaign) AND destroy the whole report.
+        try:
+            live = harness.manager.get_session(harness.channel_id)
+            world_snapshot = (
+                live.world_state.model_dump(mode="json")
+                if live is not None and live.world_state is not None
+                else {}
             )
-        await harness.cleanup()
+        except Exception as e:
+            errors.append({"stage": "world_snapshot", "error": repr(e)})
+        try:
+            if scenario == "player_state_sweep":
+                final_player_state = await _capture_player_state(
+                    harness.character.id
+                )
+        except Exception as e:
+            errors.append({"stage": "player_state_capture", "error": repr(e)})
+        # Session teardown is the risky part: two live runs (20260725 #3 and
+        # #7) died silently in here — every turn done, exit 1, no traceback,
+        # no artifact — which made a failed run INVISIBLE to soak_gate, since
+        # that aggregator can only score artifacts that exist. Everything the
+        # report needs is already on disk (turn log) or in memory by now, so
+        # persist first and tear down after.
+        try:
+            report = _build_report(
+                profile=profile, scenario=scenario, session_id=session_id,
+                actions=actions, expected_effects=expected_effects,
+                harness=harness, responses=responses, errors=errors,
+                world_snapshot=world_snapshot, bram_id=bram_id,
+                initial_player_state=initial_player_state,
+                final_player_state=final_player_state,
+                elapsed=time.time() - started,
+            )
+            if artifact_path is not None:
+                artifact_path.parent.mkdir(parents=True, exist_ok=True)
+                artifact_path.write_text(
+                    json.dumps(report, indent=2, default=str), encoding="utf-8"
+                )
+        except Exception as e:
+            import traceback
+            report = _crash_report(
+                profile, scenario, session_id, len(actions), errors,
+                f"{type(e).__name__}: {e}", traceback.format_exc(),
+            )
+            if artifact_path is not None:
+                artifact_path.parent.mkdir(parents=True, exist_ok=True)
+                artifact_path.write_text(
+                    json.dumps(report, indent=2, default=str), encoding="utf-8"
+                )
+        try:
+            await harness.cleanup()
+        except Exception as e:
+            print(f"cleanup failed after the report was persisted: {e!r}")
 
-    elapsed = time.time() - started
+    return report, all(report["gates"].values())
+
+
+def _crash_report(
+    profile: str, scenario: str, session_id: str, turns: int,
+    errors: list[dict], error: str, tb: str,
+) -> dict:
+    """A minimal artifact for a run that could not be evaluated.
+
+    Written so the run counts as a FAILED run in soak_gate (which keys on
+    `gates` + `usage`) instead of disappearing from the pass rate entirely.
+    """
+    from dnd_bot.llm import usage_recorder
+    return {
+        "profile": profile,
+        "scenario": scenario,
+        "session_id": session_id,
+        "turns": turns,
+        "usage": _cost_summary(usage_recorder.events()),
+        "errors": errors + [{"stage": "report", "error": error, "traceback": tb}],
+        "gates": {"run_completed": False},
+        "turn_rows": [],
+    }
+
+
+def _build_report(
+    *, profile, scenario, session_id, actions, expected_effects, harness,
+    responses, errors, world_snapshot, bram_id, initial_player_state,
+    final_player_state, elapsed,
+) -> dict:
+    """Evaluate the finished run into the artifact shape."""
     log = TurnLogReader.load(session_id)
     turn_elapsed = {
         entry.get("turn"): entry.get("elapsed")
@@ -896,7 +975,7 @@ async def run(profile: str, scenario: str = "baseline") -> tuple[dict, bool]:
         "gates": gates,
         "turn_rows": turn_rows,
     }
-    return report, all(gates.values())
+    return report
 
 
 def _print_report(report: dict, passed: bool, artifact: Path) -> None:
@@ -949,14 +1028,18 @@ async def main() -> int:
     )
     args = parser.parse_args()
 
-    report, passed = await run(args.profile, scenario=args.scenario)
+    # The path is decided UP FRONT so run() can persist the report before it
+    # tears the session down — teardown has killed the process outright, and
+    # a run that leaves no artifact silently drops out of soak_gate's pass
+    # rate instead of counting against it.
     out_dir = Path("data/tool_reliability")
-    out_dir.mkdir(parents=True, exist_ok=True)
     scenario_tag = "" if args.scenario == "baseline" else f"{args.scenario}_"
     artifact = out_dir / (
         f"{time.strftime('%Y%m%d_%H%M%S')}_{scenario_tag}{args.profile}.json"
     )
-    artifact.write_text(json.dumps(report, indent=2, default=str), encoding="utf-8")
+    report, passed = await run(
+        args.profile, scenario=args.scenario, artifact_path=artifact
+    )
     _print_report(report, passed, artifact)
     return 0 if passed else 1
 

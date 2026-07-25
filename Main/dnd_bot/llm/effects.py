@@ -18,6 +18,7 @@ The narrator tool surface (schemas, tiers, converters) lives in
 """
 
 from enum import Enum
+import re
 from typing import Optional, Union
 from pydantic import BaseModel, Field
 
@@ -194,6 +195,62 @@ class EffectExecutionResult(BaseModel):
 
 
 # Helper to build idempotency key
+_CURRENCY_FIELDS = ("copper", "silver", "electrum", "gold", "platinum")
+
+
+def _inventory_match_key(value: str) -> str:
+    """Punctuation/space-insensitive form for matching item names to rows."""
+    return re.sub(r"[^a-z0-9]+", "", (value or "").casefold())
+
+
+def resolve_inventory_row(rows: list, name: str, item_index: str = ""):
+    """Find the inventory row a removal names, from ALL of the player's rows.
+
+    ``get_item_by_index`` alone is far too narrow to address a row for
+    removal: it filters ``equipped = 0`` and matches only ``item_index``,
+    so it silently misses every equipped row (starting equipment auto-equips
+    all weapons and armor) and every row whose stored SRD index is not the
+    slug of its display name — 88 of 237 SRD equipment entries, including
+    all seven packs, "Rations (1 day)", "Crossbow, light" and "Thieves'
+    Tools". Removals addressed by name through it returned success while
+    removing nothing, and the narration still claimed the item was gone.
+
+    Resolution order: caller-supplied index, exact index, exact normalized
+    name, then substring. Unequipped rows win ties so a spare is consumed
+    before the wielded one.
+    """
+    def _ranked(candidates: list):
+        if not candidates:
+            return None
+        return sorted(
+            candidates,
+            key=lambda row: (bool(getattr(row, "equipped", False)), -int(getattr(row, "quantity", 1) or 1)),
+        )[0]
+
+    if item_index:
+        hit = _ranked([r for r in rows if r.item_index == item_index])
+        if hit is not None:
+            return hit
+
+    slug = (name or "").strip().lower().replace(" ", "-")
+    if slug:
+        hit = _ranked([r for r in rows if r.item_index == slug])
+        if hit is not None:
+            return hit
+
+    target = _inventory_match_key(name)
+    if not target:
+        return None
+    hit = _ranked([r for r in rows if _inventory_match_key(r.item_name) == target])
+    if hit is not None:
+        return hit
+    return _ranked([
+        r for r in rows
+        if target in _inventory_match_key(r.item_name)
+        or _inventory_match_key(r.item_name) in target
+    ])
+
+
 def build_effect_idempotency_key(
     campaign_id: str,
     message_id: str,
@@ -1868,17 +1925,52 @@ class EffectExecutor:
             persisted = True
 
         # --- Currency (separate table) ---
+        # Spending breaks larger coins (a 2gp payment from a platinum purse
+        # must succeed), and the receipt records what ACTUALLY moved per
+        # denomination rather than what was requested. The old per-field
+        # ``max(0, cur + v)`` could neither make change nor report the
+        # shortfall: it clamped at zero and still receipted the full delta.
         if effect.player_currency_delta and self.inventory_repo:
             try:
                 currency = await self.inventory_repo.get_currency(char_id)
+                before = {
+                    field: getattr(currency, field)
+                    for field in _CURRENCY_FIELDS
+                }
                 denom = {"cp": "copper", "sp": "silver", "ep": "electrum", "gp": "gold", "pp": "platinum"}
+                copper_per = {"copper": 1, "silver": 10, "electrum": 50, "gold": 100, "platinum": 1000}
+                copper_out = 0
                 for k, v in effect.player_currency_delta.items():
-                    field = denom.get(k.strip().lower()[:2]) or denom.get(k.strip().lower())
-                    if field and isinstance(v, int):
-                        setattr(currency, field, max(0, getattr(currency, field) + v))
+                    field = denom.get(str(k).strip().lower()[:2]) or denom.get(str(k).strip().lower())
+                    if not field or not isinstance(v, int) or v == 0:
+                        continue
+                    if v > 0:
+                        setattr(currency, field, getattr(currency, field) + v)
+                    else:
+                        copper_out += -v * copper_per[field]
+
+                if copper_out:
+                    if currency.total_in_copper >= copper_out:
+                        currency.remove_currency(copper_out)
+                    else:
+                        _logger.warning(
+                            "insufficient_currency_for_delta",
+                            character_id=char_id,
+                            requested=dict(effect.player_currency_delta),
+                            have_copper=currency.total_in_copper,
+                            need_copper=copper_out,
+                        )
+
                 await self.inventory_repo.update_currency(currency)
-                applied["currency_delta"] = effect.player_currency_delta
-                persisted = True
+                code_for = {v: k for k, v in denom.items()}
+                effective = {
+                    code_for[field]: getattr(currency, field) - before[field]
+                    for field in _CURRENCY_FIELDS
+                    if getattr(currency, field) != before[field]
+                }
+                if effective:
+                    applied["currency_delta"] = effective
+                    persisted = True
             except Exception as e:
                 _logger.error("persist_failed", entity="currency", character_id=char_id, error=str(e), exc_info=True)
 
@@ -1906,23 +1998,47 @@ class EffectExecutor:
                 applied["items_granted"] = granted
         if effect.player_item_remove and self.inventory_repo:
             removed = []
+            unresolved = []
+            try:
+                rows = await self.inventory_repo.get_all_items(char_id)
+            except Exception as e:
+                rows = []
+                _logger.error("inventory_read_failed", character_id=char_id, error=str(e), exc_info=True)
             for entry in effect.player_item_remove:
                 name = (entry.get("name") or "").strip()
                 if not name:
                     continue
                 qty = int(entry.get("quantity", 1) or 1)
-                try:
-                    existing = await self.inventory_repo.get_item_by_index(
-                        char_id, name.lower().replace(" ", "-")
+                # Address the ROW, not a name-derived index: see
+                # resolve_inventory_row for why the index lookup silently
+                # missed equipped and SRD-indexed rows.
+                target = resolve_inventory_row(
+                    rows, name, str(entry.get("item_index") or "")
+                )
+                if target is None:
+                    unresolved.append(name)
+                    _logger.warning(
+                        "item_remove_unresolved",
+                        character_id=char_id,
+                        item=name,
+                        reason="no inventory row matched; nothing removed",
                     )
-                    if existing:
-                        await self.inventory_repo.remove_item(existing.id, qty)
-                        removed.append({"name": name, "quantity": qty})
-                        persisted = True
+                    continue
+                try:
+                    await self.inventory_repo.remove_item(target.id, qty)
+                    rows = [r for r in rows if r.id != target.id] + (
+                        [target] if target.quantity > qty else []
+                    )
+                    removed.append({"name": target.item_name, "quantity": qty})
+                    persisted = True
                 except Exception as e:
                     _logger.error("persist_failed", entity="inventory_item", character_id=char_id, item=name, error=str(e), exc_info=True)
             if removed:
                 applied["items_removed"] = removed
+            if unresolved:
+                # Surfaced in the receipt so a claimed-but-impossible removal
+                # is visible instead of passing as a silent no-op.
+                applied["items_remove_unresolved"] = unresolved
 
         _logger.info(
             "player_updated_by_narrator",
