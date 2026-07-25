@@ -30,6 +30,7 @@ from ..game.identity import (
     explicit_npc_naming_link,
     identity_keys,
     is_generic_npc_label,
+    locations_equivalent,
     resolve_unique_identity,
 )
 from .brains.adjudicator import EffectsAdjudicator, get_adjudicator
@@ -1704,6 +1705,9 @@ class DMOrchestrator:
         _turn_record.set("player", player_name)
         _turn_record.set("phase", world_state.phase if world_state else "unknown")
         ws_before = world_state.to_yaml() if world_state else ""
+        # Where the party stood before this turn — scene hydration only runs
+        # on an actual arrival, not on every turn spent in the same room.
+        ws_location_before = world_state.current_location if world_state else ""
 
         # Store streaming callback for narrator methods to use
         self._on_narrative_token = on_narrative_token
@@ -2526,6 +2530,18 @@ class DMOrchestrator:
                         )
             except Exception as e:
                 logger.warning("effect_kg_bridge_failed", error=str(e), exc_info=True)
+
+        # Step 4.9: arriving somewhere repopulates it from durable knowledge.
+        # rescope_scene only DROPS — leaving a tavern evicts its non-important
+        # regulars from the scene roster and returning never brought them
+        # back, so the narrator met an empty room and either ignored the
+        # barkeep or invented a new one (which the returning-NPC re-anchoring
+        # then had to reconcile after the fact).
+        if world_state is not None and kg is not None:
+            try:
+                self._hydrate_scene_from_knowledge(world_state, kg, ws_location_before)
+            except Exception as e:
+                logger.warning("scene_hydration_failed", error=str(e), exc_info=True)
 
         # Step 5: Consume resources/currency AFTER outcome is determined.
         # This ensures we don't deduct ammunition on a cancelled action or
@@ -3475,6 +3491,45 @@ class DMOrchestrator:
                 item=item_name,
             )
             return None
+
+    def _hydrate_scene_from_knowledge(
+        self,
+        world_state: "WorldState",
+        knowledge_graph,
+        location_before: str,
+    ) -> list[str]:
+        """Restore a location's known inhabitants when the party arrives.
+
+        Only runs on an actual arrival. Reads the graph's durable residency
+        record and hands it to the store, which owns the WorldState write
+        (Step-4 single-writer rule) and the dead/cap policy.
+        """
+        destination = (world_state.current_location or "").strip()
+        if not destination or locations_equivalent(location_before, destination):
+            return []
+
+        store = (
+            getattr(self._current_session, "world_store", None)
+            if self._current_session else None
+        )
+        if store is None:
+            return []
+
+        # Resolve by equivalence, not raw slug: the narrator's "the Copper
+        # Finch" and the graph's "Copper Finch" are the same room.
+        location_node = knowledge_graph.resolve_location_node(destination)
+        if not location_node:
+            return []
+        residents = knowledge_graph.residents_of(location_node)
+        if not residents:
+            return []
+
+        return store.hydrate_residents(
+            residents,
+            dead_facts=list(
+                (getattr(self._current_session, "campaign_dead_npcs", {}) or {}).values()
+            ),
+        )
 
     def _turn_update_player_receipts(self) -> list[dict]:
         """This turn's executed update_player receipts ("applied" payloads)."""

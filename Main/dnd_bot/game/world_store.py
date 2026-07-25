@@ -549,6 +549,113 @@ class WorldStateStore:
 
     # ── Canonical NPC identity seam (Stage C) ─────────────────────────────
 
+    # How many known residents an arrival may restore. The scene roster is
+    # prompt budget, not a census: a busy market must not crowd out the
+    # narrator's actual context.
+    MAX_HYDRATED_RESIDENTS = 6
+
+    # Statuses that take an NPC off stage while leaving them alive. The
+    # sanctioned channel for these is update_entity(status=...), which
+    # deliberately does NOT clear the residency edge (remove_entity is
+    # forbidden for them), so residency alone cannot mean "still here".
+    _OFFSTAGE_STATUSES = frozenset({"dead", "fled", "captured"})
+
+    def hydrate_residents(
+        self,
+        residents: list,
+        *,
+        dead_facts: list[NPCState] | None = None,
+        limit: int | None = None,
+    ) -> list[str]:
+        """Restore a location's known inhabitants into the scene roster.
+
+        :meth:`rescope_scene` only DROPS — leaving a tavern evicts its
+        non-important regulars and returning never brought them back, so the
+        narrator met an empty room and either ignored the barkeep or invented
+        a new one (which returning-NPC re-anchoring then had to reconcile
+        after the fact). ``residents`` are the graph's durable record for the
+        destination; this applies the scene policy and owns the mutation.
+
+        Two invariants outrank scene continuity: the dead stay dead (a stale
+        residency edge must never resurrect anyone), and the roster is
+        capped. Returns the names restored.
+        """
+        from .identity import identity_keys
+
+        destination = (self._state.current_location or "").strip()
+        if not destination:
+            return []
+        cap = self.MAX_HYDRATED_RESIDENTS if limit is None else limit
+        buried = list(dead_facts or [])
+        buried_ids = {str(getattr(f, "id", "") or "") for f in buried}
+        buried_keys: set[str] = set()
+        for fact in buried:
+            buried_keys |= set(identity_keys(getattr(fact, "name", "") or ""))
+            for alias in getattr(fact, "aliases", []) or []:
+                buried_keys |= set(identity_keys(alias))
+        restored: list[str] = []
+
+        for entity in residents:
+            if len(restored) >= cap:
+                break
+            if getattr(getattr(entity, "entity_type", None), "value", "") != "npc":
+                continue
+            name = str(getattr(entity, "name", "") or "").strip()
+            node_id = str(getattr(entity, "node_id", "") or "")
+            if not name or not node_id:
+                continue
+            # Already on stage, under this id or any spelling of the name.
+            if node_id in self._state.npcs or self._state._find_npc(name):
+                continue
+            properties = getattr(entity, "properties", {}) or {}
+            if str(properties.get("alive", "true")).lower() == "false":
+                continue
+            # Off stage but alive (fled, captured): residency is stale by
+            # design, since the status channel never clears the edge.
+            if str(properties.get("status", "") or "").strip().lower() in (
+                self._OFFSTAGE_STATUSES
+            ):
+                continue
+            # The dead roster fails CLOSED. resolve_unique_identity abstains
+            # when two buried NPCs share a name ("Cultist"), and reading that
+            # abstention as "not dead" would let hydration resurrect one —
+            # so ANY id or identity-key match blocks, ambiguous or not.
+            if node_id in buried_ids:
+                continue
+            candidate_keys = set(identity_keys(name))
+            for alias in getattr(entity, "aliases", []) or []:
+                candidate_keys |= set(identity_keys(alias))
+            if candidate_keys & buried_keys:
+                continue
+
+            self._state.npcs[node_id] = NPCState(
+                id=node_id,
+                name=name,
+                aliases=list(getattr(entity, "aliases", []) or []),
+                location=destination,
+                description=str(properties.get("description", "") or ""),
+                disposition=str(properties.get("disposition", "neutral") or "neutral"),
+                alive=True,
+                last_seen_turn=self._state.turn,
+                # Preserve a surviving status marker so a hydrated NPC does
+                # not silently shed state the story established.
+                notes=(
+                    f"[{properties['status']}]"
+                    if str(properties.get("status", "") or "").strip()
+                    else ""
+                ),
+            )
+            restored.append(name)
+
+        if restored:
+            logger.info(
+                "scene_hydrated_from_knowledge",
+                location=destination,
+                restored=restored,
+                available=len(residents),
+            )
+        return restored
+
     def ensure_npc(
         self,
         name: str,
