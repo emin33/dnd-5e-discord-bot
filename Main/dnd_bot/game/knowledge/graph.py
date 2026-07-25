@@ -13,9 +13,11 @@ from .models import (
     Entity,
     EntityType,
     GraphOperation,
+    RelationType,
     RemoveEdge,
     RemoveNode,
     UpdateNode,
+    slugify,
 )
 from .repository import KnowledgeGraphRepository
 from ..identity import (
@@ -349,6 +351,57 @@ class KnowledgeGraph:
     # ------------------------------------------------------------------
     # BFS subgraph retrieval
     # ------------------------------------------------------------------
+
+    def resolve_location_node(self, location_name: str) -> Optional[str]:
+        """Find a location node by name, tolerating spelling variance.
+
+        The rest of the codebase compares locations with
+        ``locations_equivalent`` ("the Copper Finch" == "Copper Finch"), but
+        a raw ``slugify`` lookup is exact — so a narrator-supplied variant
+        silently matched nothing.
+        """
+        from ..identity import locations_equivalent
+
+        name = (location_name or "").strip()
+        if not name:
+            return None
+        slug = slugify(name)
+        if slug in self._graph:
+            return slug
+        for node_id, entity in self._entities.items():
+            if entity.entity_type != EntityType.LOCATION:
+                continue
+            if locations_equivalent(entity.name, name):
+                return node_id
+        return None
+
+    def residents_of(
+        self,
+        location_id: str,
+        relation_types: tuple[RelationType, ...] = (RelationType.LOCATED_AT,),
+    ) -> list[Entity]:
+        """Entities recorded as being AT a location, by incoming edge.
+
+        The graph is otherwise queried only by BFS from seeds, which answers
+        "what is related to what the narrator just mentioned" — it cannot
+        answer "who lives here", so arriving somewhere could not repopulate
+        the scene with its known inhabitants.
+
+        Returns entities in stable id order; callers apply their own policy
+        (alive-only, caps, dead-roster exclusion). Unknown locations and
+        unloaded graphs yield an empty list rather than raising.
+        """
+        if not location_id or location_id not in self._graph:
+            return []
+        wanted = {rel.value for rel in relation_types}
+        residents: list[Entity] = []
+        for source_id, _target, data in self._graph.in_edges(location_id, data=True):
+            if data.get("relationship") not in wanted:
+                continue
+            entity = self._entities.get(source_id)
+            if entity is not None:
+                residents.append(entity)
+        return sorted(residents, key=lambda e: e.node_id)
 
     def get_context_subgraph(
         self,
