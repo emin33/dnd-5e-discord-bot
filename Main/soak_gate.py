@@ -224,6 +224,14 @@ def evaluate_gate(runs: list[RunSummary], thresholds: GateThresholds) -> GateRep
             f"{max(1, thresholds.min_runs)}"
         )
 
+    # A corrupt or unrecognized artifact is never a healthy gate input:
+    # violate unconditionally, so a latency-only invocation with
+    # --allow-missing-latency cannot exit 0 over garbage (adversarial
+    # review finding).
+    for run in runs:
+        if run.kind in ("unreadable", "unknown"):
+            violations.append(f"{run.run_id}: {run.verdict} manifest at {run.path}")
+
     if thresholds.min_pass_rate is not None and runs:
         rate = report.pass_rate or 0.0
         if rate < thresholds.min_pass_rate:
@@ -342,7 +350,20 @@ def main(argv: Optional[list[str]] = None) -> int:
             "--max-cost-usd, --max-p95-turn-s"
         )
 
-    runs = [load_run_summary(Path(p)) for p in args.manifests]
+    # PowerShell/cmd pass glob patterns through literally; expand them here
+    # so the documented `data/long_horizon/*.manifest.json` invocation works
+    # on the project's primary shell. A pattern matching nothing stays
+    # literal and loads as an unreadable (failing) run.
+    manifest_paths: list[str] = []
+    for raw in args.manifests:
+        if any(ch in raw for ch in "*?["):
+            import glob as _glob
+            matches = sorted(_glob.glob(raw))
+            manifest_paths.extend(matches or [raw])
+        else:
+            manifest_paths.append(raw)
+
+    runs = [load_run_summary(Path(p)) for p in manifest_paths]
     thresholds = GateThresholds(
         min_pass_rate=args.pass_rate,
         max_cost_usd=args.max_cost_usd,

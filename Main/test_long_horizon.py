@@ -1201,7 +1201,14 @@ def evaluate_restart_convergence(checkpoint: dict) -> list[AssertionResult]:
                 f"gained={sorted(post_nodes - pre_nodes)[:4]}"
             )
 
-        unjoined = sorted(set(post_roster) - set(post.get("scene_npc_links") or []))
+        # Alive slice only: recovery deliberately refuses to re-register
+        # dead roster NPCs (they move to campaign_dead_npcs instead), so a
+        # pre-restart death must not fail the join expectation (adversarial
+        # review of 5d9ccaf, confirmed HIGH).
+        alive_ids = post.get("alive_roster_ids")
+        if alive_ids is None:
+            alive_ids = list(post_roster)
+        unjoined = sorted(set(alive_ids) - set(post.get("scene_npc_links") or []))
         if unjoined:
             problems.append(f"roster NPCs missing scene-registry join: {unjoined[:4]}")
 
@@ -1218,11 +1225,26 @@ def evaluate_restart_convergence(checkpoint: dict) -> list[AssertionResult]:
 
         for label, capture in (("pre", pre), ("post", post)):
             audit = capture.get("audit") or {}
-            if not audit.get("passed"):
+            violations = [str(v) for v in audit.get("violations") or []]
+            if label == "post":
+                # Recovery seeds the scene registry from the WHOLE alive
+                # campaign roster (session._preload_scene_npcs, by design),
+                # while world.npcs stays scene-scoped, so the audit's H4
+                # scene_link_dangling is an expected transient right after a
+                # restart that followed a location change — the next move's
+                # rescope closes it (adversarial review of 5d9ccaf,
+                # confirmed HIGH). Every other violation class stays fatal.
+                violations = [
+                    v for v in violations
+                    if not v.startswith("scene_link_dangling")
+                ]
+            if violations:
                 problems.append(
                     f"{label}-restart consistency audit: "
-                    f"violations={list(audit.get('violations') or [])[:3]}"
+                    f"violations={violations[:3]}"
                 )
+            elif not audit:
+                problems.append(f"{label}-restart consistency audit missing")
 
     results.append(AssertionResult(
         name="restart_projection_convergence",
@@ -3322,6 +3344,14 @@ def run_assert_only(manifest_path_str: str) -> int:
     print(f"  Reloaded manifest: {manifest_path}")
     print(f"  Session ID  : {session_id}")
     results = run_assertions(scenario, str(session_id), seed)
+    # A restart run's convergence gates re-evaluate from the manifest's
+    # stored checkpoint; dropping them here would let --assert-only rewrite
+    # a restart FAIL into PASS (adversarial review of 5d9ccaf).
+    if doc.get("restart_at_turn") is not None:
+        results.extend(evaluate_restart_convergence(
+            doc.get("restart_checkpoint")
+            or {"turn": doc.get("restart_at_turn")}
+        ))
     render_results(scenario, seed, results, verdict_trusted)
 
     passed = sum(1 for r in results if r.passed)

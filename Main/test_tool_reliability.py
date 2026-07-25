@@ -117,7 +117,20 @@ EXPECTED_EFFECTS = {
 # _seed_player_casting_state so the declarations are canon, not player fiat.
 STATE_SWEEP_ACTIONS = [
     "I greet Mara Venn by name and ask what she has learned about the Ash Gate.",
-    "I pay Mara Venn exactly two gold pieces for her help, and she accepts them.",
+    (
+        # Gift framing, not "pay ... for her help": paying-for-something
+        # triages as `purchase` and the deterministic commerce handler then
+        # charges the player IN ADDITION to the narrator's update_player
+        # (double-charge observed live, run 20260724_231350 T2, which also
+        # minted 'investigation-assistance-from-mara-venn' as an inventory
+        # item). The sweep measures the narrator-tool ledger, so the script
+        # stays off the commerce classifier; if triage reroutes anyway, the
+        # agreement gate fails with the triage type attributed per turn.
+        "I repay my established debt to Mara Venn now, uncontested and with "
+        "no roll: exactly two gold pieces from my pouch into her palm, and "
+        "she accepts them as full settlement; the coins are hers, not mine. "
+        "This is not a purchase — no goods change hands."
+    ),
     (
         "This is an uncontested item transfer with no roll: Mara Venn takes "
         "the test draught from her coat and hands it to me; it is now in my "
@@ -125,8 +138,8 @@ STATE_SWEEP_ACTIONS = [
     ),
     (
         "This is an established automatic effect with no roll: I drink the "
-        "test draught from my pack, and its mild venom takes hold — I now "
-        "have the poisoned condition."
+        "test draught, and its mild venom takes hold — I now have the "
+        "poisoned condition."
     ),
     (
         "This is an uncontested item transfer with no roll: Mara Venn takes "
@@ -134,18 +147,32 @@ STATE_SWEEP_ACTIONS = [
         "my pack rather than her coat."
     ),
     (
-        "This is an established automatic effect with no roll: I drink the "
-        "silver antidote from my pack, and it purges the venom — my poisoned "
-        "condition ends now."
+        # No drink/use verbs: those keywords route the turn to the
+        # deterministic `use` consumer (_handle_inventory), which deletes
+        # the row without an update_player receipt (observed live, run
+        # 20260724_232516 T6). The uncork/vapor framing keeps the
+        # consumption narrator-owed.
+        "This is an established automatic effect with no roll: I uncork the "
+        "silver antidote, and its vapor purges the venom — my poisoned "
+        "condition ends now — while the spent vial crumbles to inert dust, "
+        "gone from my pack."
     ),
     (
-        "Outside combat, deliberately and with no roll, I channel my prepared "
-        "ranger charm into my brass compass, expending one first-level spell "
-        "slot in the process."
+        # Passive ward drain, not "I channel/cast": casting language triages
+        # as `cast_spell` and the deterministic spell mechanic swallows the
+        # turn without any update_player (observed live, run 20260724_231350
+        # T7: zero effects executed).
+        "I sit deliberately at the warded corner table and let its sigil "
+        "take its established due: the ward drains one of my first-level "
+        "spell slots — an automatic effect, nothing cast, no roll."
     ),
     (
-        "Mara Venn insists on repaying part of my coin: she counts exactly "
-        "five silver pieces into my palm, and I accept them."
+        # Gift framing again: Mara PAYING THE PLAYER triaged as `purchase`
+        # live (run 20260724_231350 T8), which charged the player 2gp and
+        # minted an 'unknown item' inventory row via the commerce handler.
+        "This is a freely given repayment with no purchase and no roll: "
+        "Mara Venn counts five silver pieces from her own purse into my "
+        "palm, and I accept the coins as mine."
     ),
     (
         "This is an uncontested item transfer with no roll: I hand my brass "
@@ -338,17 +365,36 @@ async def _seed_scene(session) -> tuple[str, str]:
 async def _seed_player_casting_state(session, mara_id: str) -> None:
     """Extra fixture for the player-state sweep.
 
-    The level-1 ranger template has no spell slots, so the slot-expenditure
-    turn seeds two first-level slots through the production character repo.
-    The consumables Mara hands over exist in her narrative inventory, and
-    the poison/antidote/charm premises are established facts so the sweep's
+    The level-1 ranger template has no spell slots, so the slot-drain turn
+    seeds a two-slot first-level row directly: ``CharacterRepository.create``
+    skips zero-max levels and ``update`` only UPDATEs existing rows (found
+    live — run 20260724_231350 captured ``[0, 0]`` after a model-only seed),
+    so the row must be inserted before ``update`` can sync it. The
+    consumables Mara hands over exist in her narrative inventory, and the
+    poison/antidote/ward premises are established facts so the sweep's
     uncontested-no-roll declarations are canon rather than player fiat.
     """
+    from dnd_bot.data.database import get_database
     from dnd_bot.data.repositories.character_repo import get_character_repo
 
     character = session.character
     character.spell_slots.level_1 = (2, 2)
+    db = await get_database()
+    await db.execute(
+        "DELETE FROM character_spell_slots "
+        "WHERE character_id = ? AND slot_level = 1",
+        (character.id,),
+    )
+    await db.execute(
+        "INSERT INTO character_spell_slots "
+        "(character_id, slot_level, slots_max, slots_current) "
+        "VALUES (?, 1, 2, 2)",
+        (character.id,),
+    )
+    await db.commit()
     char_repo = await get_character_repo()
+    # Syncs the remaining model state and invalidates the repo cache so the
+    # raw row insert above is visible to every later get_by_id.
     await char_repo.update(character)
 
     live = session.manager.get_session(session.channel_id)
@@ -357,19 +403,24 @@ async def _seed_player_casting_state(session, mara_id: str) -> None:
     mara.inventory.extend(["test draught", "silver antidote"])
     world.established_facts.extend([
         (
+            "Kael owes Mara Venn an old debt of exactly two gold pieces; "
+            "repaying it is uncontested, needs no roll, and buys nothing."
+        ),
+        (
             "Mara Venn carries a stoppered test draught; drinking it is "
             "uncontested, needs no roll, and reliably inflicts the poisoned "
             "condition."
         ),
         (
-            "Mara Venn carries a silver antidote; drinking it is uncontested, "
-            "needs no roll, and completely ends the poisoned condition."
+            "Mara Venn carries a silver antidote; once uncorked, its vapor "
+            "automatically and completely ends the poisoned condition — no "
+            "roll — and the spent vial then crumbles to inert dust."
         ),
         (
-            "Kael knows a prepared ranger charm that, outside combat, can be "
-            "channeled deliberately into an object by expending one "
-            "first-level spell slot; channeling is uncontested and needs "
-            "no roll."
+            "The Copper Finch's warded corner table bears an old sigil that, "
+            "once per visit, saps exactly one first-level spell slot from a "
+            "seated spellcaster; the drain is automatic, harmless otherwise, "
+            "and needs no roll."
         ),
     ])
 
@@ -415,6 +466,48 @@ async def _capture_player_state(character_id: str) -> dict:
     }
 
 
+# Triage proposes deterministic consumption in full denomination names;
+# fold them into the same 2-letter shape update_player receipts use.
+_TRIAGE_DENOMS = {
+    "copper": "cp", "silver": "sp", "electrum": "ep", "gold": "gp",
+    "platinum": "pp",
+}
+
+
+def _triage_consumption_receipts(turn_rows: list[dict]) -> list[dict]:
+    """Step 5's deterministic consumption, as replayable receipts.
+
+    Player numerics have exactly two sanctioned, turn-logged writers: the
+    update_player executor and orchestrator Step 5, which applies
+    triage-proposed ``currency_spent`` / ``resources_consumed`` after the
+    outcome is determined. Both therefore join the replay ledger. The
+    purchase/inventory handlers' writes are deliberately NOT reconstructed
+    here — they leave no turn-log receipt, and surfacing them as ledger
+    mismatches is exactly how this gate exposed the commerce double-charge
+    (run 20260724_231350).
+    """
+    receipts: list[dict] = []
+    for row in turn_rows:
+        delta: dict[str, int] = {}
+        for denom, amount in (row.get("triage_currency_spent") or {}).items():
+            code = _TRIAGE_DENOMS.get(str(denom).strip().lower())
+            if code and isinstance(amount, int) and amount:
+                delta[code] = delta.get(code, 0) - abs(amount)
+        if delta:
+            receipts.append({"currency_delta": delta})
+        removed = [
+            {
+                "name": str(entry.get("item") or ""),
+                "quantity": int(entry.get("quantity") or 1),
+            }
+            for entry in row.get("triage_resources_consumed") or []
+            if isinstance(entry, dict) and str(entry.get("item") or "").strip()
+        ]
+        if removed:
+            receipts.append({"items_removed": removed})
+    return receipts
+
+
 def _update_player_receipts(turn_rows: list[dict]) -> list[dict]:
     """Executed update_player receipts ("applied" payloads) in turn order.
 
@@ -444,9 +537,17 @@ def evaluate_player_state_agreement(
     the initial DB snapshot and require the result to equal the final DB
     snapshot, per family. A receipt whose write never landed, or a write
     that produced no receipt, both surface as a mismatch (matrix gate:
-    "receipt matches DB/WorldState"). Player numerics have no extractor
-    path by construction, so update_player receipts are the complete
-    write ledger for these fields outside combat.
+    "receipt matches DB/WorldState").
+
+    Player numerics have no extractor path by construction, so exactly two
+    writers exist for these fields outside combat: update_player receipts
+    and the deterministic purchase/inventory/spell handlers. The sweep's
+    script is phrased to stay on the narrator-tool path, so a deterministic
+    write shows up here as an unreceipted mismatch — deliberately: on its
+    first live run (20260724_231350) that is how this gate exposed the
+    commerce handler double-charging a narrated payment and charging a
+    player who was being PAID. Attribute mismatches via each turn_row's
+    ``triage_action_type``.
     """
     currency_delta: Counter[str] = Counter()
     item_delta: Counter[str] = Counter()
@@ -662,6 +763,7 @@ async def run(profile: str, scenario: str = "baseline") -> tuple[dict, bool]:
 
     for turn in range(1, len(actions) + 1):
         effects = log.effects_at(turn)
+        turn_triage = dict((log.get(turn) or {}).get("triage") or {})
         proposed = list(effects.proposed or [])
         executed = list(effects.executed or effects.effects or [])
         rejected = list(effects.rejected or [])
@@ -714,6 +816,18 @@ async def run(profile: str, scenario: str = "baseline") -> tuple[dict, bool]:
             "elapsed_seconds": (
                 round(turn_elapsed[turn], 3) if turn in turn_elapsed else None
             ),
+            # Attribution for ledger mismatches: `purchase`/`inventory`
+            # turns ran a deterministic player-state writer in addition to
+            # any narrator tools (see evaluate_player_state_agreement).
+            "triage_action_type": str(turn_triage.get("action_type") or ""),
+            # Step 5's deterministic consumption — the second sanctioned
+            # recorded writer, folded into the agreement replay.
+            "triage_currency_spent": dict(
+                turn_triage.get("currency_spent") or {}
+            ),
+            "triage_resources_consumed": list(
+                turn_triage.get("resources_consumed") or []
+            ),
             "executed_types": sorted(executed_types),
             "proposed": proposed,
             "executed": executed,
@@ -751,7 +865,8 @@ async def run(profile: str, scenario: str = "baseline") -> tuple[dict, bool]:
         player_state_agreement = evaluate_player_state_agreement(
             initial_player_state,
             final_player_state,
-            _update_player_receipts(turn_rows),
+            _update_player_receipts(turn_rows)
+            + _triage_consumption_receipts(turn_rows),
         )
 
     gates = {

@@ -207,6 +207,27 @@ def test_unreadable_manifest_counts_as_failed(tmp_path):
     assert not report.ok
 
 
+def test_corrupt_artifact_violates_even_with_waivers(tmp_path):
+    # A latency-only invocation with --allow-missing-latency must not exit
+    # 0 over garbage (adversarial review finding: waivers made corrupt
+    # artifacts invisible).
+    path = tmp_path / "garbage.json"
+    path.write_text("{not json", encoding="utf-8")
+    run = load_run_summary(path)
+    report = evaluate_gate([run], GateThresholds(
+        max_p95_turn_s=60.0, allow_missing_latency=True,
+    ))
+    assert not report.ok
+    assert any("UNREADABLE" in v for v in report.violations)
+
+
+def test_main_expands_glob_patterns(tmp_path):
+    _write_long_horizon(tmp_path, stem="run_a")
+    _write_long_horizon(tmp_path, stem="run_b")
+    pattern = str(tmp_path / "*.manifest.json")
+    assert main(["--pass-rate", "1.0", "--min-runs", "2", pattern]) == 0
+
+
 def test_min_runs_guard(tmp_path):
     run = load_run_summary(_write_long_horizon(tmp_path))
     report = evaluate_gate([run], GateThresholds(min_pass_rate=0.5, min_runs=3))

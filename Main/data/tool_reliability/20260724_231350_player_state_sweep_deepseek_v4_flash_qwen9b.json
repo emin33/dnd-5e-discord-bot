@@ -1,0 +1,1697 @@
+{
+  "profile": "deepseek_v4_flash_qwen9b",
+  "scenario": "player_state_sweep",
+  "session_id": "80cd4fae-9e09-48d2-8ada-47ad5232ed97",
+  "turns": 13,
+  "elapsed_seconds": 271.21,
+  "usage": {
+    "calls": 81,
+    "prompt_tokens": 268232,
+    "completion_tokens": 10459,
+    "cache_read_tokens": 43008,
+    "cost_usd": 0.020781,
+    "cost_complete": true
+  },
+  "proposed_total": 40,
+  "executed_total": 40,
+  "rejected_total": 0,
+  "effect_reliability": 1.0,
+  "effect_type_counts": {
+    "ref_entity": 10,
+    "update_player": 8,
+    "update_entity": 5,
+    "spawn_object": 2,
+    "remove_entity": 1,
+    "change_location": 2
+  },
+  "expected_turns_passed": 12,
+  "expected_turns_total": 13,
+  "tool_followup_turns": [
+    6,
+    10,
+    11,
+    12,
+    13
+  ],
+  "tool_repair_turns": [],
+  "structural_error_turns": [],
+  "unmet_obligation_turns": [],
+  "resolved_outcome_failed_closed_turns": [],
+  "continuity_repair_turns": [],
+  "continuity_failures": [],
+  "dead_state_reintroductions": [],
+  "errors": [],
+  "player_state_initial": {
+    "currency": {
+      "copper": 0,
+      "silver": 0,
+      "electrum": 0,
+      "gold": 100,
+      "platinum": 0
+    },
+    "inventory": {
+      "leather-armor": 1,
+      "longbow": 1,
+      "shortsword": 2,
+      "arrow": 20,
+      "explorers-pack": 1,
+      "brass-compass": 1
+    },
+    "conditions": [],
+    "spell_slots": {
+      "1": [
+        0,
+        0
+      ],
+      "2": [
+        0,
+        0
+      ],
+      "3": [
+        0,
+        0
+      ],
+      "4": [
+        0,
+        0
+      ],
+      "5": [
+        0,
+        0
+      ],
+      "6": [
+        0,
+        0
+      ],
+      "7": [
+        0,
+        0
+      ],
+      "8": [
+        0,
+        0
+      ],
+      "9": [
+        0,
+        0
+      ]
+    }
+  },
+  "player_state_final": {
+    "currency": {
+      "copper": 0,
+      "silver": 5,
+      "electrum": 0,
+      "gold": 94,
+      "platinum": 0
+    },
+    "inventory": {
+      "leather-armor": 1,
+      "longbow": 1,
+      "shortsword": 2,
+      "arrow": 20,
+      "explorers-pack": 1,
+      "investigation-assistance-from-mara-venn": 1,
+      "item": 1,
+      "brass-compass": 1,
+      "obsidian-key": 1
+    },
+    "conditions": [],
+    "spell_slots": {
+      "1": [
+        0,
+        0
+      ],
+      "2": [
+        0,
+        0
+      ],
+      "3": [
+        0,
+        0
+      ],
+      "4": [
+        0,
+        0
+      ],
+      "5": [
+        0,
+        0
+      ],
+      "6": [
+        0,
+        0
+      ],
+      "7": [
+        0,
+        0
+      ],
+      "8": [
+        0,
+        0
+      ],
+      "9": [
+        0,
+        0
+      ]
+    }
+  },
+  "player_state_agreement": {
+    "currency_receipts_match_state": {
+      "passed": false,
+      "detail": "gold: initial+receipts=98 != final=94"
+    },
+    "inventory_receipts_match_state": {
+      "passed": false,
+      "detail": "investigation-assistance-from-mara-venn: initial+receipts=0 != final=1; item: initial+receipts=0 != final=1; test-draught: initial+receipts=1 != final=0; unknown-item: initial+receipts=-1 != final=0"
+    },
+    "condition_receipts_match_state": {
+      "passed": true,
+      "detail": "replayed=[] final=[]"
+    },
+    "spell_slot_receipts_match_state": {
+      "passed": true,
+      "detail": "spent={} reconciled"
+    },
+    "receipts_cover_all_player_state_families": {
+      "passed": false,
+      "detail": "missing=['spell_slot_used']; counts={'currency': 2, 'items_granted': 3, 'conditions_added': 1, 'items_removed': 2, 'conditions_removed': 1}"
+    }
+  },
+  "gates": {
+    "all_turns_returned": true,
+    "effect_reliability_at_least_95pct": true,
+    "effect_accounting_balanced": true,
+    "at_least_six_effect_families": true,
+    "expected_turn_coverage_at_least_80pct": true,
+    "no_unmet_runtime_effect_obligations": true,
+    "no_resolved_outcome_failed_closed": true,
+    "no_final_dead_npc_contradiction": true,
+    "no_dead_npc_state_reintroduction": true,
+    "no_harness_errors": true,
+    "ended_at_ash_gate": true,
+    "currency_receipts_match_state": false,
+    "inventory_receipts_match_state": false,
+    "condition_receipts_match_state": true,
+    "spell_slot_receipts_match_state": true,
+    "receipts_cover_all_player_state_families": false
+  },
+  "turn_rows": [
+    {
+      "turn": 1,
+      "action": "I greet Mara Venn by name and ask what she has learned about the Ash Gate.",
+      "elapsed_seconds": 28.034,
+      "executed_types": [
+        "ref_entity"
+      ],
+      "proposed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "65a7b846-b287-479d-b4bd-6aaf6477991e"
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "sealed-reliquary"
+        }
+      ],
+      "executed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "65a7b846-b287-479d-b4bd-6aaf6477991e",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "65a7b846-b287-479d-b4bd-6aaf6477991e",
+            "alias_used": null,
+            "found_in_scene": true,
+            "found_in_world": true,
+            "world_reference_type": "npc"
+          }
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "sealed-reliquary",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "sealed-reliquary",
+            "alias_used": null,
+            "found_in_scene": true,
+            "found_in_world": true,
+            "world_reference_type": "item"
+          }
+        }
+      ],
+      "rejected": [],
+      "expected": [
+        "ref_entity"
+      ],
+      "expected_ok": true,
+      "narration_diagnostics": {
+        "streaming_buffered": false,
+        "continuity_violations": 0,
+        "continuity_repair_attempted": false,
+        "continuity_repair_succeeded": false,
+        "continuity_failed_closed": false,
+        "primary_effects": 2,
+        "primary_structural_errors": 0,
+        "primary_structural_error_details": [],
+        "tool_followup_attempted": false,
+        "tool_followup_for_mutation": false,
+        "tool_followup_skipped_memory_only": false,
+        "tool_repair_attempted": false,
+        "tool_followup_structural_errors": 0,
+        "tool_followup_structural_error_details": [],
+        "tool_repair_structural_errors": 0,
+        "tool_repair_structural_error_details": [],
+        "tool_invalid_effects_dropped": 0,
+        "tool_policy_suppressed_effects": 0,
+        "tool_unknown_roster_refs_dropped": 0,
+        "tool_ref_alias_mismatches_removed": 0,
+        "tool_repair_failed_closed": false,
+        "tool_ref_deterministic_recoveries": [],
+        "tool_followup_refs_superseded": 0,
+        "tool_duplicate_creations_collapsed": 0,
+        "tool_followup_effects": 0,
+        "effect_obligations": [],
+        "effect_obligation_reasons": [],
+        "effect_obligation_missing_initial": [],
+        "effect_obligation_missing_final": [],
+        "effect_obligation_repair_attempted": false,
+        "effect_obligation_repair_succeeded": false,
+        "effect_obligation_terminal_repair_attempted": false,
+        "effect_obligation_terminal_repair_succeeded": false,
+        "effect_obligation_terminal_structural_errors": 0,
+        "resolved_outcome_contradictions": [],
+        "resolved_outcome_repair_attempted": false,
+        "resolved_outcome_repair_succeeded": false,
+        "resolved_outcome_failed_closed": false,
+        "repair_meta_preamble_stripped": false,
+        "final_effects": 2
+      },
+      "narrative": "The Copper Finch breathes. Copper lamps cast greasy light across scarred oak. Rain taps a rhythm against shuttered windows. The reliquary sits on the table between you \u2014 iron, fist-sized, its bronze pin glinting.\n\nMara Venn looks up from her notes. A curl of smoke rises from the candle stub beside her. She sets her pen down.\n\n\"Mornin', Kael.\" She leans back. The charcoal coat creaks. \"The Ash Gate? Aye. I've been sitting on that like a splinter for three days.\"\n\nShe taps the table once.\n\n\"Gate's been sealed since Old Bram died. That much you know. But here's what's new \u2014 the lock mechanism's been tampered with. Someone's been out there, working it. Fresh tool marks on the housing. They wanted it open.\"\n\nHer eyes hold yours.\n\n\"The question is *why*. And who's brave \u2014 or desperate \u2014 enough to poke at a gate that killed its last keeper.\"\n\nShe gestures toward the reliquary. \"That thing on the table? Found it near the gate's footings. Demolition charge. Someone *armed* it, Kael. This isn't grave-robbing. This is a plan.\"\n\nShe waits.\n\n\"So. What do you make of that?\""
+    },
+    {
+      "turn": 2,
+      "action": "I pay Mara Venn exactly two gold pieces for her help, and she accepts them.",
+      "elapsed_seconds": 18.129,
+      "executed_types": [
+        "ref_entity",
+        "update_player"
+      ],
+      "proposed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "65a7b846-b287-479d-b4bd-6aaf6477991e"
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "brass-compass"
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "sealed-reliquary"
+        },
+        {
+          "type": "update_player"
+        }
+      ],
+      "executed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "65a7b846-b287-479d-b4bd-6aaf6477991e",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "65a7b846-b287-479d-b4bd-6aaf6477991e",
+            "alias_used": null,
+            "found_in_scene": true,
+            "found_in_world": true,
+            "world_reference_type": "npc"
+          }
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "brass-compass",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "brass-compass",
+            "alias_used": null,
+            "found_in_scene": true,
+            "found_in_world": false,
+            "world_reference_type": null
+          }
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "sealed-reliquary",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "sealed-reliquary",
+            "alias_used": null,
+            "found_in_scene": true,
+            "found_in_world": true,
+            "world_reference_type": "item"
+          }
+        },
+        {
+          "type": "update_player",
+          "was_duplicate": false,
+          "details": {
+            "applied": {
+              "currency_delta": {
+                "gp": -2
+              }
+            },
+            "narrator_authoritative": true,
+            "persisted": true
+          }
+        }
+      ],
+      "rejected": [],
+      "expected": [
+        "update_player"
+      ],
+      "expected_ok": true,
+      "narration_diagnostics": {
+        "streaming_buffered": false,
+        "continuity_violations": 0,
+        "continuity_repair_attempted": false,
+        "continuity_repair_succeeded": false,
+        "continuity_failed_closed": false,
+        "primary_effects": 4,
+        "primary_structural_errors": 0,
+        "primary_structural_error_details": [],
+        "tool_followup_attempted": false,
+        "tool_followup_for_mutation": false,
+        "tool_followup_skipped_memory_only": false,
+        "tool_repair_attempted": false,
+        "tool_followup_structural_errors": 0,
+        "tool_followup_structural_error_details": [],
+        "tool_repair_structural_errors": 0,
+        "tool_repair_structural_error_details": [],
+        "tool_invalid_effects_dropped": 0,
+        "tool_policy_suppressed_effects": 0,
+        "tool_unknown_roster_refs_dropped": 0,
+        "tool_ref_alias_mismatches_removed": 0,
+        "tool_repair_failed_closed": false,
+        "tool_ref_deterministic_recoveries": [],
+        "tool_followup_refs_superseded": 0,
+        "tool_duplicate_creations_collapsed": 0,
+        "tool_followup_effects": 0,
+        "effect_obligations": [
+          "update_player"
+        ],
+        "effect_obligation_reasons": [
+          "the player completed an accepted currency payment"
+        ],
+        "effect_obligation_missing_initial": [],
+        "effect_obligation_missing_final": [],
+        "effect_obligation_repair_attempted": false,
+        "effect_obligation_repair_succeeded": true,
+        "effect_obligation_terminal_repair_attempted": false,
+        "effect_obligation_terminal_repair_succeeded": false,
+        "effect_obligation_terminal_structural_errors": 0,
+        "resolved_outcome_contradictions": [],
+        "resolved_outcome_repair_attempted": false,
+        "resolved_outcome_repair_succeeded": false,
+        "resolved_outcome_failed_closed": false,
+        "repair_meta_preamble_stripped": false,
+        "final_effects": 4
+      },
+      "narrative": "Mara Venn's eyebrows lift as you slide two gold pieces across the scarred table. The coins catch the lamplight, glinting once before she scoops them into her palm with a dry chuckle.\n\n\"Well now.\" She pockets them without ceremony. \"That's a fair wage in this city. You've got my full attention, Kael.\"\n\nShe leans forward, forearms on the table, voice dropping low enough that the rain on the shutters nearly swallows it.\n\n\"Here's what I know.\"\n\nShe counts on her fingers.\n\n\"One \u2014 the Ash Gate wasn't always locked. Old Bram used to ferry people through. Legitimate trade, mostly. But the gate's been *dead* since he died. No one's crossed since.\"\n\n\"Two \u2014 the tampering. Fresh file marks on the lock housing. Whoever did it knew what they were doing. They didn't force it \u2014 they *worked* it. Delicate. Patient.\"\n\n\"Three.\" She taps the iron reliquary with a fingernail. *Ting*. \"This. Demolition pin's still live. If they'd triggered it, the gate's footings would've cracked. Whatever they wanted through that gate, they wanted it *open* \u2014 or they wanted it *gone*.\"\n\nShe sits back, studying you.\n\n\"So. You've got my help. What's your play? You want to look at the gate yourself? Talk to someone who knew Old Bram? Or follow the tool marks back to whoever made 'em?\"\n\nHer hand rests near the reliquary, waiting."
+    },
+    {
+      "turn": 3,
+      "action": "This is an uncontested item transfer with no roll: Mara Venn takes the test draught from her coat and hands it to me; it is now in my pack rather than her coat.",
+      "elapsed_seconds": 13.687,
+      "executed_types": [
+        "ref_entity",
+        "update_entity",
+        "update_player"
+      ],
+      "proposed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "65a7b846-b287-479d-b4bd-6aaf6477991e"
+        },
+        {
+          "type": "update_entity",
+          "entity_id": "65a7b846-b287-479d-b4bd-6aaf6477991e",
+          "changes": [
+            "remove_items"
+          ]
+        },
+        {
+          "type": "update_player"
+        }
+      ],
+      "executed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "65a7b846-b287-479d-b4bd-6aaf6477991e",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "65a7b846-b287-479d-b4bd-6aaf6477991e",
+            "alias_used": null,
+            "found_in_scene": true,
+            "found_in_world": true,
+            "world_reference_type": "npc"
+          }
+        },
+        {
+          "type": "update_entity",
+          "entity_id": "65a7b846-b287-479d-b4bd-6aaf6477991e",
+          "changes": [
+            "remove_items"
+          ],
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "65a7b846-b287-479d-b4bd-6aaf6477991e",
+            "applied": {
+              "items_removed": [
+                "test draught"
+              ]
+            },
+            "found_in_scene": true,
+            "found_in_world": true,
+            "world_reference_type": null
+          }
+        },
+        {
+          "type": "update_player",
+          "was_duplicate": false,
+          "details": {
+            "applied": {
+              "items_granted": [
+                {
+                  "name": "test draught",
+                  "quantity": 1
+                }
+              ]
+            },
+            "narrator_authoritative": true,
+            "persisted": true
+          }
+        }
+      ],
+      "rejected": [],
+      "expected": [
+        "update_entity",
+        "update_player"
+      ],
+      "expected_ok": true,
+      "narration_diagnostics": {
+        "streaming_buffered": false,
+        "continuity_violations": 0,
+        "continuity_repair_attempted": false,
+        "continuity_repair_succeeded": false,
+        "continuity_failed_closed": false,
+        "primary_effects": 3,
+        "primary_structural_errors": 0,
+        "primary_structural_error_details": [],
+        "tool_followup_attempted": false,
+        "tool_followup_for_mutation": false,
+        "tool_followup_skipped_memory_only": false,
+        "tool_repair_attempted": false,
+        "tool_followup_structural_errors": 0,
+        "tool_followup_structural_error_details": [],
+        "tool_repair_structural_errors": 0,
+        "tool_repair_structural_error_details": [],
+        "tool_invalid_effects_dropped": 0,
+        "tool_policy_suppressed_effects": 0,
+        "tool_unknown_roster_refs_dropped": 0,
+        "tool_ref_alias_mismatches_removed": 0,
+        "tool_repair_failed_closed": false,
+        "tool_ref_deterministic_recoveries": [],
+        "tool_followup_refs_superseded": 0,
+        "tool_duplicate_creations_collapsed": 0,
+        "tool_followup_effects": 0,
+        "effect_obligations": [
+          "update_entity",
+          "update_player"
+        ],
+        "effect_obligation_reasons": [
+          "the tracked NPC's holdings changed in the same transfer",
+          "the player's inventory changed in a completed item transfer"
+        ],
+        "effect_obligation_missing_initial": [],
+        "effect_obligation_missing_final": [],
+        "effect_obligation_repair_attempted": false,
+        "effect_obligation_repair_succeeded": true,
+        "effect_obligation_terminal_repair_attempted": false,
+        "effect_obligation_terminal_repair_succeeded": false,
+        "effect_obligation_terminal_structural_errors": 0,
+        "resolved_outcome_contradictions": [],
+        "resolved_outcome_repair_attempted": false,
+        "resolved_outcome_repair_succeeded": false,
+        "resolved_outcome_failed_closed": false,
+        "repair_meta_preamble_stripped": false,
+        "final_effects": 3
+      },
+      "narrative": "The candle flame flinches as Mara reaches into her coat. Her fingers emerge wrapped around a small stoppered vial \u2014 amber glass, dark liquid sloshing inside. She holds it up between thumb and forefinger.\n\n\"This?\" She turns it, letting the lamplight catch the contents. \"Test draught. Fast-acting. Nasty stuff. One swallow and you'll know what poison feels like \u2014 because you'll be poisoned.\"\n\nShe sets it on the table and slides it across to you.\n\n\"Your pack, then. I've no use for it anymore. Just don't mistake it for a morning tonic.\"\n\nHer hand withdraws. The vial sits at your edge of the table, waiting.\n\nYou pick it up. The glass is cool, smooth. A faint herbal smell leaks through the stopper \u2014 bitter, sharp.\n\nYou stow it in your pack.\n\nMara watches, then nods once. \"There. Clean transfer. Now \u2014 where were we?\""
+    },
+    {
+      "turn": 4,
+      "action": "This is an established automatic effect with no roll: I drink the test draught from my pack, and its mild venom takes hold \u2014 I now have the poisoned condition.",
+      "elapsed_seconds": 14.424,
+      "executed_types": [
+        "update_player"
+      ],
+      "proposed": [
+        {
+          "type": "update_player"
+        }
+      ],
+      "executed": [
+        {
+          "type": "update_player",
+          "was_duplicate": false,
+          "details": {
+            "applied": {
+              "conditions_added": [
+                "poisoned"
+              ]
+            },
+            "narrator_authoritative": true,
+            "persisted": true
+          }
+        }
+      ],
+      "rejected": [],
+      "expected": [
+        "update_player"
+      ],
+      "expected_ok": true,
+      "narration_diagnostics": {
+        "streaming_buffered": false,
+        "continuity_violations": 0,
+        "continuity_repair_attempted": false,
+        "continuity_repair_succeeded": false,
+        "continuity_failed_closed": false,
+        "primary_effects": 1,
+        "primary_structural_errors": 0,
+        "primary_structural_error_details": [],
+        "tool_followup_attempted": false,
+        "tool_followup_for_mutation": false,
+        "tool_followup_skipped_memory_only": false,
+        "tool_repair_attempted": false,
+        "tool_followup_structural_errors": 0,
+        "tool_followup_structural_error_details": [],
+        "tool_repair_structural_errors": 0,
+        "tool_repair_structural_error_details": [],
+        "tool_invalid_effects_dropped": 0,
+        "tool_policy_suppressed_effects": 0,
+        "tool_unknown_roster_refs_dropped": 0,
+        "tool_ref_alias_mismatches_removed": 0,
+        "tool_repair_failed_closed": false,
+        "tool_ref_deterministic_recoveries": [],
+        "tool_followup_refs_superseded": 0,
+        "tool_duplicate_creations_collapsed": 0,
+        "tool_followup_effects": 0,
+        "effect_obligations": [],
+        "effect_obligation_reasons": [],
+        "effect_obligation_missing_initial": [],
+        "effect_obligation_missing_final": [],
+        "effect_obligation_repair_attempted": false,
+        "effect_obligation_repair_succeeded": false,
+        "effect_obligation_terminal_repair_attempted": false,
+        "effect_obligation_terminal_repair_succeeded": false,
+        "effect_obligation_terminal_structural_errors": 0,
+        "resolved_outcome_contradictions": [],
+        "resolved_outcome_repair_attempted": false,
+        "resolved_outcome_repair_succeeded": false,
+        "resolved_outcome_failed_closed": false,
+        "repair_meta_preamble_stripped": false,
+        "final_effects": 1
+      },
+      "narrative": "The vial's stopper pops free with a soft *hiss*. The smell hits you \u2014 bitter roots, crushed herbs, something metallic underneath.\n\nYou tip it back.\n\nThe liquid coats your tongue. Sharp. Acrid. It burns going down \u2014 a thin, spreading fire that settles in your gut and then *radiates* outward. Your fingers tingle. The room's edges soften. The copper lamps leave greasy trails across your vision.\n\nMara's watching. Her face doesn't change.\n\n\"That's it, then.\" Her voice sounds farther away than it should. \"The venom's in you. You'll feel it for a while \u2014 blurred senses, slow thoughts. It'll pass.\"\n\nShe reaches into her coat again. Her fingers close around a small glass cylinder \u2014 silver liquid inside, catching the light.\n\n\"This,\" she says, holding it up, \"is the antidote. One swallow and the condition ends. Clean. Fast.\"\n\nShe sets it on the table between you. Doesn't push it forward. Doesn't pull it back.\n\n\"Your move, Kael. You wanted to know what poison feels like. Now you know. The antidote's right here. Or you can ride it out \u2014 an hour, maybe two, and you're clear.\"\n\nShe waits."
+    },
+    {
+      "turn": 5,
+      "action": "This is an uncontested item transfer with no roll: Mara Venn takes the silver antidote from her coat and hands it to me; it is now in my pack rather than her coat.",
+      "elapsed_seconds": 19.746,
+      "executed_types": [
+        "update_entity",
+        "update_player"
+      ],
+      "proposed": [
+        {
+          "type": "update_entity",
+          "entity_id": "65a7b846-b287-479d-b4bd-6aaf6477991e",
+          "changes": [
+            "remove_items"
+          ]
+        },
+        {
+          "type": "update_player"
+        }
+      ],
+      "executed": [
+        {
+          "type": "update_entity",
+          "entity_id": "65a7b846-b287-479d-b4bd-6aaf6477991e",
+          "changes": [
+            "remove_items"
+          ],
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "65a7b846-b287-479d-b4bd-6aaf6477991e",
+            "applied": {
+              "items_removed": [
+                "silver antidote"
+              ]
+            },
+            "found_in_scene": true,
+            "found_in_world": true,
+            "world_reference_type": null
+          }
+        },
+        {
+          "type": "update_player",
+          "was_duplicate": false,
+          "details": {
+            "applied": {
+              "items_granted": [
+                {
+                  "name": "silver antidote",
+                  "quantity": 1
+                }
+              ]
+            },
+            "narrator_authoritative": true,
+            "persisted": true
+          }
+        }
+      ],
+      "rejected": [],
+      "expected": [
+        "update_entity",
+        "update_player"
+      ],
+      "expected_ok": true,
+      "narration_diagnostics": {
+        "streaming_buffered": false,
+        "continuity_violations": 0,
+        "continuity_repair_attempted": false,
+        "continuity_repair_succeeded": false,
+        "continuity_failed_closed": false,
+        "primary_effects": 0,
+        "primary_structural_errors": 0,
+        "primary_structural_error_details": [],
+        "tool_followup_attempted": false,
+        "tool_followup_for_mutation": false,
+        "tool_followup_skipped_memory_only": false,
+        "tool_repair_attempted": false,
+        "tool_followup_structural_errors": 0,
+        "tool_followup_structural_error_details": [],
+        "tool_repair_structural_errors": 0,
+        "tool_repair_structural_error_details": [],
+        "tool_invalid_effects_dropped": 0,
+        "tool_policy_suppressed_effects": 0,
+        "tool_unknown_roster_refs_dropped": 0,
+        "tool_ref_alias_mismatches_removed": 0,
+        "tool_repair_failed_closed": false,
+        "tool_ref_deterministic_recoveries": [],
+        "tool_followup_refs_superseded": 0,
+        "tool_duplicate_creations_collapsed": 0,
+        "tool_followup_effects": 0,
+        "effect_obligations": [
+          "update_entity",
+          "update_player"
+        ],
+        "effect_obligation_reasons": [
+          "the tracked NPC's holdings changed in the same transfer",
+          "the player's inventory changed in a completed item transfer"
+        ],
+        "effect_obligation_missing_initial": [
+          "update_entity",
+          "update_player"
+        ],
+        "effect_obligation_missing_final": [],
+        "effect_obligation_repair_attempted": false,
+        "effect_obligation_repair_succeeded": true,
+        "effect_obligation_terminal_repair_attempted": false,
+        "effect_obligation_terminal_repair_succeeded": false,
+        "effect_obligation_terminal_structural_errors": 0,
+        "resolved_outcome_contradictions": [],
+        "resolved_outcome_repair_attempted": true,
+        "resolved_outcome_repair_succeeded": true,
+        "resolved_outcome_failed_closed": false,
+        "repair_meta_preamble_stripped": false,
+        "final_effects": 2
+      },
+      "narrative": "The silver antidote leaves her coat in a smooth motion \u2014 glass cylinder, silver liquid catching the lamplight. She holds it for a half-beat, then extends it across the table.\n\n\"Here.\"\n\nHer fingers release. The cylinder lands in your palm. Cool glass. The liquid inside shifts as you close your hand around it.\n\nShe watches you stow it in your pack. No hesitation. No second thought.\n\n\"There. It's yours now.\" She settles back into her chair, the wood creaking under her weight. \"Use it when you're ready. Or don't. Your body, your choice.\"\n\nShe picks up her pen, taps it once against the table's edge.\n\n\"Now \u2014 back to business. The Ash Gate. Old Bram. You came here for answers. I've given you what I have. What's your next move?\""
+    },
+    {
+      "turn": 6,
+      "action": "This is an established automatic effect with no roll: I drink the silver antidote from my pack, and it purges the venom \u2014 my poisoned condition ends now.",
+      "elapsed_seconds": 28.924,
+      "executed_types": [
+        "ref_entity",
+        "update_player"
+      ],
+      "proposed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "65a7b846-b287-479d-b4bd-6aaf6477991e"
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "brass-compass"
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "sealed-reliquary"
+        },
+        {
+          "type": "update_player"
+        }
+      ],
+      "executed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "65a7b846-b287-479d-b4bd-6aaf6477991e",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "65a7b846-b287-479d-b4bd-6aaf6477991e",
+            "alias_used": null,
+            "found_in_scene": true,
+            "found_in_world": true,
+            "world_reference_type": "npc"
+          }
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "brass-compass",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "brass-compass",
+            "alias_used": null,
+            "found_in_scene": true,
+            "found_in_world": false,
+            "world_reference_type": null
+          }
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "sealed-reliquary",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "sealed-reliquary",
+            "alias_used": null,
+            "found_in_scene": true,
+            "found_in_world": true,
+            "world_reference_type": "item"
+          }
+        },
+        {
+          "type": "update_player",
+          "was_duplicate": false,
+          "details": {
+            "applied": {
+              "conditions_removed": [
+                "poisoned"
+              ],
+              "items_removed": [
+                {
+                  "name": "silver antidote",
+                  "quantity": 1
+                }
+              ]
+            },
+            "narrator_authoritative": true,
+            "persisted": true
+          }
+        }
+      ],
+      "rejected": [],
+      "expected": [
+        "update_player"
+      ],
+      "expected_ok": true,
+      "narration_diagnostics": {
+        "streaming_buffered": false,
+        "continuity_violations": 0,
+        "continuity_repair_attempted": false,
+        "continuity_repair_succeeded": false,
+        "continuity_failed_closed": false,
+        "primary_effects": 0,
+        "primary_structural_errors": 0,
+        "primary_structural_error_details": [],
+        "tool_followup_attempted": true,
+        "tool_followup_for_mutation": false,
+        "tool_followup_skipped_memory_only": false,
+        "tool_repair_attempted": false,
+        "tool_followup_structural_errors": 0,
+        "tool_followup_structural_error_details": [],
+        "tool_repair_structural_errors": 0,
+        "tool_repair_structural_error_details": [],
+        "tool_invalid_effects_dropped": 0,
+        "tool_policy_suppressed_effects": 0,
+        "tool_unknown_roster_refs_dropped": 0,
+        "tool_ref_alias_mismatches_removed": 0,
+        "tool_repair_failed_closed": false,
+        "tool_ref_deterministic_recoveries": [],
+        "tool_followup_refs_superseded": 0,
+        "tool_duplicate_creations_collapsed": 0,
+        "tool_followup_effects": 4,
+        "effect_obligations": [],
+        "effect_obligation_reasons": [],
+        "effect_obligation_missing_initial": [],
+        "effect_obligation_missing_final": [],
+        "effect_obligation_repair_attempted": false,
+        "effect_obligation_repair_succeeded": false,
+        "effect_obligation_terminal_repair_attempted": false,
+        "effect_obligation_terminal_repair_succeeded": false,
+        "effect_obligation_terminal_structural_errors": 0,
+        "resolved_outcome_contradictions": [],
+        "resolved_outcome_repair_attempted": false,
+        "resolved_outcome_repair_succeeded": false,
+        "resolved_outcome_failed_closed": false,
+        "repair_meta_preamble_stripped": false,
+        "final_effects": 4
+      },
+      "narrative": "The vial's stopper pops free with a sharp *clink*. Silver liquid catches the flame as you raise it \u2014 thin, metallic, smelling of cold iron and clean rain.\n\nYou drink.\n\nThe antidote hits your tongue like a splash of frost. It spreads \u2014 not burning like the draught, but *washing*. Your vision snaps back into focus. The greasy lamp-trails vanish. The room's edges harden. Your fingers stop tingling.\n\nMara watches. A corner of her mouth twitches.\n\n\"Fast, isn't it?\" She tucks her pen behind her ear. \"You're clear. The poison's gone.\"\n\nShe gestures at your pack.\n\n\"Keep the empty vial. Might come in handy \u2014 a container's a container, and you never know when you'll need one.\"\n\nShe leans forward again, elbows on the table.\n\n\"So. You've felt the venom. You've tasted the cure. Now \u2014 what're we doing about that gate?\""
+    },
+    {
+      "turn": 7,
+      "action": "Outside combat, deliberately and with no roll, I channel my prepared ranger charm into my brass compass, expending one first-level spell slot in the process.",
+      "elapsed_seconds": 7.745,
+      "executed_types": [],
+      "proposed": [],
+      "executed": [],
+      "rejected": [],
+      "expected": [
+        "update_player"
+      ],
+      "expected_ok": false,
+      "narration_diagnostics": {},
+      "narrative": "You don't know the spell Harm."
+    },
+    {
+      "turn": 8,
+      "action": "Mara Venn insists on repaying part of my coin: she counts exactly five silver pieces into my palm, and I accept them.",
+      "elapsed_seconds": 15.235,
+      "executed_types": [
+        "ref_entity",
+        "update_entity",
+        "update_player"
+      ],
+      "proposed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "65a7b846-b287-479d-b4bd-6aaf6477991e"
+        },
+        {
+          "type": "update_player"
+        },
+        {
+          "type": "update_entity",
+          "entity_id": "65a7b846-b287-479d-b4bd-6aaf6477991e",
+          "changes": [
+            "add_items"
+          ]
+        }
+      ],
+      "executed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "65a7b846-b287-479d-b4bd-6aaf6477991e",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "65a7b846-b287-479d-b4bd-6aaf6477991e",
+            "alias_used": null,
+            "found_in_scene": true,
+            "found_in_world": true,
+            "world_reference_type": "npc"
+          }
+        },
+        {
+          "type": "update_player",
+          "was_duplicate": false,
+          "details": {
+            "applied": {
+              "currency_delta": {
+                "sp": 5
+              }
+            },
+            "narrator_authoritative": true,
+            "persisted": true
+          }
+        },
+        {
+          "type": "update_entity",
+          "entity_id": "65a7b846-b287-479d-b4bd-6aaf6477991e",
+          "changes": [
+            "add_items"
+          ],
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "65a7b846-b287-479d-b4bd-6aaf6477991e",
+            "applied": {
+              "items_added": [
+                "five silver pieces"
+              ]
+            },
+            "found_in_scene": true,
+            "found_in_world": true,
+            "world_reference_type": null
+          }
+        }
+      ],
+      "rejected": [],
+      "expected": [
+        "update_player"
+      ],
+      "expected_ok": true,
+      "narration_diagnostics": {
+        "streaming_buffered": false,
+        "continuity_violations": 0,
+        "continuity_repair_attempted": false,
+        "continuity_repair_succeeded": false,
+        "continuity_failed_closed": false,
+        "primary_effects": 2,
+        "primary_structural_errors": 0,
+        "primary_structural_error_details": [],
+        "tool_followup_attempted": false,
+        "tool_followup_for_mutation": false,
+        "tool_followup_skipped_memory_only": false,
+        "tool_repair_attempted": false,
+        "tool_followup_structural_errors": 0,
+        "tool_followup_structural_error_details": [],
+        "tool_repair_structural_errors": 0,
+        "tool_repair_structural_error_details": [],
+        "tool_invalid_effects_dropped": 0,
+        "tool_policy_suppressed_effects": 0,
+        "tool_unknown_roster_refs_dropped": 0,
+        "tool_ref_alias_mismatches_removed": 0,
+        "tool_repair_failed_closed": false,
+        "tool_ref_deterministic_recoveries": [],
+        "tool_followup_refs_superseded": 0,
+        "tool_duplicate_creations_collapsed": 0,
+        "tool_followup_effects": 0,
+        "effect_obligations": [],
+        "effect_obligation_reasons": [],
+        "effect_obligation_missing_initial": [],
+        "effect_obligation_missing_final": [],
+        "effect_obligation_repair_attempted": false,
+        "effect_obligation_repair_succeeded": false,
+        "effect_obligation_terminal_repair_attempted": false,
+        "effect_obligation_terminal_repair_succeeded": false,
+        "effect_obligation_terminal_structural_errors": 0,
+        "resolved_outcome_contradictions": [],
+        "resolved_outcome_repair_attempted": false,
+        "resolved_outcome_repair_succeeded": false,
+        "resolved_outcome_failed_closed": false,
+        "repair_meta_preamble_stripped": false,
+        "final_effects": 2
+      },
+      "narrative": "Mara's hand dips into her coat pocket. She counts \u2014 deliberate, unhurried \u2014 and sets the coins on the scarred wood between you. Five silver pieces. They catch the copper light, dull and honest.\n\nShe pushes them across. Her fingers stay on the stack for a moment.\n\n\"Call it a refund,\" she says. \"You paid for information, not for a mouthful of venom and a panic drink. I should've warned you what the draught would feel like before you took it. That's on me.\"\n\nShe withdraws her hand. The silver sits there, waiting.\n\n\"Take it. I won't have you walking out of here thinking I cheated you.\"\n\nHer eyes hold yours \u2014 not challenging, just *watching*. Gauging whether you'll accept or refuse.\n\nThe tavern settles around you. Rain drums against the shutters. Somewhere in the back, a glass clinks."
+    },
+    {
+      "turn": 9,
+      "action": "This is an uncontested item transfer with no roll: I hand my brass compass to Mara Venn, she accepts it, and it is now in her coat rather than my pack.",
+      "elapsed_seconds": 24.797,
+      "executed_types": [
+        "ref_entity",
+        "update_entity",
+        "update_player"
+      ],
+      "proposed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "65a7b846-b287-479d-b4bd-6aaf6477991e"
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "brass-compass"
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "sealed-reliquary"
+        },
+        {
+          "type": "update_player"
+        },
+        {
+          "type": "update_entity",
+          "entity_id": "65a7b846-b287-479d-b4bd-6aaf6477991e",
+          "changes": [
+            "add_items"
+          ]
+        }
+      ],
+      "executed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "65a7b846-b287-479d-b4bd-6aaf6477991e",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "65a7b846-b287-479d-b4bd-6aaf6477991e",
+            "alias_used": null,
+            "found_in_scene": true,
+            "found_in_world": true,
+            "world_reference_type": "npc"
+          }
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "brass-compass",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "brass-compass",
+            "alias_used": null,
+            "found_in_scene": true,
+            "found_in_world": false,
+            "world_reference_type": null
+          }
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "sealed-reliquary",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "sealed-reliquary",
+            "alias_used": null,
+            "found_in_scene": true,
+            "found_in_world": true,
+            "world_reference_type": "item"
+          }
+        },
+        {
+          "type": "update_player",
+          "was_duplicate": false,
+          "details": {
+            "applied": {
+              "items_removed": [
+                {
+                  "name": "unknown item",
+                  "quantity": 1
+                }
+              ]
+            },
+            "narrator_authoritative": true,
+            "persisted": true
+          }
+        },
+        {
+          "type": "update_entity",
+          "entity_id": "65a7b846-b287-479d-b4bd-6aaf6477991e",
+          "changes": [
+            "add_items"
+          ],
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "65a7b846-b287-479d-b4bd-6aaf6477991e",
+            "applied": {
+              "items_added": [
+                "unknown item"
+              ]
+            },
+            "found_in_scene": true,
+            "found_in_world": true,
+            "world_reference_type": null
+          }
+        }
+      ],
+      "rejected": [],
+      "expected": [
+        "update_entity",
+        "update_player"
+      ],
+      "expected_ok": true,
+      "narration_diagnostics": {
+        "streaming_buffered": false,
+        "continuity_violations": 0,
+        "continuity_repair_attempted": false,
+        "continuity_repair_succeeded": false,
+        "continuity_failed_closed": false,
+        "primary_effects": 0,
+        "primary_structural_errors": 0,
+        "primary_structural_error_details": [],
+        "tool_followup_attempted": false,
+        "tool_followup_for_mutation": false,
+        "tool_followup_skipped_memory_only": false,
+        "tool_repair_attempted": false,
+        "tool_followup_structural_errors": 0,
+        "tool_followup_structural_error_details": [],
+        "tool_repair_structural_errors": 0,
+        "tool_repair_structural_error_details": [],
+        "tool_invalid_effects_dropped": 0,
+        "tool_policy_suppressed_effects": 0,
+        "tool_unknown_roster_refs_dropped": 0,
+        "tool_ref_alias_mismatches_removed": 0,
+        "tool_repair_failed_closed": false,
+        "tool_ref_deterministic_recoveries": [],
+        "tool_followup_refs_superseded": 0,
+        "tool_duplicate_creations_collapsed": 0,
+        "tool_followup_effects": 0,
+        "effect_obligations": [
+          "update_entity",
+          "update_player"
+        ],
+        "effect_obligation_reasons": [
+          "the tracked NPC's holdings changed in the same transfer",
+          "the player's inventory changed in a completed item transfer"
+        ],
+        "effect_obligation_missing_initial": [
+          "update_entity",
+          "update_player"
+        ],
+        "effect_obligation_missing_final": [],
+        "effect_obligation_repair_attempted": false,
+        "effect_obligation_repair_succeeded": true,
+        "effect_obligation_terminal_repair_attempted": false,
+        "effect_obligation_terminal_repair_succeeded": false,
+        "effect_obligation_terminal_structural_errors": 0,
+        "resolved_outcome_contradictions": [],
+        "resolved_outcome_repair_attempted": true,
+        "resolved_outcome_repair_succeeded": true,
+        "resolved_outcome_failed_closed": false,
+        "repair_meta_preamble_stripped": false,
+        "final_effects": 5
+      },
+      "narrative": "The coins rest cool against your palm. Your other hand reaches into your pack, finds the compass by touch \u2014 familiar weight, worn brass, the hinge loose from years of use.\n\nYou draw it out and set it on the table. The lamplight catches its scratched face, throws a dull gleam across the metal.\n\nMara's eyes drop to it. Her pen stops.\n\nShe looks at it for a long moment. Then her hand moves \u2014 not rushed, not hesitant. She picks the compass up, turns it over once, runs her thumb across the lid. A quiet breath escapes her.\n\nShe meets your gaze. Nods once. Slips the compass into her coat pocket. The fabric settles.\n\n\"All right.\" Her voice is low, steady. \"It's safe with me. I'll keep it until you ask for it back.\"\n\nShe taps the five silver pieces still on the table between you.\n\n\"Now. You've given me something of yours. That means something.\" She leans forward. \"The Ash Gate. The tampering. The demolition charge. You came here for answers, and I've given you what I know. But knowing isn't acting.\"\n\nShe gestures at the iron reliquary still sitting on the table.\n\n\"That thing's got a live pin. Someone wanted that gate open or gone. The question is \u2014 do you want to stop them? Or find out who they are?\""
+    },
+    {
+      "turn": 10,
+      "action": "Mara Venn sets a newly revealed obsidian key on the table between us; it is a distinct object I can pick up.",
+      "elapsed_seconds": 18.877,
+      "executed_types": [
+        "ref_entity",
+        "spawn_object",
+        "update_entity",
+        "update_player"
+      ],
+      "proposed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "65a7b846-b287-479d-b4bd-6aaf6477991e"
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "sealed-reliquary"
+        },
+        {
+          "type": "spawn_object",
+          "item": "obsidian key"
+        },
+        {
+          "type": "update_entity",
+          "entity_id": "65a7b846-b287-479d-b4bd-6aaf6477991e",
+          "changes": [
+            "add_items"
+          ]
+        },
+        {
+          "type": "update_player"
+        }
+      ],
+      "executed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "65a7b846-b287-479d-b4bd-6aaf6477991e",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "65a7b846-b287-479d-b4bd-6aaf6477991e",
+            "alias_used": null,
+            "found_in_scene": true,
+            "found_in_world": true,
+            "world_reference_type": "npc"
+          }
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "sealed-reliquary",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "sealed-reliquary",
+            "alias_used": null,
+            "found_in_scene": true,
+            "found_in_world": true,
+            "world_reference_type": "item"
+          }
+        },
+        {
+          "type": "spawn_object",
+          "item": "obsidian key",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "54fd07c1-c172-4d34-bd8c-57fd818b450d",
+            "object_name": "obsidian key"
+          }
+        },
+        {
+          "type": "update_entity",
+          "entity_id": "65a7b846-b287-479d-b4bd-6aaf6477991e",
+          "changes": [
+            "add_items"
+          ],
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "65a7b846-b287-479d-b4bd-6aaf6477991e",
+            "applied": {
+              "items_added": [
+                "obsidian key"
+              ]
+            },
+            "found_in_scene": true,
+            "found_in_world": true,
+            "world_reference_type": null
+          }
+        },
+        {
+          "type": "update_player",
+          "was_duplicate": false,
+          "details": {
+            "applied": {
+              "items_granted": [
+                {
+                  "name": "obsidian key",
+                  "quantity": 1
+                }
+              ]
+            },
+            "narrator_authoritative": true,
+            "persisted": true
+          }
+        }
+      ],
+      "rejected": [],
+      "expected": [
+        "spawn_object"
+      ],
+      "expected_ok": true,
+      "narration_diagnostics": {
+        "streaming_buffered": false,
+        "continuity_violations": 0,
+        "continuity_repair_attempted": false,
+        "continuity_repair_succeeded": false,
+        "continuity_failed_closed": false,
+        "primary_effects": 0,
+        "primary_structural_errors": 0,
+        "primary_structural_error_details": [],
+        "tool_followup_attempted": true,
+        "tool_followup_for_mutation": true,
+        "tool_followup_skipped_memory_only": false,
+        "tool_repair_attempted": false,
+        "tool_followup_structural_errors": 0,
+        "tool_followup_structural_error_details": [],
+        "tool_repair_structural_errors": 0,
+        "tool_repair_structural_error_details": [],
+        "tool_invalid_effects_dropped": 0,
+        "tool_policy_suppressed_effects": 0,
+        "tool_unknown_roster_refs_dropped": 0,
+        "tool_ref_alias_mismatches_removed": 0,
+        "tool_repair_failed_closed": false,
+        "tool_ref_deterministic_recoveries": [],
+        "tool_followup_refs_superseded": 0,
+        "tool_duplicate_creations_collapsed": 0,
+        "tool_followup_effects": 5,
+        "effect_obligations": [
+          "spawn_object"
+        ],
+        "effect_obligation_reasons": [
+          "a new interactable object was explicitly placed on stage"
+        ],
+        "effect_obligation_missing_initial": [
+          "spawn_object"
+        ],
+        "effect_obligation_missing_final": [],
+        "effect_obligation_repair_attempted": true,
+        "effect_obligation_repair_succeeded": true,
+        "effect_obligation_terminal_repair_attempted": false,
+        "effect_obligation_terminal_repair_succeeded": false,
+        "effect_obligation_terminal_structural_errors": 0,
+        "resolved_outcome_contradictions": [],
+        "resolved_outcome_repair_attempted": false,
+        "resolved_outcome_repair_succeeded": false,
+        "resolved_outcome_failed_closed": false,
+        "repair_meta_preamble_stripped": false,
+        "final_effects": 5
+      },
+      "narrative": "The reliquary's iron surface still gleams dully under the copper lamps. Mara's hand goes to her coat \u2014 the same pocket where the compass disappeared moments ago. Her fingers work something free.\n\nShe doesn't flourish it. Doesn't explain. She simply sets it on the table between you with a soft *click* of stone on wood.\n\nAn obsidian key. Three inches long. Smooth, almost liquid-black, carved with a spiral pattern that seems to pull the lamplight into its depths rather than reflect it. The teeth are uneven \u2014 jagged, deliberate, like a broken tooth made into a tool.\n\nThe air around it feels... still. As if the key drinks sound as well as light.\n\nMara's hand withdraws. She watches you look at it.\n\n\"Found it three nights ago,\" she says, her voice dropping lower than the rain. \"Wedged in a crack beneath the Ash Gate's lower hinge. Someone dropped it. Or *placed* it there for retrieval.\"\n\nShe gestures \u2014 *go ahead, pick it up*.\n\n\"The spiral's not decorative. That's a lock pattern. Old. Pre-dates the gate itself, I'd wager.\" She pauses. \"I haven't tried it on anything. Didn't want to risk what might happen if it fit.\"\n\nThe key lies on the table. Cold. Waiting. The reliquary sits beside it, the demolition pin still nestled in its iron cradle.\n\nThe rain drums harder against the shutters."
+    },
+    {
+      "turn": 11,
+      "action": "This is an established automatic trigger with no roll: I do not touch or use the sealed reliquary. From across the room I say 'now,' and its already-armed charge finishes the countdown and destroys the reliquary completely.",
+      "elapsed_seconds": 25.357,
+      "executed_types": [
+        "ref_entity",
+        "remove_entity"
+      ],
+      "proposed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "65a7b846-b287-479d-b4bd-6aaf6477991e"
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "sealed-reliquary"
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "obsidian-key"
+        },
+        {
+          "type": "remove_entity"
+        }
+      ],
+      "executed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "65a7b846-b287-479d-b4bd-6aaf6477991e",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "65a7b846-b287-479d-b4bd-6aaf6477991e",
+            "alias_used": null,
+            "found_in_scene": true,
+            "found_in_world": true,
+            "world_reference_type": "npc"
+          }
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "sealed-reliquary",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "sealed-reliquary",
+            "alias_used": null,
+            "found_in_scene": true,
+            "found_in_world": true,
+            "world_reference_type": "item"
+          }
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "obsidian-key",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "obsidian-key",
+            "alias_used": null,
+            "found_in_scene": true,
+            "found_in_world": true,
+            "world_reference_type": "item"
+          }
+        },
+        {
+          "type": "remove_entity",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "sealed-reliquary",
+            "entity_name": "sealed reliquary",
+            "reason": "destroyed by its own demolition charge triggered by Kael's countdown"
+          }
+        }
+      ],
+      "rejected": [],
+      "expected": [
+        "remove_entity"
+      ],
+      "expected_ok": true,
+      "narration_diagnostics": {
+        "streaming_buffered": false,
+        "continuity_violations": 0,
+        "continuity_repair_attempted": false,
+        "continuity_repair_succeeded": false,
+        "continuity_failed_closed": false,
+        "primary_effects": 0,
+        "primary_structural_errors": 0,
+        "primary_structural_error_details": [],
+        "tool_followup_attempted": true,
+        "tool_followup_for_mutation": true,
+        "tool_followup_skipped_memory_only": false,
+        "tool_repair_attempted": false,
+        "tool_followup_structural_errors": 0,
+        "tool_followup_structural_error_details": [],
+        "tool_repair_structural_errors": 0,
+        "tool_repair_structural_error_details": [],
+        "tool_invalid_effects_dropped": 0,
+        "tool_policy_suppressed_effects": 0,
+        "tool_unknown_roster_refs_dropped": 0,
+        "tool_ref_alias_mismatches_removed": 0,
+        "tool_repair_failed_closed": false,
+        "tool_ref_deterministic_recoveries": [],
+        "tool_followup_refs_superseded": 0,
+        "tool_duplicate_creations_collapsed": 0,
+        "tool_followup_effects": 4,
+        "effect_obligations": [
+          "remove_entity"
+        ],
+        "effect_obligation_reasons": [
+          "a tracked object was explicitly destroyed beyond continued use"
+        ],
+        "effect_obligation_missing_initial": [
+          "remove_entity"
+        ],
+        "effect_obligation_missing_final": [],
+        "effect_obligation_repair_attempted": true,
+        "effect_obligation_repair_succeeded": true,
+        "effect_obligation_terminal_repair_attempted": false,
+        "effect_obligation_terminal_repair_succeeded": false,
+        "effect_obligation_terminal_structural_errors": 0,
+        "resolved_outcome_contradictions": [],
+        "resolved_outcome_repair_attempted": false,
+        "resolved_outcome_repair_succeeded": false,
+        "resolved_outcome_failed_closed": false,
+        "repair_meta_preamble_stripped": false,
+        "final_effects": 4
+      },
+      "narrative": "The word drops like a stone into still water.\n\n\"Now.\"\n\nOne syllable. Flat. Certain.\n\nThe reliquary's bronze demolition pin \u2014 already half-depressed from Mara's earlier arming \u2014 gives a soft *click* as the internal spring finally seats home. A heartbeat of silence. Then a sharp *crack* \u2014 contained, deliberate, directional \u2014 and the iron box splits along its seams. A gout of grey smoke vents upward. The metal crumples inward, folding like a fist closing, and the reliquary collapses into a ruin of blackened iron shards and spent mechanism.\n\nThe smell of burnt salt and hot copper washes across the table. A few fragments skitter against the obsidian key, stop. The smoke curls toward the ceiling, thinning into the tavern's dim air.\n\nMara hasn't flinched. Her eyes are fixed on what's left \u2014 a dead lump of iron, harmless, its purpose spent.\n\nHer breath comes out slow.\n\n\"Well.\" She blinks once. \"That answers that.\"\n\nShe looks at you across the wreckage. A new edge in her gaze \u2014 not fear. Recognition.\n\n\"You knew exactly when that pin would fire. You counted the seconds from the moment I armed it.\" A pause. \"That's not guesswork. You've seen those charges before.\"\n\nShe gestures at the ruined iron.\n\n\"Whoever set that charge didn't expect someone to know the timing. They left it hot, thinking they'd be the ones to trigger it.\" She taps the table once. \"You just told them \u2014 and anyone watching \u2014 that *you* know their tools.\"\n\nThe obsidian key still sits untouched on the wood, gleaming black through the settling haze.\n\nOutside, the rain continues. But something in the air has shifted. A tension that wasn't there before."
+    },
+    {
+      "turn": 12,
+      "action": "I leave the Copper Finch and travel to the Ash Gate, arriving beneath its cracked black arch.",
+      "elapsed_seconds": 25.009,
+      "executed_types": [
+        "change_location",
+        "ref_entity"
+      ],
+      "proposed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "65a7b846-b287-479d-b4bd-6aaf6477991e"
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "obsidian-key"
+        },
+        {
+          "type": "change_location"
+        }
+      ],
+      "executed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "65a7b846-b287-479d-b4bd-6aaf6477991e",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "65a7b846-b287-479d-b4bd-6aaf6477991e",
+            "alias_used": null,
+            "found_in_scene": true,
+            "found_in_world": true,
+            "world_reference_type": "npc"
+          }
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "obsidian-key",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "obsidian-key",
+            "alias_used": null,
+            "found_in_scene": true,
+            "found_in_world": true,
+            "world_reference_type": "item"
+          }
+        },
+        {
+          "type": "change_location",
+          "was_duplicate": false,
+          "details": {
+            "location_name": "Ash Gate",
+            "location_description": "A cracked black stone arch standing alone against grey sky, veined with pale water-stains, a hairline fracture running from keystone to left pillar. Beyond it: dead grey earth and thick rolling mist. The air beneath the arch feels dense, heavy, as if the rain itself avoids passing through.",
+            "narrator_authoritative": true
+          }
+        }
+      ],
+      "rejected": [],
+      "expected": [
+        "change_location"
+      ],
+      "expected_ok": true,
+      "narration_diagnostics": {
+        "streaming_buffered": false,
+        "continuity_violations": 0,
+        "continuity_repair_attempted": false,
+        "continuity_repair_succeeded": false,
+        "continuity_failed_closed": false,
+        "primary_effects": 0,
+        "primary_structural_errors": 0,
+        "primary_structural_error_details": [],
+        "tool_followup_attempted": true,
+        "tool_followup_for_mutation": true,
+        "tool_followup_skipped_memory_only": false,
+        "tool_repair_attempted": false,
+        "tool_followup_structural_errors": 0,
+        "tool_followup_structural_error_details": [],
+        "tool_repair_structural_errors": 0,
+        "tool_repair_structural_error_details": [],
+        "tool_invalid_effects_dropped": 0,
+        "tool_policy_suppressed_effects": 0,
+        "tool_unknown_roster_refs_dropped": 0,
+        "tool_ref_alias_mismatches_removed": 0,
+        "tool_repair_failed_closed": false,
+        "tool_ref_deterministic_recoveries": [],
+        "tool_followup_refs_superseded": 0,
+        "tool_duplicate_creations_collapsed": 0,
+        "tool_followup_effects": 3,
+        "effect_obligations": [
+          "change_location"
+        ],
+        "effect_obligation_reasons": [
+          "the party explicitly completed travel to a new location"
+        ],
+        "effect_obligation_missing_initial": [
+          "change_location"
+        ],
+        "effect_obligation_missing_final": [],
+        "effect_obligation_repair_attempted": true,
+        "effect_obligation_repair_succeeded": true,
+        "effect_obligation_terminal_repair_attempted": false,
+        "effect_obligation_terminal_repair_succeeded": false,
+        "effect_obligation_terminal_structural_errors": 0,
+        "resolved_outcome_contradictions": [],
+        "resolved_outcome_repair_attempted": false,
+        "resolved_outcome_repair_succeeded": false,
+        "resolved_outcome_failed_closed": false,
+        "repair_meta_preamble_stripped": false,
+        "final_effects": 3
+      },
+      "narrative": "The Copper Finch's door swings shut behind you, cutting off the rain-drum and the low murmur of the tavern. The morning air hits \u2014 cold, damp, carrying the mineral scent of wet stone and the faint tang of the river.\n\nYou cross the yard. The ground is muddied, churned by boots and cart wheels. A few scattered buildings huddle at the edge of the district \u2014 a boarded-up wool shop, a smithy with its forge cold and dark. Beyond them, the road narrows into a defile.\n\nAnd there it is.\n\nThe Ash Gate rises against the grey sky like a broken tooth. Black stone, veined with pale streaks where water has traced centuries of paths. The arch is cracked \u2014 a hairline fracture runs from the keystone down the left pillar, branching like a frozen bolt of lightning. The gates themselves are gone. No wood, no iron. Just the arch, standing alone, a threshold to nothing.\n\nBeyond it: a stretch of dead ground. Grey earth. Withered grass. And then the mist begins \u2014 thick, rolling, swallowing the world beyond twenty paces.\n\nBeneath the arch, where the lower hinge would have been, you see it. A small depression in the stone. A scrape in the moss. Fresh. The place where Mara found the key.\n\nThe silence here is different. Heavier. The rain doesn't seem to fall *through* the arch \u2014 it slicks off, as if the air itself is denser beneath that cracked span.\n\nThe obsidian key is still in your hand."
+    },
+    {
+      "turn": 13,
+      "action": "At the Ash Gate I meet a new, physically present courier named Sable Quill, introduce myself, and ask why she was waiting for me.",
+      "elapsed_seconds": 23.794,
+      "executed_types": [
+        "change_location",
+        "ref_entity",
+        "spawn_object"
+      ],
+      "proposed": [
+        {
+          "type": "add_npc",
+          "npc_name": "Sable Quill"
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "ash-gate"
+        },
+        {
+          "type": "spawn_object",
+          "item": "sealed letter"
+        },
+        {
+          "type": "change_location"
+        }
+      ],
+      "executed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "f6e62624-0d72-4c12-b9e3-a2dc51b2471b",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "f6e62624-0d72-4c12-b9e3-a2dc51b2471b",
+            "alias_used": null,
+            "found_in_scene": true,
+            "found_in_world": true,
+            "world_reference_type": "npc"
+          }
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "ash-gate",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "ash-gate",
+            "alias_used": null,
+            "found_in_scene": false,
+            "found_in_world": true,
+            "world_reference_type": "location"
+          }
+        },
+        {
+          "type": "spawn_object",
+          "item": "sealed letter",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "796d889a-7a3a-42bd-87c9-4f019592dd91",
+            "object_name": "sealed letter"
+          }
+        },
+        {
+          "type": "change_location",
+          "was_duplicate": false,
+          "details": {
+            "location_name": "Ash Gate",
+            "location_description": "A cracked black stone arch standing alone against grey sky, veined with pale water-stains, a hairline fracture running from keystone to left pillar. Beyond it: dead grey earth and thick rolling mist. The air beneath the arch feels dense, heavy.",
+            "narrator_authoritative": true
+          }
+        }
+      ],
+      "rejected": [],
+      "expected": [
+        "add_npc"
+      ],
+      "expected_ok": true,
+      "narration_diagnostics": {
+        "streaming_buffered": false,
+        "continuity_violations": 0,
+        "continuity_repair_attempted": false,
+        "continuity_repair_succeeded": false,
+        "continuity_failed_closed": false,
+        "primary_effects": 0,
+        "primary_structural_errors": 0,
+        "primary_structural_error_details": [],
+        "tool_followup_attempted": true,
+        "tool_followup_for_mutation": true,
+        "tool_followup_skipped_memory_only": false,
+        "tool_repair_attempted": false,
+        "tool_followup_structural_errors": 0,
+        "tool_followup_structural_error_details": [],
+        "tool_repair_structural_errors": 0,
+        "tool_repair_structural_error_details": [],
+        "tool_invalid_effects_dropped": 0,
+        "tool_policy_suppressed_effects": 0,
+        "tool_unknown_roster_refs_dropped": 0,
+        "tool_ref_alias_mismatches_removed": 0,
+        "tool_repair_failed_closed": false,
+        "tool_ref_deterministic_recoveries": [],
+        "tool_followup_refs_superseded": 0,
+        "tool_duplicate_creations_collapsed": 0,
+        "tool_followup_effects": 4,
+        "effect_obligations": [
+          "add_npc"
+        ],
+        "effect_obligation_reasons": [
+          "a properly named new NPC was explicitly met on stage"
+        ],
+        "effect_obligation_missing_initial": [
+          "add_npc"
+        ],
+        "effect_obligation_missing_final": [],
+        "effect_obligation_repair_attempted": true,
+        "effect_obligation_repair_succeeded": true,
+        "effect_obligation_terminal_repair_attempted": false,
+        "effect_obligation_terminal_repair_succeeded": false,
+        "effect_obligation_terminal_structural_errors": 0,
+        "resolved_outcome_contradictions": [],
+        "resolved_outcome_repair_attempted": false,
+        "resolved_outcome_repair_succeeded": false,
+        "resolved_outcome_failed_closed": false,
+        "repair_meta_preamble_stripped": false,
+        "final_effects": 4
+      },
+      "narrative": "A figure stands at the base of the right pillar, half-swallowed by shadow and grey drizzle. She's young \u2014 early twenties, maybe \u2014 with a sharp jaw and darker skin. A leather courier's satchel is strapped across her chest, the strap worn soft and dark with age. Her coat is oiled wool, hood down despite the damp, revealing close-cropped black hair plastered to her temples.\n\nShe's been standing still. Watching the arch. Watching the mist.\n\nWhen your boots crunch on the gravel, she turns. Her eyes are quick, assessing \u2014 they scan you once, head to toe, then settle on your face.\n\n\"You're Kael Windrunner.\"\n\nNot a question. She knows your name.\n\nShe steps forward. Her boots are practical, worn, caked with mud from a long road. She offers no handshake \u2014 just stands there, close enough to speak without raising her voice over the rain.\n\n\"Name's Sable Quill. Courier. I was told you'd be here, at the Ash Gate, around this hour.\" A pause. \"I've been waiting since first light.\"\n\nShe reaches into her satchel \u2014 slow, deliberate, not wanting to startle \u2014 and pulls out a sealed letter. Wax. Black. No emblem pressed into it.\n\n\"I'm supposed to give you this. Hand to hand, no intermediaries.\" She holds it out, but doesn't release it yet. \"Before I do \u2014 I need to hear you say it. That you're Kael Windrunner, and that you're the one who stood at the Copper Finch bar last night and asked about Old Bram.\"\n\nHer eyes hold yours. Waiting.\n\nThe mist rolls behind her, thick and patient. The Ash Gate looms overhead, a cracked arch of dead stone, and the obsidian key is still cold in your grip."
+    }
+  ]
+}

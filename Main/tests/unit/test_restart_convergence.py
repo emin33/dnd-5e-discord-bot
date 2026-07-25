@@ -17,6 +17,7 @@ def _capture(**overrides):
         "world_turn": 12,
         "current_location": "Copper Finch",
         "roster": {"id-mara": "Mara Venn", "id-orris": "Orris"},
+        "alive_roster_ids": ["id-mara", "id-orris"],
         "dead_roster": {"id-bram": "Old Bram"},
         "established_facts": ["fact a", "fact b"],
         "superseded_facts": ["old fact"],
@@ -180,3 +181,60 @@ def test_dead_roster_rebuild_is_not_asserted():
         post=_capture(dead_roster={}),
     )))
     assert results["restart_projection_convergence"].passed
+
+
+def test_dead_roster_npc_needs_no_registry_join():
+    # Recovery deliberately refuses to re-register dead roster NPCs
+    # (session.py "don't resurrect the corpse"): a pre-restart death stays
+    # in world.npcs (alive=False) yet must not fail the join expectation.
+    # Adversarial review of 5d9ccaf, confirmed HIGH.
+    dead_included = {
+        "roster": {"id-mara": "Mara Venn", "id-orris": "Orris",
+                   "id-slain": "Slain Bravo"},
+        "alive_roster_ids": ["id-mara", "id-orris"],
+    }
+    results = _by_name(evaluate_restart_convergence(_checkpoint(
+        pre=_capture(**dead_included),
+        post=_capture(**dead_included),  # scene_npc_links still alive-only
+    )))
+    assert results["restart_projection_convergence"].passed, (
+        results["restart_projection_convergence"].detail
+    )
+
+
+def test_post_audit_scene_link_dangling_is_tolerated_other_violations_fatal():
+    # Recovery preloads the registry from the whole alive campaign DB while
+    # world.npcs stays scene-scoped, so H4 scene_link_dangling is an
+    # expected post-restart transient (closed by the next move's rescope).
+    # Adversarial review of 5d9ccaf, confirmed HIGH.
+    dangling_only = {
+        "passed": False,
+        "violations": ["scene_link_dangling: Distant Ferrier -> id-far"],
+    }
+    results = _by_name(evaluate_restart_convergence(_checkpoint(
+        post=_capture(audit=dangling_only),
+    )))
+    assert results["restart_projection_convergence"].passed, (
+        results["restart_projection_convergence"].detail
+    )
+
+    # The same violation on the PRE side is a live-state defect and fails.
+    results = _by_name(evaluate_restart_convergence(_checkpoint(
+        pre=_capture(audit=dangling_only),
+    )))
+    assert not results["restart_projection_convergence"].passed
+
+    # Mixed post-side violations keep failing on the non-dangling class.
+    mixed = {
+        "passed": False,
+        "violations": [
+            "scene_link_dangling: Distant Ferrier -> id-far",
+            "pinned_fact_is_superseded: x",
+        ],
+    }
+    results = _by_name(evaluate_restart_convergence(_checkpoint(
+        post=_capture(audit=mixed),
+    )))
+    gate = results["restart_projection_convergence"]
+    assert not gate.passed
+    assert "pinned_fact_is_superseded" in gate.detail

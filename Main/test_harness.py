@@ -735,6 +735,13 @@ class TestSession:
             "roster": {
                 npc_id: npc.name for npc_id, npc in sorted(world.npcs.items())
             },
+            # Recovery deliberately refuses to re-register dead roster NPCs
+            # in the scene registry (session.py "don't resurrect the
+            # corpse"), so the registry-join convergence expectation applies
+            # to the alive slice only.
+            "alive_roster_ids": sorted(
+                npc_id for npc_id, npc in world.npcs.items() if npc.alive
+            ),
             # Diagnostic only, deliberately NOT convergence-asserted: dead
             # rows sync to the npc DB at graceful end_session, so this map
             # legitimately rebuilds from a different union after a crash.
