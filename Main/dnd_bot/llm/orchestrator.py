@@ -2128,6 +2128,12 @@ class DMOrchestrator:
         # committed" and drops the narrator's effects. The deterministic
         # claim has to honor that same sentence, or the prose denies a write
         # the receipts record. The player's action simply didn't land.
+        #
+        # Deliberately NOT the continuity door, narration.py's other
+        # effect-clearing path: its fallback prose ("The consequences of your
+        # action settle across the scene", or a dead NPC staying dead) never
+        # denies the player's own action. Voiding a validated purchase there
+        # would fail the turn for an unrelated hallucination.
         if authoritative_effects and (
             getattr(self._narration_strategy, "last_diagnostics", {}) or {}
         ).get("resolved_outcome_failed_closed"):
