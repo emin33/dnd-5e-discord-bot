@@ -42,6 +42,35 @@ def test_crash_report_is_scored_as_a_failed_run(tmp_path):
     assert any("boom" in str(e) for e in report["errors"])
 
 
+def test_build_report_runs_standalone_on_an_empty_session():
+    """_build_report must not depend on run()'s function-local imports.
+
+    Extracting it from run() left TurnLogReader/NarrativeGovernance/
+    resolve_unique_identity behind as locals, so every live run raised
+    NameError inside the report builder — caught only because the crash
+    artifact recorded the traceback. Exercising the REAL builder (the
+    durability test below stubs it) pins the dependency.
+    """
+    # Reaching the turn-log read proves every name the body needs resolved.
+    # A missing log is the expected outcome here; a NameError is the bug.
+    with pytest.raises(FileNotFoundError):
+        sweep._build_report(
+            profile="prof",
+            scenario="player_state_sweep",
+            session_id="no-such-session",
+            actions=["I wait."],
+            expected_effects={},
+            harness=type("H", (), {"action_log": []})(),
+            responses={},
+            errors=[],
+            world_snapshot={},
+            bram_id="bram",
+            initial_player_state={},
+            final_player_state={},
+            elapsed=1.0,
+        )
+
+
 @pytest.mark.asyncio
 async def test_artifact_is_written_before_teardown(tmp_path, monkeypatch):
     """The ordering guarantee: cleanup can die and the artifact survives."""

@@ -770,6 +770,11 @@ def _build_report(
     final_player_state, elapsed,
 ) -> dict:
     """Evaluate the finished run into the artifact shape."""
+    from dnd_bot.llm import usage_recorder
+    from dnd_bot.llm.continuity import NarrativeGovernance
+    from dnd_bot.llm.turn_log_reader import TurnLogReader
+    from dnd_bot.game.identity import resolve_unique_identity
+
     log = TurnLogReader.load(session_id)
     turn_elapsed = {
         entry.get("turn"): entry.get("elapsed")
@@ -982,6 +987,16 @@ def _print_report(report: dict, passed: bool, artifact: Path) -> None:
     print("\n" + "=" * 72)
     print(f"TOOL RELIABILITY: {'PASS' if passed else 'FAIL'}")
     print("=" * 72)
+    if "proposed_total" not in report:
+        # Crash artifact: the run never reached evaluation. Print what there
+        # is instead of raising a KeyError on top of the original failure.
+        print("RUN DID NOT COMPLETE — crash artifact written")
+        for entry in report.get("errors") or []:
+            print(f"  {entry.get('stage', 'error')}: {entry.get('error')}")
+            if entry.get("traceback"):
+                print(entry["traceback"])
+        print(f"artifact: {artifact}")
+        return
     print(
         f"effects: proposed={report['proposed_total']} "
         f"executed={report['executed_total']} rejected={report['rejected_total']} "
