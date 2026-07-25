@@ -204,6 +204,9 @@ async def test_drop_removes_resolved_item_from_inventory(drop_setup):
     assert effect.effect_type == EffectType.UPDATE_PLAYER
     assert effect.player_item_remove == [{
         "name": lantern.item_name,
+        # The resolved row id travels with the removal — re-resolving by
+        # name downstream missed equipped and SRD-indexed rows entirely.
+        "item_index": lantern.item_index,
         "quantity": 1,
     }]
 

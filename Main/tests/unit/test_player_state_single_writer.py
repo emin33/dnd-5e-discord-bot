@@ -56,13 +56,16 @@ class _LedgerRepo:
     def __init__(self, items: list[InventoryItem], gold: int = 10):
         self.items = items
         self.gold = gold
+        self.platinum = 0
         self.writes: list[tuple] = []
 
     async def get_all_items(self, character_id: str) -> list[InventoryItem]:
         return [i for i in self.items if i.character_id == character_id]
 
     async def get_currency(self, character_id: str) -> Currency:
-        return Currency(character_id=character_id, gold=self.gold)
+        return Currency(
+            character_id=character_id, gold=self.gold, platinum=self.platinum
+        )
 
     async def add_item(self, item: InventoryItem) -> InventoryItem:
         self.writes.append(("add_item", item.item_name, item.quantity))
@@ -91,13 +94,23 @@ class _RecordingExecutor:
     async def execute(self, effect, idempotency_key=None):
         self.executed.append(effect)
         self.keys.append(idempotency_key)
+        # Mirror the REAL executor's receipt shape: it records name+quantity
+        # for items (never the routing-only item_index) and the EFFECTIVE
+        # per-denomination currency movement. A fake that echoes the effect
+        # verbatim hides shape drift between claim and receipt.
         applied = {}
         if effect.player_currency_delta:
             applied["currency_delta"] = dict(effect.player_currency_delta)
         if effect.player_item_remove:
-            applied["items_removed"] = list(effect.player_item_remove)
+            applied["items_removed"] = [
+                {"name": e.get("name"), "quantity": int(e.get("quantity", 1) or 1)}
+                for e in effect.player_item_remove
+            ]
         if effect.player_item_grant:
-            applied["items_granted"] = list(effect.player_item_grant)
+            applied["items_granted"] = [
+                {"name": e.get("name"), "quantity": int(e.get("quantity", 1) or 1)}
+                for e in effect.player_item_grant
+            ]
         return EffectExecutionResult(
             effect=effect, success=True, details={"applied": applied},
         )
@@ -171,7 +184,10 @@ async def test_purchase_emits_authoritative_effects_not_direct_writes(rig):
     assert result["gold_after"] == 8
     (effect,) = result["authoritative_effects"]
     assert effect.effect_type == EffectType.UPDATE_PLAYER
-    assert effect.player_currency_delta == {"gp": -2}
+    # Charged in COPPER so sub-gold SRD prices survive, and so the executor
+    # can break larger coins (a float gp delta failed effect validation and
+    # dropped the whole purchase after the narrator's write was scrubbed).
+    assert effect.player_currency_delta == {"cp": -200}
     assert effect.player_item_grant == [{"name": "Dagger", "quantity": 1}]
     # Read-only until the effect pipeline commits it: the old handler's
     # direct remove_gold/add_item here was the second, unreceipted writer.
@@ -218,9 +234,57 @@ async def test_purchase_insufficient_gold_fails_closed_without_writes(rig):
     result = await orch._handle_purchase(triage, "Test Hero", context)
 
     assert result["success"] is False
-    assert "Not enough gold" in result["error"]
+    assert "Not enough coin" in result["error"]
     assert "authoritative_effects" not in result
     assert repo.writes == []
+
+
+@pytest.mark.asyncio
+async def test_purchase_affordable_from_non_gold_coin_is_not_refused(rig):
+    """Wealth is wealth: the executor breaks larger coins.
+
+    Gating on the gold COLUMN refused an affordable purchase from a platinum
+    purse and contradicted PGI's validate_currency, which gates on
+    total_in_gold for the same turn.
+    """
+    orch, repo, _, context = rig
+    repo.gold = 0
+    repo.platinum = 5  # 50gp of wealth, zero gold coins
+    triage = TriageResult(
+        action_type="purchase", reasoning="",
+        item_name="Dagger", item_cost=2, quantity=1,
+    )
+
+    result = await orch._handle_purchase(triage, "Test Hero", context)
+
+    assert result["success"] is True
+    (effect,) = result["authoritative_effects"]
+    assert effect.player_currency_delta == {"cp": -200}
+
+
+@pytest.mark.asyncio
+async def test_fractional_item_cost_becomes_a_valid_copper_delta(rig):
+    """A 4cp ale must not produce a float delta.
+
+    TriageSchema declares item_cost int, but _parse_triage_json falls back to
+    the RAW dict when validation fails, so floats reach the handler. A float
+    currency delta is rejected by effect validation — which dropped the whole
+    purchase after the narrator's mirror had already been scrubbed.
+    """
+    orch, _, _, context = rig
+    triage = TriageResult(
+        action_type="purchase", reasoning="",
+        item_name="Torch", item_cost=0.04, quantity=2,
+    )
+
+    result = await orch._handle_purchase(triage, "Test Hero", context)
+
+    assert result["success"] is True
+    (effect,) = result["authoritative_effects"]
+    assert effect.player_currency_delta == {"cp": -8}
+    assert all(
+        isinstance(v, int) for v in effect.player_currency_delta.values()
+    )
 
 
 # ── Inventory: resolution from real holdings, mutations as effects ───────────
@@ -358,12 +422,13 @@ async def test_consume_currency_writes_once_with_receipt(rig):
 
     (effect,) = executor.executed
     assert effect.effect_type == EffectType.UPDATE_PLAYER
-    assert effect.player_currency_delta == {"gp": -2}
+    # Copper, so a sub-gold spend isn't rounded up to a whole gold piece.
+    assert effect.player_currency_delta == {"cp": -200}
     # The write is receipted in the turn's executed-effects ledger (and
     # counted as proposed, keeping effect accounting balanced).
     (record,) = orch._last_effect_executions
     assert record["type"] == "update_player"
-    assert record["details"]["applied"] == {"currency_delta": {"gp": -2}}
+    assert record["details"]["applied"] == {"currency_delta": {"cp": -200}}
     assert len(orch._last_deterministic_proposed) == 1
     # The repo write happens inside the (stubbed) executor — never directly.
     assert repo.writes == []
@@ -390,7 +455,12 @@ async def test_consume_resources_writes_residual_with_receipt(rig):
     await orch._consume_resources([{"item": "Arrow", "quantity": 2}], "Test Hero")
 
     (effect,) = executor.executed
-    assert effect.player_item_remove == [{"name": "Arrow", "quantity": 2}]
+    # The resolved ROW travels with the removal: a name-only entry is
+    # re-resolved downstream by a lookup that misses equipped and
+    # SRD-indexed rows, silently removing nothing.
+    assert effect.player_item_remove == [
+        {"name": "Arrow", "item_index": "arrow", "quantity": 2}
+    ]
     (record,) = orch._last_effect_executions
     assert record["type"] == "update_player"
     assert record["details"]["applied"] == {

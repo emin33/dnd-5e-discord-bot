@@ -511,7 +511,7 @@ async def test_purchase_turn_deducts_gold_and_adds_item(net):
     assert result.tool_calls_made == []
     (effect,) = result.proposed_effects
     assert effect.effect_type == EffectType.UPDATE_PLAYER
-    assert effect.player_currency_delta == {"gp": -30}
+    assert effect.player_currency_delta == {"cp": -3000}
     assert effect.player_item_grant == [{"name": "Healing Potion", "quantity": 1}]
 
     # State diff: gold moved and the item row exists — written exactly once.

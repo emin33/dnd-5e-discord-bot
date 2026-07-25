@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
 import structlog
@@ -160,6 +160,15 @@ class NarrationSpec:
     # default, i.e. the kwarg is not sent). The combat-outcome path pins
     # think=False — Qwen3 thinking mode truncates its narration.
     think: bool | None = None
+
+    # Mutations a deterministic handler has already CLAIMED for this turn
+    # (``mechanical_result["authoritative_effects"]``). The orchestrator
+    # merges these after narration returns, so the obligation net cannot see
+    # them here — and would otherwise demand the narrator re-emit a tool for
+    # a write that is already owned, spending a repair leg on it and, when
+    # that repair fails, failing the turn closed and discarding the claim.
+    # They satisfy obligations; they are never re-proposed from here.
+    claimed_effects: list[ProposedEffect] = field(default_factory=list)
 
 
 class NarrationStrategy:
@@ -428,7 +437,13 @@ class NarrationStrategy:
         # If the narrator negated such an outcome, prose and tool calls must be
         # repaired together; a tool-only followup would otherwise commit state
         # that contradicts the visible story.
-        initial_missing = obligations.missing_from(proposed_effects)
+        # Obligations are satisfied by any writer that owns the mutation this
+        # turn — the narrator's own tool calls OR a deterministic handler's
+        # claim. Judging the narrator alone demanded a duplicate tool for an
+        # already-owned write (see NarrationSpec.claimed_effects).
+        initial_missing = obligations.missing_from(
+            [*proposed_effects, *spec.claimed_effects]
+        )
         self.last_diagnostics["effect_obligation_missing_initial"] = sorted(
             effect_type.value for effect_type in initial_missing
         )
@@ -525,7 +540,11 @@ class NarrationStrategy:
             prose,
             spec.action,
         )
-        missing_obligations = obligations.missing_from(obligation_candidates)
+        # Claimed effects are built by the handler from validated live state,
+        # not parsed from prose, so they need no prose-validity filter.
+        missing_obligations = obligations.missing_from(
+            [*obligation_candidates, *spec.claimed_effects]
+        )
         mutation_followup = bool(missing_obligations) or self._needs_mutation_followup(
             spec.action,
             prose,
@@ -572,7 +591,9 @@ class NarrationStrategy:
         self.last_diagnostics["effect_obligation_reasons"] = [
             item.reason for item in obligations.obligations
         ]
-        final_missing = obligations.missing_from(proposed_effects)
+        final_missing = obligations.missing_from(
+            [*proposed_effects, *spec.claimed_effects]
+        )
         if (
             final_missing
             and spec.enable_tools
@@ -587,7 +608,9 @@ class NarrationStrategy:
                 missing_effect_types=final_missing,
                 existing_effects=proposed_effects,
             )
-            final_missing = obligations.missing_from(proposed_effects)
+            final_missing = obligations.missing_from(
+                [*proposed_effects, *spec.claimed_effects]
+            )
         self.last_diagnostics["effect_obligation_missing_final"] = sorted(
             effect_type.value for effect_type in final_missing
         )
