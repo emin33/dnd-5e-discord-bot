@@ -5,9 +5,22 @@ It seeds a tiny valid scene, issues state-transition-heavy player actions,
 and checks the production turn log for executed/rejected effects and repair
 telemetry. Run this before paying for a long narrative soak.
 
+Two turn scripts share the harness:
+
+- ``baseline`` — the original 12-turn gauntlet (items, currency, NPC state,
+  scene objects, location, dead-NPC continuity).
+- ``player_state_sweep`` — the matrix tool-reliability track's explicit
+  mutation coverage: currency in both directions, item grant/remove with
+  npc source/destination mirrors, condition add/remove, and a spell-slot
+  expenditure, plus the scene families. Every executed ``update_player``
+  receipt is then reconciled against the character/inventory DB
+  (receipt-vs-state agreement): a receipt with no matching write, or a
+  write with no receipt, fails the run.
+
 Usage::
 
     python test_tool_reliability.py --profile deepseek_v4_flash_qwen9b
+    python test_tool_reliability.py --scenario player_state_sweep
 """
 
 from __future__ import annotations
@@ -94,6 +107,90 @@ EXPECTED_EFFECTS = {
     9: {"update_entity"},
     11: {"change_location"},
     12: {"add_npc"},
+}
+
+
+# The player-state sweep forces every update_player mutation family the
+# matrix's tool-reliability track names. Uncontested/no-roll phrasing keeps
+# each turn on the narrator-tool path rather than dice mechanics; the
+# poison/antidote/charm premises are grounded as established facts by
+# _seed_player_casting_state so the declarations are canon, not player fiat.
+STATE_SWEEP_ACTIONS = [
+    "I greet Mara Venn by name and ask what she has learned about the Ash Gate.",
+    "I pay Mara Venn exactly two gold pieces for her help, and she accepts them.",
+    (
+        "This is an uncontested item transfer with no roll: Mara Venn takes "
+        "the test draught from her coat and hands it to me; it is now in my "
+        "pack rather than her coat."
+    ),
+    (
+        "This is an established automatic effect with no roll: I drink the "
+        "test draught from my pack, and its mild venom takes hold — I now "
+        "have the poisoned condition."
+    ),
+    (
+        "This is an uncontested item transfer with no roll: Mara Venn takes "
+        "the silver antidote from her coat and hands it to me; it is now in "
+        "my pack rather than her coat."
+    ),
+    (
+        "This is an established automatic effect with no roll: I drink the "
+        "silver antidote from my pack, and it purges the venom — my poisoned "
+        "condition ends now."
+    ),
+    (
+        "Outside combat, deliberately and with no roll, I channel my prepared "
+        "ranger charm into my brass compass, expending one first-level spell "
+        "slot in the process."
+    ),
+    (
+        "Mara Venn insists on repaying part of my coin: she counts exactly "
+        "five silver pieces into my palm, and I accept them."
+    ),
+    (
+        "This is an uncontested item transfer with no roll: I hand my brass "
+        "compass to Mara Venn, she accepts it, and it is now in her coat "
+        "rather than my pack."
+    ),
+    (
+        "Mara Venn sets a newly revealed obsidian key on the table between "
+        "us; it is a distinct object I can pick up."
+    ),
+    (
+        "This is an established automatic trigger with no roll: I do not "
+        "touch or use the sealed reliquary. From across the room I say 'now,' "
+        "and its already-armed charge finishes the countdown and destroys "
+        "the reliquary completely."
+    ),
+    (
+        "I leave the Copper Finch and travel to the Ash Gate, arriving beneath "
+        "its cracked black arch."
+    ),
+    (
+        "At the Ash Gate I meet a new, physically present courier named Sable "
+        "Quill, introduce myself, and ask why she was waiting for me."
+    ),
+]
+
+STATE_SWEEP_EXPECTED = {
+    1: {"ref_entity"},
+    2: {"update_player"},              # currency out
+    3: {"update_player", "update_entity"},  # item grant, npc source mirror
+    4: {"update_player"},              # condition add
+    5: {"update_player", "update_entity"},  # item grant, npc source mirror
+    6: {"update_player"},              # condition remove
+    7: {"update_player"},              # spell slot expenditure
+    8: {"update_player"},              # currency in
+    9: {"update_player", "update_entity"},  # item remove, npc destination mirror
+    10: {"spawn_object"},
+    11: {"remove_entity"},
+    12: {"change_location"},
+    13: {"add_npc"},
+}
+
+SCENARIOS: dict[str, tuple[list[str], dict[int, set[str]]]] = {
+    "baseline": (TOOL_ACTIONS, EXPECTED_EFFECTS),
+    "player_state_sweep": (STATE_SWEEP_ACTIONS, STATE_SWEEP_EXPECTED),
 }
 
 
@@ -238,6 +335,237 @@ async def _seed_scene(session) -> tuple[str, str]:
     return mara_id, bram_id
 
 
+async def _seed_player_casting_state(session, mara_id: str) -> None:
+    """Extra fixture for the player-state sweep.
+
+    The level-1 ranger template has no spell slots, so the slot-expenditure
+    turn seeds two first-level slots through the production character repo.
+    The consumables Mara hands over exist in her narrative inventory, and
+    the poison/antidote/charm premises are established facts so the sweep's
+    uncontested-no-roll declarations are canon rather than player fiat.
+    """
+    from dnd_bot.data.repositories.character_repo import get_character_repo
+
+    character = session.character
+    character.spell_slots.level_1 = (2, 2)
+    char_repo = await get_character_repo()
+    await char_repo.update(character)
+
+    live = session.manager.get_session(session.channel_id)
+    world = live.world_state
+    mara = world.npcs[mara_id]
+    mara.inventory.extend(["test draught", "silver antidote"])
+    world.established_facts.extend([
+        (
+            "Mara Venn carries a stoppered test draught; drinking it is "
+            "uncontested, needs no roll, and reliably inflicts the poisoned "
+            "condition."
+        ),
+        (
+            "Mara Venn carries a silver antidote; drinking it is uncontested, "
+            "needs no roll, and completely ends the poisoned condition."
+        ),
+        (
+            "Kael knows a prepared ranger charm that, outside combat, can be "
+            "channeled deliberately into an object by expending one "
+            "first-level spell slot; channeling is uncontested and needs "
+            "no roll."
+        ),
+    ])
+
+
+_CURRENCY_FIELDS = ("copper", "silver", "electrum", "gold", "platinum")
+# Mirrors _execute_update_player's denomination mapping (effects.py).
+_DENOM_FIELDS = {
+    "cp": "copper", "sp": "silver", "ep": "electrum", "gp": "gold",
+    "pp": "platinum",
+}
+
+
+def _item_index(name: str) -> str:
+    """The inventory index _execute_update_player derives from an item name."""
+    return name.strip().lower().replace(" ", "-")
+
+
+async def _capture_player_state(character_id: str) -> dict:
+    """Authoritative player-state snapshot straight from the DB repos."""
+    from dnd_bot.data.repositories.character_repo import get_character_repo
+    from dnd_bot.data.repositories.inventory_repo import get_inventory_repo
+
+    char_repo = await get_character_repo()
+    inventory_repo = await get_inventory_repo()
+    character = await char_repo.get_by_id(character_id)
+    if character is None:
+        raise RuntimeError(f"player-state capture: character {character_id} missing")
+    currency = await inventory_repo.get_currency(character_id)
+    items = await inventory_repo.get_all_items(character_id)
+    inventory: dict[str, int] = {}
+    for item in items:
+        inventory[item.item_index] = inventory.get(item.item_index, 0) + item.quantity
+    return {
+        "currency": {
+            field: getattr(currency, field) for field in _CURRENCY_FIELDS
+        },
+        "inventory": inventory,
+        "conditions": sorted(c.condition.value for c in character.conditions),
+        "spell_slots": {
+            str(level): list(character.spell_slots.get_slots(level))
+            for level in range(1, 10)
+        },
+    }
+
+
+def _update_player_receipts(turn_rows: list[dict]) -> list[dict]:
+    """Executed update_player receipts ("applied" payloads) in turn order.
+
+    Idempotent duplicates are skipped: their write already happened under
+    the first receipt, so counting them again would double the ledger.
+    """
+    receipts: list[dict] = []
+    for row in turn_rows:
+        for effect in row.get("executed") or []:
+            effect_type = str(
+                effect.get("type") or effect.get("effect_type") or ""
+            )
+            if effect_type != "update_player" or effect.get("was_duplicate"):
+                continue
+            applied = (effect.get("details") or {}).get("applied") or {}
+            if applied:
+                receipts.append(dict(applied))
+    return receipts
+
+
+def evaluate_player_state_agreement(
+    initial: dict,
+    final: dict,
+    receipts: list[dict],
+) -> dict[str, dict]:
+    """Receipt-vs-state agreement: replay every update_player receipt over
+    the initial DB snapshot and require the result to equal the final DB
+    snapshot, per family. A receipt whose write never landed, or a write
+    that produced no receipt, both surface as a mismatch (matrix gate:
+    "receipt matches DB/WorldState"). Player numerics have no extractor
+    path by construction, so update_player receipts are the complete
+    write ledger for these fields outside combat.
+    """
+    currency_delta: Counter[str] = Counter()
+    item_delta: Counter[str] = Counter()
+    conditions = set(initial.get("conditions") or [])
+    slots_spent: Counter[int] = Counter()
+    families = Counter()
+
+    for applied in receipts:
+        delta = applied.get("currency_delta") or {}
+        if delta:
+            families["currency"] += 1
+            for key, value in delta.items():
+                field = _DENOM_FIELDS.get(str(key).strip().lower()[:2])
+                if field and isinstance(value, int):
+                    currency_delta[field] += value
+        for entry in applied.get("items_granted") or []:
+            families["items_granted"] += 1
+            item_delta[_item_index(str(entry.get("name") or ""))] += int(
+                entry.get("quantity") or 1
+            )
+        for entry in applied.get("items_removed") or []:
+            families["items_removed"] += 1
+            item_delta[_item_index(str(entry.get("name") or ""))] -= int(
+                entry.get("quantity") or 1
+            )
+        for value in applied.get("conditions_added") or []:
+            families["conditions_added"] += 1
+            conditions.add(str(value))
+        for value in applied.get("conditions_removed") or []:
+            families["conditions_removed"] += 1
+            conditions.discard(str(value))
+        slot = applied.get("spell_slot_used")
+        if isinstance(slot, int):
+            families["spell_slot_used"] += 1
+            slots_spent[slot] += 1
+
+    checks: dict[str, dict] = {}
+
+    currency_problems = []
+    for field in _CURRENCY_FIELDS:
+        expected = int((initial.get("currency") or {}).get(field, 0) or 0)
+        expected += currency_delta[field]
+        actual = int((final.get("currency") or {}).get(field, 0) or 0)
+        if expected != actual:
+            currency_problems.append(
+                f"{field}: initial+receipts={expected} != final={actual}"
+            )
+    checks["currency_receipts_match_state"] = {
+        "passed": not currency_problems,
+        "detail": "; ".join(currency_problems)
+        or f"delta={dict(currency_delta)} over {families['currency']} receipts",
+    }
+
+    item_problems = []
+    initial_items = dict(initial.get("inventory") or {})
+    final_items = dict(final.get("inventory") or {})
+    for index in sorted(
+        set(initial_items) | set(final_items) | set(item_delta)
+    ):
+        expected = initial_items.get(index, 0) + item_delta[index]
+        actual = final_items.get(index, 0)
+        if expected != actual:
+            item_problems.append(
+                f"{index}: initial+receipts={expected} != final={actual}"
+            )
+    checks["inventory_receipts_match_state"] = {
+        "passed": not item_problems,
+        "detail": "; ".join(item_problems)
+        or (
+            f"granted={families['items_granted']} "
+            f"removed={families['items_removed']} receipts reconciled"
+        ),
+    }
+
+    final_conditions = set(final.get("conditions") or [])
+    checks["condition_receipts_match_state"] = {
+        "passed": conditions == final_conditions,
+        "detail": (
+            f"replayed={sorted(conditions)} final={sorted(final_conditions)}"
+        ),
+    }
+
+    slot_problems = []
+    for level in range(1, 10):
+        initial_pair = list(
+            (initial.get("spell_slots") or {}).get(str(level)) or (0, 0)
+        )
+        final_pair = list(
+            (final.get("spell_slots") or {}).get(str(level)) or (0, 0)
+        )
+        expected_current = initial_pair[0] - slots_spent[level]
+        if [expected_current, initial_pair[1]] != final_pair:
+            slot_problems.append(
+                f"L{level}: initial={initial_pair} spent={slots_spent[level]} "
+                f"final={final_pair}"
+            )
+    checks["spell_slot_receipts_match_state"] = {
+        "passed": not slot_problems,
+        "detail": "; ".join(slot_problems)
+        or f"spent={dict(slots_spent)} reconciled",
+    }
+
+    required_families = (
+        "currency", "items_granted", "items_removed",
+        "conditions_added", "conditions_removed", "spell_slot_used",
+    )
+    missing_families = [
+        name for name in required_families if not families[name]
+    ]
+    checks["receipts_cover_all_player_state_families"] = {
+        "passed": not missing_families,
+        "detail": (
+            f"missing={missing_families}; counts={dict(families)}"
+            if missing_families else f"counts={dict(families)}"
+        ),
+    }
+    return checks
+
+
 def _cost_summary(events: list) -> dict:
     from test_long_horizon import _event_cost
 
@@ -252,8 +580,9 @@ def _cost_summary(events: list) -> dict:
     }
 
 
-async def run(profile: str) -> tuple[dict, bool]:
+async def run(profile: str, scenario: str = "baseline") -> tuple[dict, bool]:
     os.environ["ACTIVE_PROFILE"] = profile
+    actions, expected_effects = SCENARIOS[scenario]
 
     from dnd_bot.llm import usage_recorder
     from dnd_bot.llm.continuity import NarrativeGovernance
@@ -277,13 +606,18 @@ async def run(profile: str) -> tuple[dict, bool]:
 
     live = harness.manager.get_session(harness.channel_id)
     session_id = live.id
-    _, bram_id = await _seed_scene(harness)
+    mara_id, bram_id = await _seed_scene(harness)
+    initial_player_state: dict = {}
+    final_player_state: dict = {}
+    if scenario == "player_state_sweep":
+        await _seed_player_casting_state(harness, mara_id)
+        initial_player_state = await _capture_player_state(harness.character.id)
     responses: dict[int, str] = {}
     errors: list[dict] = []
     started = time.time()
 
     try:
-        for turn, action in enumerate(TOOL_ACTIONS, 1):
+        for turn, action in enumerate(actions, 1):
             response = await harness.send_action(action)
             if response is None:
                 errors.append({"turn": turn, "error": "no response"})
@@ -297,10 +631,19 @@ async def run(profile: str) -> tuple[dict, bool]:
             if live is not None and live.world_state is not None
             else {}
         )
+        if scenario == "player_state_sweep":
+            final_player_state = await _capture_player_state(
+                harness.character.id
+            )
         await harness.cleanup()
 
     elapsed = time.time() - started
     log = TurnLogReader.load(session_id)
+    turn_elapsed = {
+        entry.get("turn"): entry.get("elapsed")
+        for entry in harness.action_log
+        if isinstance(entry.get("elapsed"), (int, float))
+    }
     turn_rows = []
     type_counts: Counter[str] = Counter()
     proposed_total = executed_total = rejected_total = 0
@@ -317,7 +660,7 @@ async def run(profile: str) -> tuple[dict, bool]:
     )
     governance = NarrativeGovernance([dead_fact])
 
-    for turn in range(1, len(TOOL_ACTIONS) + 1):
+    for turn in range(1, len(actions) + 1):
         effects = log.effects_at(turn)
         proposed = list(effects.proposed or [])
         executed = list(effects.executed or effects.effects or [])
@@ -330,12 +673,13 @@ async def run(profile: str) -> tuple[dict, bool]:
         proposed_total += len(proposed)
         executed_total += len(executed)
         rejected_total += len(rejected)
-        expected = EXPECTED_EFFECTS.get(turn, set())
+        expected = expected_effects.get(turn, set())
         expected_ok = not expected or expected.issubset(executed_types)
-        if turn == 12:
-            # The state extractor can establish Sable before the effect leg.
-            # In that valid ordering, add_npc is deterministically rewritten
-            # to ref_entity so the two channels converge on one canonical NPC.
+        if expected == {"add_npc"}:
+            # The Sable Quill finale in both scripts. The state extractor can
+            # establish Sable before the effect leg; in that valid ordering,
+            # add_npc is deterministically rewritten to ref_entity so the two
+            # channels converge on one canonical NPC.
             sable_count = sum(
                 1
                 for npc in (world_snapshot.get("npcs") or {}).values()
@@ -364,7 +708,12 @@ async def run(profile: str) -> tuple[dict, bool]:
 
         turn_rows.append({
             "turn": turn,
-            "action": TOOL_ACTIONS[turn - 1],
+            "action": actions[turn - 1],
+            # Whole-turn wall clock from the harness action log — the
+            # multi-run threshold gate's per-turn p95 input.
+            "elapsed_seconds": (
+                round(turn_elapsed[turn], 3) if turn in turn_elapsed else None
+            ),
             "executed_types": sorted(executed_types),
             "proposed": proposed,
             "executed": executed,
@@ -377,7 +726,7 @@ async def run(profile: str) -> tuple[dict, bool]:
 
     accounting_balanced = proposed_total == executed_total + rejected_total
     reliability = executed_total / proposed_total if proposed_total else 0.0
-    expected_total = len(EXPECTED_EFFECTS)
+    expected_total = len(expected_effects)
     diagnostics = [row["narration_diagnostics"] for row in turn_rows]
     unmet_obligation_turns = [
         {
@@ -397,8 +746,16 @@ async def run(profile: str) -> tuple[dict, bool]:
         for row in turn_rows
         if row["narration_diagnostics"].get("resolved_outcome_failed_closed")
     ]
+    player_state_agreement: dict[str, dict] = {}
+    if scenario == "player_state_sweep":
+        player_state_agreement = evaluate_player_state_agreement(
+            initial_player_state,
+            final_player_state,
+            _update_player_receipts(turn_rows),
+        )
+
     gates = {
-        "all_turns_returned": len(responses) == len(TOOL_ACTIONS),
+        "all_turns_returned": len(responses) == len(actions),
         "effect_reliability_at_least_95pct": reliability >= 0.95,
         "effect_accounting_balanced": accounting_balanced,
         "at_least_six_effect_families": len(type_counts) >= 6,
@@ -416,11 +773,16 @@ async def run(profile: str) -> tuple[dict, bool]:
             world_snapshot.get("current_location", "")
         ).casefold(),
     }
+    gates.update({
+        name: bool(check.get("passed"))
+        for name, check in player_state_agreement.items()
+    })
 
     report = {
         "profile": profile,
+        "scenario": scenario,
         "session_id": session_id,
-        "turns": len(TOOL_ACTIONS),
+        "turns": len(actions),
         "elapsed_seconds": round(elapsed, 2),
         "usage": _cost_summary(usage_recorder.events()),
         "proposed_total": proposed_total,
@@ -461,6 +823,9 @@ async def run(profile: str) -> tuple[dict, bool]:
         "continuity_failures": continuity_failures,
         "dead_state_reintroductions": dead_state_reintroductions,
         "errors": errors,
+        "player_state_initial": initial_player_state,
+        "player_state_final": final_player_state,
+        "player_state_agreement": player_state_agreement,
         "gates": gates,
         "turn_rows": turn_rows,
     }
@@ -495,6 +860,8 @@ def _print_report(report: dict, passed: bool, artifact: Path) -> None:
         f"cost=${report['usage']['cost_usd']:.5f} "
         f"elapsed={report['elapsed_seconds']:.1f}s"
     )
+    for name, check in (report.get("player_state_agreement") or {}).items():
+        print(f"  agreement {name}: {check.get('detail')}")
     for name, ok in report["gates"].items():
         print(f"  {'PASS' if ok else 'FAIL'}  {name}")
     print(f"artifact: {artifact}")
@@ -507,13 +874,20 @@ async def main() -> int:
         default="deepseek_v4_flash_qwen9b",
         help="Profile from config/profiles.yaml",
     )
+    parser.add_argument(
+        "--scenario",
+        default="baseline",
+        choices=sorted(SCENARIOS),
+        help="Turn script to run (see module docstring)",
+    )
     args = parser.parse_args()
 
-    report, passed = await run(args.profile)
+    report, passed = await run(args.profile, scenario=args.scenario)
     out_dir = Path("data/tool_reliability")
     out_dir.mkdir(parents=True, exist_ok=True)
+    scenario_tag = "" if args.scenario == "baseline" else f"{args.scenario}_"
     artifact = out_dir / (
-        f"{time.strftime('%Y%m%d_%H%M%S')}_{args.profile}.json"
+        f"{time.strftime('%Y%m%d_%H%M%S')}_{scenario_tag}{args.profile}.json"
     )
     artifact.write_text(json.dumps(report, indent=2, default=str), encoding="utf-8")
     _print_report(report, passed, artifact)

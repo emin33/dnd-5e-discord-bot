@@ -273,6 +273,7 @@ class TestSession:
         self._storage_temp = None
         self._original_storage_paths: Optional[tuple[str, str]] = None
         self._cleaned_up = False
+        self._applied_world_setting: Optional[str] = None
 
     async def setup(self, campaign_id: Optional[str] = None, character_id: Optional[str] = None):
         """Initialize the test session with fresh test data."""
@@ -328,6 +329,9 @@ class TestSession:
             from dnd_bot.memory import get_memory_manager
             memory = await get_memory_manager(self.campaign_id)
             memory.set_world_setting(setting)
+        # Remembered so simulate_process_restart can re-apply the same
+        # transport shim after a crash-recovery wipes the memory tiers.
+        self._applied_world_setting = setting or None
 
         # Join player
         await self.manager.join_session(
@@ -678,6 +682,159 @@ class TestSession:
             campaign_id=self.campaign_id,
         )
         return report.to_dict()
+
+    async def capture_projection_state(self) -> Optional[dict]:
+        """Deterministic snapshot of the cross-store projections.
+
+        Complements :meth:`run_consistency_audit` (internal agreement) with
+        the identity-level facts a restart must reproduce byte-for-byte:
+        the world roster and fact ledgers, the graph node set, the vector
+        index membership, and the registry's canonical NPC joins. Two of
+        these captures — one before ``simulate_process_restart`` and one
+        after — feed the restart-convergence assertions.
+        """
+        if self.manager is None:
+            return None
+        game_session = self.manager.get_session(self.channel_id)
+        if game_session is None or game_session.world_state is None:
+            return None
+        from dnd_bot.game.scene import get_scene_registry
+        from dnd_bot.memory import get_vector_store
+
+        world = game_session.world_state
+        graph = getattr(game_session, "knowledge_graph", None)
+        graph_entities = list((getattr(graph, "_entities", {}) or {}).values())
+        described = sorted(
+            str(getattr(node, "node_id", "") or "")
+            for node in graph_entities
+            if (getattr(node, "properties", {}) or {}).get("description")
+        )
+        indexed: Optional[list[str]] = None
+        if self.campaign_id:
+            try:
+                indexed = sorted(
+                    get_vector_store().indexed_entity_ids(self.campaign_id, described)
+                )
+            except Exception:
+                indexed = None
+        registry = get_scene_registry(self.campaign_id, game_session.session_key)
+        try:
+            scene_npc_links = sorted({
+                str(entity.npc_id)
+                for entity in registry.get_all()
+                if getattr(entity, "npc_id", None)
+            })
+        except Exception:
+            scene_npc_links = []
+        audit = await self.run_consistency_audit()
+        return {
+            "session_id": game_session.id,
+            "session_key": game_session.session_key,
+            "world_turn": world.turn,
+            "current_location": world.current_location,
+            "roster": {
+                npc_id: npc.name for npc_id, npc in sorted(world.npcs.items())
+            },
+            # Diagnostic only, deliberately NOT convergence-asserted: dead
+            # rows sync to the npc DB at graceful end_session, so this map
+            # legitimately rebuilds from a different union after a crash.
+            "dead_roster": {
+                npc_id: npc.name
+                for npc_id, npc in sorted(
+                    (getattr(game_session, "campaign_dead_npcs", {}) or {}).items()
+                )
+            },
+            "established_facts": list(world.established_facts),
+            "superseded_facts": [
+                str(entry.get("fact") or "") for entry in world.superseded_facts
+            ],
+            "kg_node_ids": sorted(
+                str(getattr(node, "node_id", "") or "") for node in graph_entities
+            ),
+            "described_kg_ids": described,
+            "indexed_entity_ids": indexed,
+            "scene_npc_links": scene_npc_links,
+            "audit": audit,
+        }
+
+    async def simulate_process_restart(self) -> dict:
+        """Crash the in-process state and recover through production code.
+
+        The matrix's memory-graph track requires one mid-run process
+        restart with projection convergence afterwards. A subprocess-level
+        restart would lose the harness itself, so this tears down every
+        piece of state a real bot restart loses — the session registry,
+        scene registry, memory LRU (crash semantics: tiers persist only at
+        graceful end_session), the Chroma client, the orchestrator
+        singleton (scratchpad, idempotency keys), and the SQLite handle —
+        then rebuilds through ``GameSessionManager.recover_sessions``, the
+        same path ``bot/client.py`` runs at startup. The simulated player
+        and usage recorder are harness-side and deliberately survive: a
+        human player does not lose their memory when the bot restarts.
+
+        Returns a report dict; ``recovered`` is True only when the same
+        session id came back registered under the same key.
+        """
+        if not self.isolated_storage:
+            # recover_sessions ends every row it cannot rebuild; running it
+            # against a shared development database could retire real
+            # sessions from other campaigns.
+            raise RuntimeError(
+                "simulate_process_restart requires isolated_storage=True"
+            )
+        if self.manager is None:
+            return {"recovered": False, "error": "no session manager"}
+        live = self.manager.get_session(self.channel_id)
+        if live is None:
+            return {"recovered": False, "error": "no live session"}
+        prior_id = live.id
+        prior_key = live.session_key
+
+        from dnd_bot.game.scene import clear_scene_registry
+        from dnd_bot.llm.orchestrator import _reset_orchestrator
+        from dnd_bot.memory import discard_memory_manager, reset_vector_store
+
+        clear_scene_registry(prior_key)
+        self.manager._sessions.clear()
+        if self.campaign_id:
+            discard_memory_manager(self.campaign_id)
+        reset_vector_store()
+        _reset_orchestrator()
+        await close_database()
+
+        recovered_sessions = await self.manager.recover_sessions()
+        recovered = self.manager.get_session(self.channel_id)
+
+        # Re-apply setup()'s transport shim: the Discord campaign flow bakes
+        # the world setting into an opening scene this harness never
+        # generates, so without re-seeding, every post-restart narration
+        # would fall back to the generic fantasy world and measure the shim
+        # instead of the recovery.
+        if recovered is not None and self._applied_world_setting:
+            from dnd_bot.memory import get_memory_manager
+            memory = await get_memory_manager(self.campaign_id)
+            memory.set_world_setting(self._applied_world_setting)
+
+        report = {
+            "recovered": recovered is not None and recovered.id == prior_id,
+            "recovered_count": len(recovered_sessions),
+            "prior_session_id": prior_id,
+            "session_id": getattr(recovered, "id", None),
+            "session_key": getattr(recovered, "session_key", None),
+            "world_turn": getattr(
+                getattr(recovered, "world_state", None), "turn", None
+            ),
+            "players": len(getattr(recovered, "players", {}) or {}),
+        }
+        print_section(
+            "RESTART",
+            (
+                f"recovered={report['recovered']} sessions={report['recovered_count']} "
+                f"world_turn={report['world_turn']} players={report['players']}"
+            ),
+            Colors.YELLOW,
+        )
+        return report
 
     async def cleanup(self):
         """End session, print summary, and delete test data."""

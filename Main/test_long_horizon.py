@@ -1123,6 +1123,124 @@ def evaluate_tool_coverage(
     return results
 
 
+def evaluate_restart_convergence(checkpoint: dict) -> list[AssertionResult]:
+    """Deterministic restart-checkpoint gates (matrix memory-graph track).
+
+    ``checkpoint`` carries the harness's projection captures from
+    immediately before and after ``TestSession.simulate_process_restart``
+    plus the restart report itself. Convergence means the recovered
+    process re-derived the same authoritative state: identical roster and
+    fact ledgers (the per-turn snapshot round-trips), an identical graph
+    node set (KG writes are durable per-op), every roster NPC joined in
+    the rebuilt scene registry, every described graph entity present in
+    the rebuilt vector index, and a clean cross-store audit on both sides.
+    """
+    pre = checkpoint.get("pre") or {}
+    post = checkpoint.get("post") or {}
+    restart = checkpoint.get("restart") or {}
+    turn = checkpoint.get("turn")
+
+    recovery_ok = bool(
+        restart.get("recovered")
+        and restart.get("recovered_count") == 1
+        and pre
+        and post
+        and post.get("session_id") == pre.get("session_id")
+        and post.get("session_key") == pre.get("session_key")
+    )
+    results = [AssertionResult(
+        name="restart_recovery_succeeded",
+        passed=recovery_ok,
+        description=(
+            "The mid-run process restart recovered the same session from "
+            "its persisted snapshot via recover_sessions."
+        ),
+        detail=(
+            f"after turn {turn}; recovered={restart.get('recovered')}; "
+            f"recovered_count={restart.get('recovered_count')}; "
+            f"session={restart.get('session_id')}; "
+            f"error={restart.get('error') or checkpoint.get('error')}"
+        ),
+    )]
+
+    problems: list[str] = []
+    if not pre or not post:
+        problems.append("missing pre/post projection capture")
+    else:
+        for key in ("world_turn", "current_location"):
+            if pre.get(key) != post.get(key):
+                problems.append(f"{key}: {pre.get(key)!r} -> {post.get(key)!r}")
+
+        pre_roster = dict(pre.get("roster") or {})
+        post_roster = dict(post.get("roster") or {})
+        if pre_roster != post_roster:
+            lost = sorted(set(pre_roster) - set(post_roster))
+            gained = sorted(set(post_roster) - set(pre_roster))
+            renamed = sorted(
+                npc_id for npc_id in set(pre_roster) & set(post_roster)
+                if pre_roster[npc_id] != post_roster[npc_id]
+            )
+            problems.append(
+                f"roster: lost={lost[:4]} gained={gained[:4]} renamed={renamed[:4]}"
+            )
+
+        for ledger in ("established_facts", "superseded_facts"):
+            pre_facts = list(pre.get(ledger) or [])
+            post_facts = list(post.get(ledger) or [])
+            if pre_facts != post_facts:
+                problems.append(
+                    f"{ledger}: {len(pre_facts)} -> {len(post_facts)} "
+                    "(content or order drift)"
+                )
+
+        pre_nodes = set(pre.get("kg_node_ids") or [])
+        post_nodes = set(post.get("kg_node_ids") or [])
+        if pre_nodes != post_nodes:
+            problems.append(
+                f"kg_node_ids: lost={sorted(pre_nodes - post_nodes)[:4]} "
+                f"gained={sorted(post_nodes - pre_nodes)[:4]}"
+            )
+
+        unjoined = sorted(set(post_roster) - set(post.get("scene_npc_links") or []))
+        if unjoined:
+            problems.append(f"roster NPCs missing scene-registry join: {unjoined[:4]}")
+
+        described = set(post.get("described_kg_ids") or [])
+        indexed = post.get("indexed_entity_ids")
+        if indexed is None:
+            problems.append("vector index unreadable after restart")
+        else:
+            unindexed = sorted(described - set(indexed))
+            if unindexed:
+                problems.append(
+                    f"described KG entities unindexed after restart: {unindexed[:4]}"
+                )
+
+        for label, capture in (("pre", pre), ("post", post)):
+            audit = capture.get("audit") or {}
+            if not audit.get("passed"):
+                problems.append(
+                    f"{label}-restart consistency audit: "
+                    f"violations={list(audit.get('violations') or [])[:3]}"
+                )
+
+    results.append(AssertionResult(
+        name="restart_projection_convergence",
+        passed=recovery_ok and not problems,
+        description=(
+            "WorldState, knowledge graph, ChromaDB, and scene registry "
+            "re-agree after the mid-run process restart."
+        ),
+        detail="; ".join(problems[:6]) if problems else (
+            f"converged after turn {turn}: roster={len(post.get('roster') or {})}, "
+            f"kg_nodes={len(post.get('kg_node_ids') or [])}, "
+            f"indexed={len(post.get('indexed_entity_ids') or [])}, "
+            f"facts={len(post.get('established_facts') or [])}"
+        ),
+    ))
+    return results
+
+
 _NPC_POSSESSIVE_CUE_RE = re.compile(
     r"\b([A-Z][A-Za-z'-]*(?:\s+[A-Z][A-Za-z'-]*){0,2})['’]s\s+"
     r"(?:eyes?|gaze|voice|face|hands?|brow|jaw|shoulders?|expression|"
@@ -2183,6 +2301,7 @@ async def run_long_horizon(
     profile: Optional[str] = None,
     turn_override: Optional[int] = None,
     combat_policy: str = "simulate_victory",
+    restart_at_turn: Optional[int] = None,
 ) -> dict:
     """Run the scenario end-to-end. Returns a result dict with session_id,
     seed, turn records, assertion results, verdict, and artifact paths."""
@@ -2209,7 +2328,10 @@ async def run_long_horizon(
     n_turns = turn_override or scenario.total_turns
     print(f"  Turns       : {n_turns}")
     print(f"  Combat      : {combat_policy}")
-    print(f"  Seed pick   : after turn {scenario.seed_pick_after_turn}\n")
+    print(f"  Seed pick   : after turn {scenario.seed_pick_after_turn}")
+    if restart_at_turn is not None:
+        print(f"  Restart     : process restart after turn {restart_at_turn}")
+    print()
 
     profile_label = _resolve_profile_label(profile)
     stem = f"{time.strftime('%Y%m%d_%H%M%S')}_{profile_label}"
@@ -2250,6 +2372,7 @@ async def run_long_horizon(
     turn_records: list[dict] = []
     manifest_written = False
     artifact_errors: list[str] = []
+    restart_checkpoint: Optional[dict] = None
 
     def _write_manifest(finalized: dict | None = None) -> bool:
         """(Re)write the manifest. Called at seed-pick and in finally."""
@@ -2274,6 +2397,7 @@ async def run_long_horizon(
             "creativity_gate": scenario.creativity_gate,
             "tool_coverage_gate": scenario.tool_coverage_gate,
             "opening_situation": scenario.opening_situation,
+            "restart_at_turn": restart_at_turn,
             "jsonl": str(jsonl_path),
         }
         if finalized:
@@ -2300,6 +2424,34 @@ async def run_long_horizon(
 
     try:
         for turn in range(1, n_turns + 1):
+            # Process-restart checkpoint (matrix memory-graph track): after
+            # turn N fully committed — the production pipeline persisted its
+            # snapshot at Step "persist the live world" — crash the process
+            # state and recover before turn N+1. Runs before the seed pick so
+            # a post-boundary pick reads the RECOVERED graph. Convergence is
+            # asserted from the pre/post captures in the finally block; a
+            # recovery failure aborts the run (every later turn would fail
+            # against a missing session anyway).
+            if (
+                restart_at_turn is not None
+                and restart_checkpoint is None
+                and turn == restart_at_turn + 1
+            ):
+                print(
+                    f"\n{C.YELLOW}{C.BOLD}  >>> PROCESS RESTART CHECKPOINT "
+                    f"(after turn {restart_at_turn}) <<<{C.RESET}"
+                )
+                restart_checkpoint = {"turn": restart_at_turn}
+                restart_checkpoint["pre"] = await session.capture_projection_state()
+                restart_checkpoint["restart"] = await session.simulate_process_restart()
+                restart_checkpoint["post"] = await session.capture_projection_state()
+                ws_session = session.manager.get_session(session.channel_id)
+                if not restart_checkpoint["restart"].get("recovered"):
+                    raise RuntimeError(
+                        "process restart failed to recover the session: "
+                        f"{restart_checkpoint['restart']}"
+                    )
+
             # Pick the seed AFTER the explore phase but before the next action.
             # A narrator can legally spend the whole explore act on an
             # object-focused, anonymous-cast story (observed 4x consecutively
@@ -2541,6 +2693,10 @@ async def run_long_horizon(
                             + f"; counts={consistency_report.get('counts')}"
                         ),
                     ))
+                if restart_at_turn is not None:
+                    results.extend(evaluate_restart_convergence(
+                        restart_checkpoint or {"turn": restart_at_turn}
+                    ))
                 render_results(scenario, seed, results, verdict_trusted)
             except Exception as e:
                 print(f"  {C.YELLOW}assertion_error: {e}{C.RESET}")
@@ -2582,6 +2738,7 @@ async def run_long_horizon(
             "assertions_passed": passed,
             "assertions_total": total,
             "consistency_audit": consistency_report,
+            "restart_checkpoint": restart_checkpoint,
             "report": report,
         })
         if not final_manifest_ok:
@@ -2606,6 +2763,7 @@ async def run_long_horizon(
         "continuity_interventions": session.continuity_interventions,
         "artifact_errors": artifact_errors,
         "assertions": [r.__dict__ for r in results],
+        "restart_checkpoint": restart_checkpoint,
         "manifest": str(manifest_path),
         "jsonl": str(jsonl_path),
         "report": report,
@@ -3206,6 +3364,16 @@ async def main():
             "a simulated player victory (default), or fail the run"
         ),
     )
+    parser.add_argument(
+        "--restart-at-turn",
+        dest="restart_at_turn",
+        type=int,
+        metavar="N",
+        help=(
+            "Simulate a bot process crash+recovery after turn N (matrix "
+            "memory-graph track); projection convergence is asserted"
+        ),
+    )
     parser.add_argument("--assert-only", dest="assert_only", metavar="MANIFEST",
                         help="Reload a manifest and re-run assertions only (no new session)")
     args = parser.parse_args()
@@ -3226,12 +3394,23 @@ async def main():
                   f"Use --turns >= {min_turns}.{C.RESET}")
             sys.exit(2)
 
+    if args.restart_at_turn is not None:
+        total_turns = args.turns or scenario.total_turns
+        # The checkpoint fires between turns N and N+1: it needs at least one
+        # committed snapshot behind it and at least one turn ahead to prove
+        # the recovered session still plays.
+        if not 1 <= args.restart_at_turn < total_turns:
+            print(f"{C.RED}--restart-at-turn {args.restart_at_turn} must be "
+                  f">= 1 and < the run's total turns ({total_turns}).{C.RESET}")
+            sys.exit(2)
+
     result = await run_long_horizon(
         scenario=scenario,
         use_gemini=not args.scripted,
         profile=args.profile,
         turn_override=args.turns,
         combat_policy=args.combat_policy,
+        restart_at_turn=args.restart_at_turn,
     )
 
     if not result.get("session_id"):
