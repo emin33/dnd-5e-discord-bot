@@ -166,9 +166,18 @@ product experience and how well authored canon evolves under play.
   last on-loop vector site (session-start re-sync) now runs in a worker
   thread behind a content-hash skip-unchanged gate;
 - establish a multi-run pass-rate threshold, cost budget, and p95 latency gate.
-- migrate the Flash-Lite player driver from the end-of-support
-  `google.generativeai` SDK to `google.genai` before it becomes a long-term CI
-  dependency.
+- ~~migrate the Flash-Lite player driver from the end-of-support
+  `google.generativeai` SDK to `google.genai`~~ DONE — the code migration
+  landed 2026-07-22 (5caa79a: GeminiClient on `google.genai`, and the
+  player driver rides GeminiClient); verified 2026-07-24 that zero
+  `google.generativeai` imports remain, then removed the residue: the
+  stale editable-install metadata that kept pulling the old SDK into the
+  venv, the old package chain itself (google-generativeai,
+  google-ai-generativelanguage, google-api-python-client,
+  google-auth-httplib2, google-api-core + four orphans), and the
+  pre-migration `requirements.lock`, regenerated per its own documented
+  process (now pins `google-genai==2.14.0`; mypy + genai import + 1266
+  green verified against the cleaned venv).
 
 ## 2026-07-22 session: first 80-turn soak + tool-omission repair
 
