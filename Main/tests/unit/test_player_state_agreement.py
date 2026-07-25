@@ -8,7 +8,6 @@ claims), and a write that produced no receipt.
 """
 
 from test_tool_reliability import (
-    _triage_consumption_receipts,
     _update_player_receipts,
     evaluate_player_state_agreement,
 )
@@ -138,34 +137,11 @@ def test_family_coverage_names_missing_families():
     assert "items_removed" in coverage["detail"]
 
 
-def test_triage_consumption_folds_into_the_replay_ledger():
-    # Step 5's deterministic consumption (triage currency_spent /
-    # resources_consumed) is the second sanctioned recorded writer; its
-    # entries reconcile like update_player receipts.
-    turn_rows = [
-        {"turn": 1, "triage_currency_spent": {"gold": 2, "bogus": 3},
-         "triage_resources_consumed": [
-             {"item": "Arrow", "quantity": 2},
-             {"not_item": True},
-             {"item": "  "},
-         ]},
-        {"turn": 2, "triage_currency_spent": {}, "triage_resources_consumed": []},
-    ]
-    assert _triage_consumption_receipts(turn_rows) == [
-        {"currency_delta": {"gp": -2}},
-        {"items_removed": [{"name": "Arrow", "quantity": 2}]},
-    ]
-
-    initial = _initial()
-    initial["inventory"] = {"arrow": 20}
-    final = _initial()
-    final["currency"] = dict(final["currency"], gold=8)
-    final["inventory"] = {"arrow": 18}
-    checks = evaluate_player_state_agreement(
-        initial, final, _triage_consumption_receipts(turn_rows)
-    )
-    assert checks["currency_receipts_match_state"]["passed"]
-    assert checks["inventory_receipts_match_state"]["passed"]
+# _triage_consumption_receipts is gone: Step 5's deterministic consumption
+# now executes through the effect pipeline and emits real update_player
+# receipts (pinned product-side in test_player_state_single_writer.py), so
+# the replay ledger is _update_player_receipts alone — no reconstruction
+# that could drift from what Step 5 actually skipped, deduped, or wrote.
 
 
 def test_receipt_collection_skips_duplicates_and_other_families():

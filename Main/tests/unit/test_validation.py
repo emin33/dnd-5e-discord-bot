@@ -251,6 +251,27 @@ class TestInventoryValidation:
         failures = validate_item_exists(sample_inventory, "potion")
         assert failures == []
 
+    def test_fuller_name_than_the_row_still_matches(self, sample_inventory):
+        """A brain naming the item MORE fully than the row must not block.
+
+        Live run 20260725_002559 T6: triage said "Healing Potion Vial" for a
+        row reading "Potion of Healing"; one-directional substring matching
+        hard-failed the turn, so it produced no narration and no state change
+        at all.
+        """
+        failures = validate_item_exists(sample_inventory, "Healing Potion Vial")
+        assert failures == []
+
+    def test_word_order_does_not_matter(self, sample_inventory):
+        failures = validate_item_exists(sample_inventory, "Healing Potion")
+        assert failures == []
+
+    def test_unrelated_item_still_hard_fails(self, sample_inventory):
+        """Permissive matching must not degrade into matching anything."""
+        failures = validate_item_exists(sample_inventory, "Obsidian Key")
+        assert len(failures) == 1
+        assert failures[0].code == "ITEM_NOT_FOUND"
+
     def test_case_insensitive_matching(self, sample_inventory):
         failures = validate_item_exists(sample_inventory, "LONGSWORD")
         assert failures == []

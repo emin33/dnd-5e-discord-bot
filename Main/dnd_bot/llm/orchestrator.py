@@ -57,9 +57,9 @@ from ..game.world_store import WorldStateStore
 from ..game.mechanics.dice import get_roller, DiceRoll
 from ..game.mechanics.validation import validate_action, ValidationResult
 from ..game.scene.registry import SceneEntityRegistry
-from ..data.repositories import get_character_repo, get_transaction_repo, generate_transaction_key
+from ..data.repositories import get_character_repo
 from ..data.repositories.inventory_repo import get_inventory_repo
-from ..models import Character, CharacterCondition, Condition, InventoryItem
+from ..models import Character
 from ..models.npc import SceneEntity, EntityType, Disposition
 
 if TYPE_CHECKING:
@@ -142,6 +142,170 @@ def _effect_telemetry_record(effect) -> dict:
     if item:
         record["item"] = item
     return record
+
+
+# Words that never name a concrete item on their own. The live player-state
+# sweep (run 20260724_231350) caught the old "item" fallback substring-matching
+# a junk 'unknown item' row and transferring THAT instead of the named compass.
+_NON_ITEM_TOKENS = frozenset({
+    "it", "them", "this", "that", "these", "those", "item", "items",
+    "one", "ones", "thing", "things", "something", "object", "objects",
+})
+
+_ITEM_STOPWORDS = frozenset({
+    "a", "an", "the", "of", "my", "your", "her", "his", "their", "its",
+    "from", "for", "some", "own",
+})
+
+
+def _item_content_tokens(text: str) -> set[str]:
+    """Lowercased tokens of an item phrase, minus articles/possessives.
+
+    Trailing plurals fold to singular so "2 daggers" and "Dagger" compare
+    equal; both sides of every comparison go through here, so the folding
+    stays consistent.
+    """
+    tokens = set()
+    for token in re.findall(r"[a-z0-9']+", (text or "").casefold()):
+        if token in _ITEM_STOPWORDS:
+            continue
+        if len(token) > 3 and token.endswith("s") and not token.endswith("ss"):
+            token = token[:-1]
+        tokens.add(token)
+    return tokens
+
+
+def _is_generic_item_phrase(item_name: Optional[str]) -> bool:
+    """True when the phrase cannot name a specific item ("it", "item", "")."""
+    tokens = _item_content_tokens(item_name or "")
+    return not tokens or tokens <= _NON_ITEM_TOKENS
+
+
+def _srd_goods_match(item_name: str) -> bool:
+    """True when the SRD equipment/magic-item catalog plausibly sells this.
+
+    Exact index first, then equality of content-token SETS, so word order
+    and articles don't matter ("Healing Potion" finds "Potion of Healing")
+    while a partial phrase stays out. Subset matching was too loose in
+    exactly the direction that hurts: a bare "silver" on a receive-money
+    turn would have matched "Silver Dragon Scale Mail" and sold it.
+
+    Anything unmatched is not goods, so the deterministic commerce path
+    stays out of the turn — the narrator's receipted update_player owns
+    whatever actually changes hands. A false negative costs nothing; a
+    false positive charges the player for something they never bought.
+    """
+    try:
+        from ..data.srd import get_srd
+        srd = get_srd()
+    except Exception:
+        return False  # catalog unavailable → nothing verifiable to sell
+
+    slug = "-".join(re.findall(r"[a-z0-9]+", item_name.casefold()))
+    if slug and (srd.get_equipment(slug) or srd.get_magic_item(slug)):
+        return True
+
+    tokens = _item_content_tokens(item_name)
+    if not tokens:
+        return False
+    for category in ("equipment", "magic_items"):
+        for entry in srd.get_all(category).values():
+            if tokens == _item_content_tokens(str(entry.get("name") or "")):
+                return True
+    return False
+
+
+def _resolve_transfer_item(
+    action_lower: str,
+    candidate_names: list[str],
+    item_name: Optional[str],
+) -> Optional[str]:
+    """Resolve which held item a transfer names, from real holdings only.
+
+    Names that literally appear in the action text win (longest first, so
+    "long sword" beats "sword"); a non-generic triage/pattern name may then
+    substring-match a holding. Generic phrases never match anything — the
+    old fallback matched 'unknown item' on the literal "item" and moved the
+    wrong row (run 20260724_231350 T9).
+    """
+    named_in_text = [
+        name for name in candidate_names
+        if name and name.casefold() in action_lower
+    ]
+    if named_in_text:
+        return max(named_in_text, key=len)
+    if item_name and not _is_generic_item_phrase(item_name):
+        item_lower = item_name.casefold()
+        matching = [
+            name for name in candidate_names
+            if name and item_lower in name.casefold()
+        ]
+        if matching:
+            return matching[0]
+    return None
+
+
+# update_player mutation families, as (field, empty value) pairs. A
+# deterministic handler that claims a family owns it for the whole turn.
+_UPDATE_PLAYER_FIELDS = (
+    ("player_currency_delta", {}),
+    ("player_item_grant", []),
+    ("player_item_remove", []),
+    ("player_hp_delta", None),
+    ("player_add_conditions", []),
+    ("player_remove_conditions", []),
+    ("player_spell_slot_used", None),
+)
+
+
+def _scrub_claimed_mutations(
+    narrator_effects: list,
+    authoritative_effects: list,
+) -> list:
+    """Drop narrator mutations a deterministic handler already claims.
+
+    Dedup is per claimed field (update_player) or per targeted entity
+    (update_entity) rather than per effect type, so one narrated event still
+    has exactly one writer while an unrelated mutation on the same turn — a
+    narrator HP change during a purchase, an update_entity for a bystander —
+    survives. A narrator effect left with nothing to change is dropped
+    entirely: update_player validation rejects no-op calls.
+    """
+    claimed_player_fields = {
+        field
+        for effect in authoritative_effects
+        if effect.effect_type == EffectType.UPDATE_PLAYER
+        for field, empty in _UPDATE_PLAYER_FIELDS
+        if getattr(effect, field, empty) not in (empty, None)
+    }
+    claimed_entity_ids = {
+        (effect.update_entity_id or "").strip()
+        for effect in authoritative_effects
+        if effect.effect_type == EffectType.UPDATE_ENTITY
+    }
+
+    kept: list = []
+    for effect in narrator_effects:
+        if effect.effect_type == EffectType.UPDATE_ENTITY:
+            if (effect.update_entity_id or "").strip() in claimed_entity_ids:
+                continue
+            kept.append(effect)
+            continue
+        if effect.effect_type != EffectType.UPDATE_PLAYER or not claimed_player_fields:
+            kept.append(effect)
+            continue
+        remaining = effect.model_copy(deep=True)
+        mutates = False
+        for field, empty in _UPDATE_PLAYER_FIELDS:
+            if field in claimed_player_fields:
+                # Fresh container per effect — never alias the module-level
+                # empty value into a live ProposedEffect.
+                setattr(remaining, field, type(empty)() if empty is not None else None)
+            elif getattr(remaining, field, empty) not in (empty, None):
+                mutates = True
+        if mutates:
+            kept.append(remaining)
+    return kept
 
 
 def _reanchor_returning_npc_ids(
@@ -851,7 +1015,7 @@ Discriminative cases people get wrong:
 - **cast_spell** — casting any spell, including attack cantrips. If the action names a spell, this overrides attack.
 - **skill_check** — any action with uncertain outcome requiring ability/skill check (including difficult attacks against objects).
 - **saving_throw** — forced saves (resisting effects).
-- **purchase** — buying items.
+- **purchase** — buying GOODS: the player pays AND receives a tangible item. Paying for help, information, services, or settling a debt is social (record the money in currency_spent). A player RECEIVING money is NEVER a purchase.
 - **sell** — selling items.
 - **inventory** — managing items (equip, drop, use).
 - **movement** — tactical positioning.
@@ -868,6 +1032,9 @@ Boundary discrimination:
 - "I smash the locked chest" → skill_check (STR, DC by material).
 - "I greet the innkeeper warmly" → social. No persuasion needed.
 - "I convince the guard to let us pass" → skill_check (Persuasion).
+- "I buy a dagger from the smith" → purchase (goods received for money).
+- "I pay the guide two gold for her help" → social, currency_spent {"gold": 2}. Money for a service — no goods, not a purchase.
+- "The merchant counts five silver into my palm" → social. The player RECEIVES money: not a purchase, and never currency_spent.
 
 ## FOR ATTACK ACTIONS (creature targets only)
 
@@ -907,12 +1074,12 @@ Note any resources consumed by the action:
 
 ## CURRENCY SPENDING
 
-Always include `currency_spent` when the player spends, loses, or gives away money — regardless of action_type. Use the denomination the player specifies (copper, silver, electrum, gold, platinum). For amounts like "half" or "all," compute from the character's current Currency in the context.
+Always include `currency_spent` when the player spends, loses, or gives away money — regardless of action_type. Use the denomination the player specifies (copper, silver, electrum, gold, platinum). For amounts like "half" or "all," compute from the character's current Currency in the context. NEVER set currency_spent for money the player RECEIVES — that is a gain, not spending.
 
 ## FOR PURCHASES
 
 When action_type is "purchase", also provide:
-- item_name: What they're trying to buy
+- item_name: The tangible item being bought (a real object the player will carry — never a service, favor, or piece of information)
 - item_cost: Estimated cost in gold (use SRD prices if known)
 - quantity: How many
 
@@ -1242,6 +1409,9 @@ class DMOrchestrator:
         self._last_executed_effects: list[ProposedEffect] = []  # For KG bridging
         self._last_effect_executions: list[dict] = []
         self._last_effect_rejections: list[dict] = []
+        # Step 5's receipted writes (deterministic consumption) — counted as
+        # proposed too, so the turn's effect accounting stays balanced.
+        self._last_deterministic_proposed: list[dict] = []
 
         # DM Scratchpad: session-scoped state for narrator continuity.
         # Inspired by coordinator scratchpad pattern from agentic orchestration.
@@ -1498,6 +1668,7 @@ class DMOrchestrator:
         self._last_executed_effects = []
         self._last_effect_executions = []
         self._last_effect_rejections = []
+        self._last_deterministic_proposed = []
 
         # ── Turn Logger: start recording ──
         session_id = context.session_id or context.campaign_id or "unknown"
@@ -1541,6 +1712,8 @@ class DMOrchestrator:
             skill=triage.skill or "",
             dc=triage.dc or 0,
             parse_warnings=getattr(triage, "_parse_warnings", None),
+            currency_spent=triage.currency_spent,
+            resources_consumed=triage.resources_consumed,
         )
 
         logger.info(
@@ -1722,10 +1895,15 @@ class DMOrchestrator:
                 items=pgi_items,
                 currency=pgi_currency,
                 resources_consumed=triage.resources_consumed or None,
+                # Acquisitions can't require prior possession: transfers FROM
+                # an NPC and pickups both grant via authoritative effects that
+                # execute after this gate, so the row legitimately doesn't
+                # exist yet.
                 item_name=(
                     None
                     if mechanical_result
-                    and mechanical_result.get("operation") == "transfer_from_npc"
+                    and mechanical_result.get("operation")
+                    in ("transfer_from_npc", "pickup")
                     else triage.item_name
                 ),
                 cost_gold=float(triage.item_cost) if triage.item_cost else 0,
@@ -1910,19 +2088,17 @@ class DMOrchestrator:
 
         # Some mechanical handlers own deterministic state transitions that
         # narration must dramatize but must not be trusted to reconstruct.
-        # Keep narrator references/scene additions, replace overlapping
-        # mutation families with the authoritative mechanical effects.
+        # Keep narrator references/scene additions, and dedupe by claimed
+        # field/entity so the authoritative write is the only writer for what
+        # it claims — without discarding an unrelated narrator mutation that
+        # happens to share an effect type on the same turn.
         authoritative_effects = list(
             (mechanical_result or {}).get("authoritative_effects") or []
         )
         if authoritative_effects:
-            authoritative_types = {
-                effect.effect_type for effect in authoritative_effects
-            }
-            proposed_effects = [
-                effect for effect in proposed_effects
-                if effect.effect_type not in authoritative_types
-            ] + authoritative_effects
+            proposed_effects = _scrub_claimed_mutations(
+                proposed_effects, authoritative_effects
+            ) + authoritative_effects
         # Cache the prose for the dedup judge in _process_proposed_effects.
         # The judge reads this to decide whether an add_npc looks like an
         # entity already in the registry.
@@ -2305,8 +2481,11 @@ class DMOrchestrator:
 
         # Step 5: Consume resources/currency AFTER outcome is determined.
         # This ensures we don't deduct ammunition on a cancelled action or
-        # currency on a failed narration. Purchase gold is validated separately
-        # in _handle_purchase before reaching here.
+        # currency on a failed narration. Both consumers dedupe against the
+        # turn's executed update_player receipts (a purchase's authoritative
+        # currency claim included) and route residual writes through the
+        # effect pipeline, so every player-state write this turn is receipted
+        # exactly once.
         if triage.resources_consumed:
             await self._consume_resources(triage.resources_consumed, player_name)
         if triage.currency_spent:
@@ -2320,9 +2499,13 @@ class DMOrchestrator:
         _turn_record.record_world_state(ws_before, ws_after)
         _turn_record.set("combat_triggered", combat_triggered)
         _turn_record.set("effects_count", len(self._last_effect_executions))
-        _turn_record.set("effects_proposed_count", len(proposed_effects))
+        _turn_record.set(
+            "effects_proposed_count",
+            len(proposed_effects) + len(self._last_deterministic_proposed),
+        )
         _turn_record.record_effects(
-            proposed=[_effect_telemetry_record(effect) for effect in proposed_effects],
+            proposed=[_effect_telemetry_record(effect) for effect in proposed_effects]
+            + list(self._last_deterministic_proposed),
             executed=list(self._last_effect_executions),
             rejected=list(self._last_effect_rejections),
         )
@@ -2680,20 +2863,57 @@ class DMOrchestrator:
     # ACTION HANDLERS - Execute mechanics based on action_type
     # =========================================================================
 
+    def _is_known_goods(self, item_name: str) -> bool:
+        """Goods the deterministic commerce path may transact: SRD catalog
+        matches, or objects already registered in the scene."""
+        if _srd_goods_match(item_name):
+            return True
+        if self._scene_registry:
+            entity = self._scene_registry.get_by_name(item_name)
+            if entity is not None and entity.entity_type == EntityType.OBJECT:
+                return True
+        return False
+
     async def _handle_purchase(
         self,
         triage: TriageResult,
         player_name: str,
         context: BrainContext,
-    ) -> dict:
-        """
-        Handle purchase action - validate and execute through Rules Brain tools.
+    ) -> Optional[dict]:
+        """Handle a purchase — validate goods/funds, then claim the turn's
+        player-state write via authoritative effects.
 
-        Returns mechanical result dict with success/failure info.
+        One narrated event, one writer: the returned authoritative_effects
+        execute through the effect pipeline (receipted update_player) and
+        REPLACE the narrator's own update_player for the turn. The old shape
+        charged gold directly (no receipt) while the narrator's currency_delta
+        also executed — the player paid twice for one narrated payment (live
+        run 20260724_231350 T2) — and mistriaged social payments minted
+        service phrases and the literal "unknown item" fallback as inventory
+        rows (T2/T8).
+
+        Returns None when there is nothing deterministic to transact (no
+        concrete goods named): the turn falls through to the plain narrator
+        path, whose receipted update_player owns any currency/item movement.
         """
-        item_name = triage.item_name or "unknown item"
+        item_name = (triage.item_name or "").strip()
+        if _is_generic_item_phrase(item_name):
+            logger.info(
+                "purchase_deferred_no_item",
+                player=player_name,
+                item_name=item_name,
+            )
+            return None
+        if not self._is_known_goods(item_name):
+            logger.info(
+                "purchase_deferred_not_goods",
+                player=player_name,
+                item_name=item_name,
+            )
+            return None
+
         item_cost = triage.item_cost or 0
-        quantity = triage.quantity or 1
+        quantity = max(1, triage.quantity or 1)
 
         # Resolve character
         resolved = self._resolve_character_by_name(player_name)
@@ -2708,36 +2928,51 @@ class DMOrchestrator:
 
         _, character = resolved
 
-        # Execute the purchase through the commerce executor, passing the
-        # Character resolved above — the executor used to re-resolve a
-        # UUID as a NAME and refuse every purchase (Step-1 deferred defect).
-        result = await self._execute_purchase_item(character, {
-            "item_index": item_name.lower().replace(" ", "-"),
-            "item_name": item_name,
-            "cost_gold": item_cost,
-            "quantity": quantity,
-        })
-
-        # Determine narrative hint based on result
-        if result.get("purchased", False):
-            narrative_hint = (
-                f"{player_name} successfully purchases {quantity}x {item_name} for {item_cost}gp. "
-                f"They have {result.get('gold_after', 0)}gp remaining."
+        # Funds check is read-only; the write happens once, in the effect
+        # pipeline. Gold-field only: the update_player currency executor
+        # applies {gp: -N} without breaking larger coins, so a mixed-coin
+        # balance must fail closed here rather than under-charge later.
+        total_cost = item_cost * quantity
+        inventory_repo = await get_inventory_repo()
+        currency = await inventory_repo.get_currency(character.id)
+        if currency.gold < total_cost:
+            error = (
+                f"Not enough gold. Have {currency.gold}gp, need {total_cost}gp"
             )
-        else:
-            error = result.get("error", "Unknown error")
-            narrative_hint = f"{player_name} cannot complete the purchase: {error}"
+            return {
+                "action_type": "purchase",
+                "success": False,
+                "item": item_name,
+                "quantity": quantity,
+                "cost": item_cost,
+                "gold_after": currency.gold,
+                "error": error,
+                "narrative_hint": (
+                    f"{player_name} cannot complete the purchase: {error}"
+                ),
+            }
 
+        gold_after = currency.gold - total_cost
+        effect = ProposedEffect(
+            effect_type=EffectType.UPDATE_PLAYER,
+            player_currency_delta=(
+                {"gp": -total_cost} if total_cost else {}
+            ),
+            player_item_grant=[{"name": item_name, "quantity": quantity}],
+        )
         return {
             "action_type": "purchase",
-            "success": result.get("purchased", False),
+            "success": True,
             "item": item_name,
             "quantity": quantity,
             "cost": item_cost,
-            "gold_after": result.get("gold_after"),
-            "error": result.get("error"),
-            "narrative_hint": narrative_hint,
-            "tool_calls": [{"name": "purchase_item", "result": result}],
+            "gold_after": gold_after,
+            "error": None,
+            "narrative_hint": (
+                f"{player_name} successfully purchases {quantity}x {item_name} "
+                f"for {total_cost}gp. They have {gold_after}gp remaining."
+            ),
+            "authoritative_effects": [effect],
         }
 
     async def _handle_sell(
@@ -2768,11 +3003,17 @@ class DMOrchestrator:
         player_name: str,
         context: BrainContext,
         action: str,
-    ) -> dict:
+    ) -> Optional[dict]:
         """
         Handle inventory actions - pick up, drop, use, equip items.
 
         Parses the action to determine what kind of inventory operation.
+        Mutations go through authoritative effects (receipted update_player,
+        replacing the narrator's own) — never direct repo writes. Returns
+        None to defer the whole turn to the narrator when there is nothing
+        deterministic to do (consumption/interaction, or no resolvable item):
+        the narrator's receipted tools own the state change, and Step 5's
+        consumption net covers a forgotten removal.
         """
         action_lower = action.lower()
 
@@ -2833,6 +3074,7 @@ class DMOrchestrator:
         if not item_name:
             # Try to extract from common patterns like "pick up the feather"
             patterns = [
+                r"(?:hands?|gives?|passes?|offers?|returns?)\s+(?:my\s+|the\s+|her\s+|his\s+|their\s+)?(.+?)\s+(?:back\s+)?to\b",
                 r"(?:pick up|take|grab|pocket|keep|put)\s+(?:the\s+)?(.+?)(?:\s+in|\s+into|$)",
                 r"(?:drop|discard)\s+(?:the\s+)?(.+?)$",
                 r"(?:unequip|remove|take off|sheathe|stow)\s+(?:the\s+)?(.+?)$",
@@ -2845,11 +3087,13 @@ class DMOrchestrator:
                     item_name = match.group(1).strip()
                     break
 
-        if not item_name:
-            item_name = "item"
-
-        # Clean up item name
-        item_name = item_name.rstrip(".")
+        # No "item" fallback: a generic phrase must never reach row matching.
+        # The live sweep's junk 'unknown item' row was transferred instead of
+        # the named compass exactly because "item" substring-matched it.
+        if item_name:
+            item_name = item_name.rstrip(".")
+        if _is_generic_item_phrase(item_name):
+            item_name = None
 
         quantity = triage.quantity or 1
 
@@ -2881,26 +3125,58 @@ class DMOrchestrator:
 
             inventory_repo = await get_inventory_repo()
             player_items = await inventory_repo.get_all_items(character.id)
-            item_lower = item_name.casefold()
-
-            if operation == "transfer_to_npc":
-                matching = [
-                    item for item in player_items
-                    if item_lower in item.item_name.casefold()
-                ]
-                if not matching:
+            holdings = (
+                [item.item_name for item in player_items]
+                if operation == "transfer_to_npc"
+                else list(target_npc.inventory)
+            )
+            canonical_item = _resolve_transfer_item(
+                action_lower, holdings, item_name
+            )
+            if canonical_item is None:
+                if item_name:
+                    # A concrete item was named but the giver doesn't hold it
+                    # — fail closed rather than let narration move phantoms.
+                    holder = (
+                        player_name if operation == "transfer_to_npc"
+                        else target_npc.name
+                    )
+                    error = (
+                        f"'{item_name}' not found in inventory"
+                        if operation == "transfer_to_npc"
+                        else f"{target_npc.name} does not hold '{item_name}'"
+                    )
                     return {
                         "action_type": "inventory",
                         "operation": operation,
                         "success": False,
                         "item": item_name,
-                        "error": f"'{item_name}' not found in inventory",
+                        "error": error,
                         "narrative_hint": (
-                            f"{player_name} reaches for the {item_name}, but "
-                            "does not have it to give."
+                            f"{holder} does not have the {item_name} to give."
                         ),
                     }
-                canonical_item = matching[0].item_name
+                # Nothing resolvable ("hands it to me" with no named item):
+                # defer the exchange to the narrator's receipted tools. The
+                # operation tag keeps PGI's acquisition exemption intact.
+                logger.info(
+                    "inventory_transfer_deferred_unresolved_item",
+                    operation=operation,
+                    npc=target_npc.name,
+                )
+                return {
+                    "action_type": "inventory",
+                    "operation": operation,
+                    "success": True,
+                    "item": "",
+                    "narrative_hint": (
+                        f"The exchange between {player_name} and "
+                        f"{target_npc.name} proceeds as described; the "
+                        "narration resolves which item changes hands."
+                    ),
+                }
+
+            if operation == "transfer_to_npc":
                 authoritative_effects = [
                     ProposedEffect(
                         effect_type=EffectType.UPDATE_PLAYER,
@@ -2921,23 +3197,6 @@ class DMOrchestrator:
                     f"{target_npc.name}, who accepts it and now holds it."
                 )
             else:
-                matching = [
-                    held for held in target_npc.inventory
-                    if item_lower in held.casefold()
-                ]
-                if not matching:
-                    return {
-                        "action_type": "inventory",
-                        "operation": operation,
-                        "success": False,
-                        "item": item_name,
-                        "error": f"{target_npc.name} does not hold '{item_name}'",
-                        "narrative_hint": (
-                            f"{target_npc.name} cannot return the {item_name} "
-                            "because they do not have it."
-                        ),
-                    }
-                canonical_item = matching[0]
                 authoritative_effects = [
                     ProposedEffect(
                         effect_type=EffectType.UPDATE_PLAYER,
@@ -2970,40 +3229,44 @@ class DMOrchestrator:
             }
 
         if operation == "pickup":
-            # Add item to inventory (pass the Character resolved above —
-            # see _execute_add_item)
-            result = await self._execute_add_item(character, {
-                "item_index": item_name.lower().replace(" ", "-"),
-                "item_name": item_name.title(),
+            if item_name is None:
+                # "…a distinct object I can pick up" carried no resolvable
+                # item name; the old "item" fallback minted a literal 'Item'
+                # inventory row here (live run 20260724_231350 T10). Defer:
+                # the narrator's receipted grant owns any acquisition.
+                logger.info(
+                    "inventory_pickup_deferred_no_item", player=player_name
+                )
+                return None
+            return {
+                "action_type": "inventory",
+                "operation": "pickup",
+                "success": True,
+                "item": item_name,
                 "quantity": quantity,
-                "source": "picked up",
-            })
-
-            if result.get("added", False):
-                narrative_hint = f"{player_name} picks up the {item_name} and adds it to their inventory."
-                return {
-                    "action_type": "inventory",
-                    "operation": "pickup",
-                    "success": True,
-                    "item": item_name,
-                    "quantity": quantity,
-                    "narrative_hint": narrative_hint,
-                    "tool_calls": [{"name": "add_item", "result": result}],
-                }
-            else:
-                return {
-                    "action_type": "inventory",
-                    "operation": "pickup",
-                    "success": False,
-                    "item": item_name,
-                    "error": result.get("error", "Failed to add item"),
-                    "narrative_hint": f"{player_name} tries to pick up the {item_name}, but something prevents them.",
-                }
+                "narrative_hint": (
+                    f"{player_name} picks up the {item_name} and adds it to "
+                    "their inventory."
+                ),
+                "authoritative_effects": [ProposedEffect(
+                    effect_type=EffectType.UPDATE_PLAYER,
+                    player_item_grant=[{
+                        "name": item_name.title(),
+                        "quantity": quantity,
+                    }],
+                )],
+            }
 
         elif operation == "drop":
             # Resolve the item against the character's real inventory before
-            # claiming a drop (mirrors the commerce fix: this used to return
-            # narrative-only success while the inventory row was untouched).
+            # claiming a drop; the removal itself rides an authoritative
+            # effect so it lands exactly once, with a receipt, replacing any
+            # narrator mirror of the same removal.
+            if item_name is None:
+                logger.info(
+                    "inventory_drop_deferred_no_item", player=player_name
+                )
+                return None
             inventory_repo = await get_inventory_repo()
             items = await inventory_repo.get_all_items(character.id)
             item_lower = item_name.lower()
@@ -3024,14 +3287,6 @@ class DMOrchestrator:
 
             item = matching[0]
             drop_qty = min(quantity, item.quantity)
-            await inventory_repo.remove_item(item.id, drop_qty)
-            result = {
-                "character": character.name,
-                "item": item.item_name,
-                "item_id": item.id,
-                "quantity": drop_qty,
-                "removed": True,
-            }
             return {
                 "action_type": "inventory",
                 "operation": "drop",
@@ -3039,10 +3294,30 @@ class DMOrchestrator:
                 "item": item.item_name,
                 "quantity": drop_qty,
                 "narrative_hint": f"{player_name} drops the {item.item_name}.",
-                "tool_calls": [{"name": "remove_item", "result": result}],
+                "authoritative_effects": [ProposedEffect(
+                    effect_type=EffectType.UPDATE_PLAYER,
+                    player_item_remove=[{
+                        "name": item.item_name,
+                        "quantity": drop_qty,
+                    }],
+                )],
             }
 
         elif operation in {"equip", "unequip"}:
+            if item_name is None:
+                # No update_player field mutates equip state, so there is
+                # nothing to defer to — an unspecified target fails honestly.
+                return {
+                    "action_type": "inventory",
+                    "operation": operation,
+                    "success": False,
+                    "item": "",
+                    "error": f"No item named to {operation}",
+                    "narrative_hint": (
+                        f"{player_name} isn't holding anything specific to "
+                        f"{operation}."
+                    ),
+                }
             inventory_repo = await get_inventory_repo()
             items = await inventory_repo.get_all_items(character.id)
             item_lower = item_name.lower()
@@ -3105,35 +3380,99 @@ class DMOrchestrator:
             }
 
         elif operation == "use":
-            # Inventory rows do not yet carry item effects, charges, or a
-            # consumable category.  Consuming an arbitrary matching row here
-            # would be as misleading as the old narrative-only success.
-            return {
-                "action_type": "inventory",
-                "operation": "use",
-                "success": False,
-                "item": item_name,
-                "error": "Generic item use is not implemented for this item",
-                "narrative_hint": (
-                    f"{player_name} tries to use the {item_name}, but its "
-                    "mechanical effect is not defined."
-                ),
-            }
+            # Consumption is narrator-owned: its receipted update_player
+            # removes the item and applies the effect. Feeding the narrator a
+            # [RESULT: FAILURE] here contradicted established premises like
+            # "I drink the antidote" (live run 20260724_231350 T6), while
+            # Step 5's receipted consumption net covers a forgotten removal.
+            # PGI has already validated the player actually holds the item.
+            logger.info(
+                "inventory_use_deferred_to_narrator",
+                player=player_name,
+                item=item_name,
+            )
+            return None
 
         else:
-            # Do not claim a state change for an operation we could not
-            # classify and execute.
-            return {
-                "action_type": "inventory",
-                "operation": "interact",
-                "success": False,
-                "item": item_name,
-                "error": "Inventory operation was not recognized",
-                "narrative_hint": (
-                    f"{player_name} considers the {item_name}, but takes no "
-                    "tracked inventory action."
-                ),
-            }
+            # Unclassifiable inventory phrasing: nothing deterministic to
+            # claim, so the plain narrator path owns the turn (and any state
+            # change rides its receipted tools).
+            logger.info(
+                "inventory_interact_deferred_to_narrator",
+                player=player_name,
+                item=item_name,
+            )
+            return None
+
+    def _turn_update_player_receipts(self) -> list[dict]:
+        """This turn's executed update_player receipts ("applied" payloads)."""
+        receipts: list[dict] = []
+        for record in self._last_effect_executions:
+            if record.get("type") != "update_player" or record.get("was_duplicate"):
+                continue
+            applied = (record.get("details") or {}).get("applied") or {}
+            if applied:
+                receipts.append(applied)
+        return receipts
+
+    async def _execute_deterministic_player_effect(
+        self,
+        effect: ProposedEffect,
+        character_id: str,
+    ) -> bool:
+        """Run a deterministic player-state write through the effect pipeline.
+
+        Step 5's consumption used to call the inventory repo directly — a
+        write with no receipt, invisible to the receipt-vs-state agreement
+        gate and stacked on top of the narrator's update_player for the same
+        narrated event (double-charge observed live, run 20260724_234241 T2).
+        Routing through the executor gives the write the same receipt,
+        idempotency, and WorldState sync as every other player-state writer,
+        and the proposed/executed records keep the turn's effect accounting
+        balanced.
+        """
+        if not self._effect_executor:
+            inventory_repo = await get_inventory_repo()
+            self._effect_executor = EffectExecutor(
+                scene_registry=self._scene_registry,
+                session=self._current_session,
+                inventory_repo=inventory_repo,
+                applied_effects_store=self._applied_effects,
+            )
+        self._effect_executor.acting_character_id = character_id
+
+        campaign_id = (
+            (self._current_session.campaign_id if self._current_session else None)
+            or "unknown"
+        )
+        idem_key = build_effect_idempotency_key(
+            campaign_id, f"step5:{uuid.uuid4()}", 0
+        )
+        result = await self._effect_executor.execute(effect, idem_key)
+        if not result.success:
+            logger.warning(
+                "deterministic_player_effect_failed",
+                effect_type=effect.effect_type.value,
+                details=result.details,
+            )
+            return False
+
+        record = {
+            **_effect_telemetry_record(effect),
+            "was_duplicate": bool(result.was_duplicate),
+            "details": dict(result.details or {}),
+        }
+        self._last_deterministic_proposed.append(_effect_telemetry_record(effect))
+        self._last_effect_executions.append(record)
+
+        if not result.was_duplicate:
+            world_store = (
+                getattr(self._current_session, "world_store", None)
+                if self._current_session else None
+            )
+            if world_store is not None:
+                world_store.apply_effect(effect)
+        return True
 
     async def _consume_resources(
         self,
@@ -3142,6 +3481,11 @@ class DMOrchestrator:
     ) -> None:
         """
         Consume resources used by an action (ammunition, consumables, etc.).
+
+        One writer per narrated event: a resource the narrator's executed
+        update_player already removed this turn is skipped (its receipt owns
+        the write); the residual consumption executes through the effect
+        pipeline so it carries a receipt of its own.
 
         Args:
             resources: List of {"item": "Arrow", "quantity": 1} dicts
@@ -3154,6 +3498,15 @@ class DMOrchestrator:
 
         char_id, character = resolved
         inventory_repo = await get_inventory_repo()
+
+        def _slug(name: str) -> str:
+            return (name or "").strip().lower().replace(" ", "-")
+
+        receipted_removals = {
+            _slug(str(entry.get("name") or ""))
+            for applied in self._turn_update_player_receipts()
+            for entry in (applied.get("items_removed") or [])
+        }
 
         for resource in resources:
             item_name = resource.get("item", "")
@@ -3169,30 +3522,56 @@ class DMOrchestrator:
                 if item_name.lower() in i.item_name.lower()
             ]
 
-            if matching:
-                item = matching[0]
-                if item.quantity >= quantity:
-                    await inventory_repo.remove_item(item.id, quantity)
-                    logger.info(
-                        "resource_consumed",
-                        character=character.name,
-                        item=item.item_name,
-                        quantity=quantity,
-                        remaining=item.quantity - quantity,
-                    )
-                else:
-                    logger.warning(
-                        "insufficient_resource",
-                        character=character.name,
-                        item=item_name,
-                        have=item.quantity,
-                        need=quantity,
-                    )
-            else:
+            if not matching:
+                # Often the narrator's receipted removal already deleted the
+                # row this turn — the ledger is complete without us.
                 logger.debug(
                     "resource_not_found",
                     character=character.name,
                     item=item_name,
+                )
+                continue
+
+            item = matching[0]
+            if (
+                item.item_index in receipted_removals
+                or _slug(item.item_name) in receipted_removals
+            ):
+                logger.info(
+                    "resource_consumption_deduped",
+                    character=character.name,
+                    item=item.item_name,
+                    reason="update_player receipt already removed it this turn",
+                )
+                continue
+
+            if item.quantity < quantity:
+                logger.warning(
+                    "insufficient_resource",
+                    character=character.name,
+                    item=item_name,
+                    have=item.quantity,
+                    need=quantity,
+                )
+                continue
+
+            consumed = await self._execute_deterministic_player_effect(
+                ProposedEffect(
+                    effect_type=EffectType.UPDATE_PLAYER,
+                    player_item_remove=[{
+                        "name": item.item_name,
+                        "quantity": quantity,
+                    }],
+                ),
+                char_id,
+            )
+            if consumed:
+                logger.info(
+                    "resource_consumed",
+                    character=character.name,
+                    item=item.item_name,
+                    quantity=quantity,
+                    remaining=item.quantity - quantity,
                 )
 
     async def _consume_currency(
@@ -3208,6 +3587,21 @@ class DMOrchestrator:
             player_name: Character name to deduct from
         """
         if not currency_spent:
+            return
+
+        # One writer per narrated payment: any executed update_player
+        # currency_delta this turn already owns the money movement — charging
+        # again here is the live double-charge (run 20260724_234241 T2:
+        # narrator receipted -2gp AND this path silently removed 2 more).
+        if any(
+            applied.get("currency_delta")
+            for applied in self._turn_update_player_receipts()
+        ):
+            logger.info(
+                "currency_consumption_deduped",
+                requested=currency_spent,
+                reason="update_player receipt already moved currency this turn",
+            )
             return
 
         resolved = self._resolve_character_by_name(player_name)
@@ -3233,23 +3627,35 @@ class DMOrchestrator:
         # Round up to nearest gold piece for removal
         gold_to_remove = max(1, int(total_gold)) if total_gold > 0 else 0
 
-        success, currency = await inventory_repo.remove_gold(char_id, gold_to_remove)
-
-        if success:
-            logger.info(
-                "currency_spent",
-                character=character.name,
-                amount=currency_spent,
-                gold_equivalent=gold_to_remove,
-                gold_remaining=currency.gold,
-            )
-        else:
+        # Funds check is read-only; the receipted write happens once, in the
+        # effect pipeline. Gold-field only — the currency executor applies
+        # {gp: -N} without breaking larger coins, and a receipt must never
+        # claim more than the write moved.
+        currency = await inventory_repo.get_currency(char_id)
+        if currency.gold < gold_to_remove:
             logger.warning(
                 "insufficient_currency",
                 character=character.name,
                 wanted=currency_spent,
                 gold_equivalent=gold_to_remove,
                 have=currency.gold,
+            )
+            return
+
+        spent = await self._execute_deterministic_player_effect(
+            ProposedEffect(
+                effect_type=EffectType.UPDATE_PLAYER,
+                player_currency_delta={"gp": -gold_to_remove},
+            ),
+            char_id,
+        )
+        if spent:
+            logger.info(
+                "currency_spent",
+                character=character.name,
+                amount=currency_spent,
+                gold_equivalent=gold_to_remove,
+                gold_remaining=currency.gold - gold_to_remove,
             )
 
     # Action types Phase B vetoes as definitely-mundane. The brain can still
@@ -4414,74 +4820,10 @@ Write your narration directly."""
         return None
 
 
-    # Commerce tools (preserved)
-    async def _execute_purchase_item(self, character: Character, args: dict) -> dict:
-        """Execute item purchase for an already-resolved character.
-
-        ``character`` comes from the caller's ``_resolve_character_by_name``
-        (``_handle_purchase`` is the only call site). Re-resolving here
-        treated the passed UUID as a NAME, so every purchase was refused
-        with 'not found' before touching gold or inventory (Step-1 deferred
-        defect, pinned by the net until this fix).
-        """
-        item_index = args.get("item_index", "")
-        item_name = args.get("item_name", "")
-        cost_gold = args.get("cost_gold", 0)
-        quantity = args.get("quantity", 1)
-        tx_id = args.get("transaction_id")
-
-        char_id = character.id
-
-        if tx_id:
-            tx_key = generate_transaction_key("purchase", char_id, tx_id)
-            tx_repo = await get_transaction_repo()
-            cached = await tx_repo.get_result(tx_key)
-            if cached:
-                return cached
-
-        inventory_repo = await get_inventory_repo()
-        total_cost = cost_gold * quantity
-        success, currency = await inventory_repo.remove_gold(char_id, total_cost)
-
-        if not success:
-            return {
-                "buyer": character.name, "item": item_name, "cost": total_cost,
-                "purchased": False, "error": f"Not enough gold. Have {currency.gold}gp, need {total_cost}gp",
-            }
-
-        new_item = InventoryItem(character_id=char_id, item_index=item_index, item_name=item_name, quantity=quantity)
-        await inventory_repo.add_item(new_item)
-
-        result = {
-            "buyer": character.name, "buyer_id": char_id, "item": item_name,
-            "quantity": quantity, "cost": total_cost, "gold_after": currency.gold, "purchased": True,
-        }
-
-        if tx_id:
-            await tx_repo.record(tx_key, "purchase_item", char_id, result, args)
-        return result
-
-
-    async def _execute_add_item(self, character: Character, args: dict) -> dict:
-        """Add an item to inventory for an already-resolved character.
-
-        Same defect shape as ``_execute_purchase_item``: the caller
-        (``_handle_inventory``, the only call site) passed a UUID that was
-        re-resolved as a NAME, so the add always failed — and PGI then
-        hard-blocked the pickup turn against the still-empty inventory.
-        """
-        item_index = args.get("item_index", "")
-        item_name = args.get("item_name", "")
-        quantity = args.get("quantity", 1)
-        source = args.get("source", "")
-
-        char_id = character.id
-        inventory_repo = await get_inventory_repo()
-
-        new_item = InventoryItem(character_id=char_id, item_index=item_index, item_name=item_name, quantity=quantity, notes=source)
-        added_item = await inventory_repo.add_item(new_item)
-
-        return {"character": character.name, "item": item_name, "item_id": added_item.id, "quantity": quantity, "added": True}
+    # The direct-write commerce executors (_execute_purchase_item /
+    # _execute_add_item) are gone: purchase and pickup now claim their
+    # player-state writes as authoritative effects, so the effect pipeline
+    # is the one receipted writer for those turns.
 
 
 # Global orchestrator instance

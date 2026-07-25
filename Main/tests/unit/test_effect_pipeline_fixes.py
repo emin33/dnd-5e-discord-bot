@@ -8,7 +8,9 @@ A (DF-12)  _process_proposed_effects gated post-execution work on
            and re-appended to ``_last_executed_effects`` — double-applying
            to WorldState/KG on retries.
 B          The drop-item branch of _handle_inventory returned narrative
-           success without ever touching the inventory row.
+           success without ever touching the inventory row. (Since the
+           single-writer fix, the touch is an authoritative update_player
+           effect rather than a direct repo write.)
 C          Effects with ``requires_confirmation`` were logged then
            ``continue``d — silently discarded (no confirmation UI exists;
            the tool path never sets the flag). Parity: execute with a
@@ -193,10 +195,17 @@ async def test_drop_removes_resolved_item_from_inventory(drop_setup):
     assert result["success"] is True
     assert result["item"] == "Brass Lantern"
     assert result["quantity"] == 1
-    # The inventory row was actually touched — the reverted handler never
-    # called the repo at all.
-    assert repo.removed == [(lantern.id, 1)]
-    assert result["tool_calls"][0]["name"] == "remove_item"
+    # The removal is claimed as an authoritative effect — the one receipted
+    # writer for the turn (it replaces any narrator mirror of the same drop).
+    # A direct repo write here would be an unreceipted second writer; the
+    # original defect was claiming success without any write at all.
+    assert repo.removed == []
+    (effect,) = result["authoritative_effects"]
+    assert effect.effect_type == EffectType.UPDATE_PLAYER
+    assert effect.player_item_remove == [{
+        "name": lantern.item_name,
+        "quantity": 1,
+    }]
 
 
 @pytest.mark.asyncio

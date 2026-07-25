@@ -157,18 +157,52 @@ def validate_conditions(character: Character) -> list[ValidationFailure]:
 # ── P4: Inventory ────────────────────────────────────────────────────────────
 
 
+_ITEM_MATCH_STOPWORDS = frozenset({
+    "a", "an", "the", "of", "my", "your", "her", "his", "their", "its",
+    "from", "for", "some", "own",
+})
+
+
+def _match_tokens(text: str) -> set[str]:
+    """Content tokens of an item phrase, for order-insensitive matching."""
+    return {
+        token
+        for token in re.findall(r"[a-z0-9']+", (text or "").casefold())
+        if token not in _ITEM_MATCH_STOPWORDS
+    }
+
+
 def validate_item_exists(
     items: list[InventoryItem],
     item_name: str,
     quantity_needed: int = 1,
 ) -> list[ValidationFailure]:
-    """P4: Check if the character has an item in their inventory."""
+    """P4: Check if the character has an item in their inventory.
+
+    Matching is substring-then-token, in EITHER direction. A one-directional
+    substring test hard-failed the whole turn whenever the brain named the
+    item more fully than the row does — live run 20260725_002559 T6 blocked
+    "I drink the silver antidote" because triage said "Silver Antidote Vial"
+    and the row reads "silver antidote". This gate's failure mode is
+    refusing a legitimate action with no narration at all, so it errs
+    permissive; the mutation itself is validated downstream by whichever
+    receipted writer owns it.
+    """
     if not item_name:
         return []
 
     # Substring match (same pattern as orchestrator._consume_resources)
     item_lower = item_name.lower()
     matching = [i for i in items if item_lower in i.item_name.lower()]
+
+    if not matching:
+        wanted = _match_tokens(item_name)
+        if wanted:
+            matching = [
+                i for i in items
+                if (held := _match_tokens(i.item_name))
+                and (held <= wanted or wanted <= held)
+            ]
 
     if not matching:
         return [ValidationFailure(
