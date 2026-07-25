@@ -102,8 +102,15 @@ class TurnRecord:
 
     def record_triage(self, action_type: str, needs_roll: bool,
                        skill: str = "", dc: int = 0,
-                       parse_warnings: list[str] | None = None) -> None:
-        """Record triage decision."""
+                       parse_warnings: list[str] | None = None,
+                       currency_spent: dict | None = None,
+                       resources_consumed: list[dict] | None = None) -> None:
+        """Record triage decision.
+
+        currency_spent / resources_consumed feed Step 5's deterministic
+        consumption; logging them lets the player-state agreement sweep
+        attribute that writer's update_player receipts per turn.
+        """
         self.data["triage"] = {
             "action_type": action_type,
             "needs_roll": needs_roll,
@@ -112,6 +119,13 @@ class TurnRecord:
         }
         if parse_warnings:
             self.data["triage"]["parse_warnings"] = parse_warnings
+        if currency_spent:
+            self.data["triage"]["currency_spent"] = dict(currency_spent)
+        if resources_consumed:
+            self.data["triage"]["resources_consumed"] = [
+                dict(entry) if isinstance(entry, dict) else entry
+                for entry in resources_consumed
+            ]
 
     def record_state_delta(self, delta_dict: dict, rejections: list[str],
                             parse_warnings: list[str] | None = None) -> None:

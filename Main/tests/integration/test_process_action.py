@@ -481,16 +481,14 @@ async def test_spawn_object_tool_registers_object_and_scene_item(net):
 
 @pytest.mark.asyncio
 async def test_purchase_turn_deducts_gold_and_adds_item(net):
-    """FLIPPED from pinned-broken by the commerce id-vs-name fix.
+    """Producer path: triage 'purchase' → _handle_purchase → authoritative
+    update_player effect → EffectExecutor → inventory repo.
 
-    Producer path: triage 'purchase' → _handle_purchase →
-    _execute_purchase_item → inventory repo. _handle_purchase resolved the
-    player and passed character.id (a UUID) as buyer_id, but the executor
-    re-resolved it through _resolve_character_by_name, which matches
-    character NAMES only — every purchase was refused with 'not found'
-    before touching gold or inventory. The executor now takes the
-    already-resolved Character from its single caller, so the purchase
-    lands: gold deducted, item row written, success narrated.
+    Single-writer contract (live run 20260724_231350 T2 pinned the old
+    shape): the handler validates goods + funds read-only and CLAIMS the
+    write as an authoritative effect; the effect pipeline is the one
+    receipted writer, and any narrator update_player for the turn is
+    replaced instead of stacking a second charge.
     """
     await net.inv_repo.add_gold(net.character.id, 100)
 
@@ -509,11 +507,14 @@ async def test_purchase_turn_deducts_gold_and_adds_item(net):
     assert mech["error"] is None
     assert mech["gold_after"] == 70
 
-    # The commerce tool call is surfaced with the executed result.
-    assert [t["name"] for t in result.tool_calls_made] == ["purchase_item"]
-    assert result.tool_calls_made[0]["result"]["purchased"] is True
+    # No direct commerce tool call — the write rides the effect pipeline.
+    assert result.tool_calls_made == []
+    (effect,) = result.proposed_effects
+    assert effect.effect_type == EffectType.UPDATE_PLAYER
+    assert effect.player_currency_delta == {"gp": -30}
+    assert effect.player_item_grant == [{"name": "Healing Potion", "quantity": 1}]
 
-    # State diff: gold moved and the item row exists.
+    # State diff: gold moved and the item row exists — written exactly once.
     currency = await net.inv_repo.get_currency(net.character.id)
     assert currency.gold == 70
     items = await net.inv_repo.get_all_items(net.character.id)
@@ -521,21 +522,18 @@ async def test_purchase_turn_deducts_gold_and_adds_item(net):
 
     # The purchase is narrated via the mechanical-result path.
     assert net.narrator.calls
-    assert result.proposed_effects == []
 
 
 @pytest.mark.asyncio
 async def test_inventory_pickup_turn_adds_item_and_narrates(net):
-    """FLIPPED from pinned-broken by the commerce id-vs-name fix.
+    """Producer path: triage 'inventory' → _handle_inventory (keyword
+    'pick up') → authoritative update_player grant → EffectExecutor.
 
-    Producer path: triage 'inventory' → _handle_inventory (keyword 'pick up')
-    → _execute_add_item. Same defect as purchase: _handle_inventory passed
-    character.id as character_id and _execute_add_item re-resolved it by
-    NAME, so the add failed silently — and PGI then ran validate_item_exists
-    against the still-empty inventory and HARD-failed the turn (pgi_blocked,
-    no narration). With the executor taking the resolved Character, the add
-    lands BEFORE PGI's prefetch, validate_item_exists sees the row, and the
-    turn narrates.
+    Single-writer contract: the grant executes once, receipted, through the
+    effect pipeline (replacing any narrator mirror of the same pickup), and
+    PGI's acquisition exemption knows a pickup's row legitimately doesn't
+    exist yet at validation time — the old flow satisfied PGI only by
+    writing the row before validating it.
     """
     result = await net.run(
         action="I pick up the brass lantern",
@@ -550,15 +548,17 @@ async def test_inventory_pickup_turn_adds_item_and_narrates(net):
     assert mech["action_type"] == "inventory"
     assert mech["operation"] == "pickup"
     assert mech["success"] is True
-    assert [t["name"] for t in result.tool_calls_made] == ["add_item"]
+    assert result.tool_calls_made == []
+    (effect,) = result.proposed_effects
+    assert effect.effect_type == EffectType.UPDATE_PLAYER
+    assert effect.player_item_grant == [{"name": "Brass Lantern", "quantity": 1}]
 
-    # The row was written (and survived PGI).
+    # The row was written by the effect pipeline (and the turn survived PGI).
     items = await net.inv_repo.get_all_items(net.character.id)
     assert [(i.item_name, i.quantity) for i in items] == [("Brass Lantern", 1)]
 
     # Narrated turn, not a block.
     assert net.narrator.calls
-    assert result.proposed_effects == []
 
 
 @pytest.mark.asyncio
@@ -602,8 +602,53 @@ async def test_inventory_equip_and_take_off_persist_real_state(net):
 
 
 @pytest.mark.asyncio
-async def test_generic_item_use_is_honest_failure_and_preserves_row(net):
-    """Unknown item effects must not claim success or consume inventory."""
+async def test_failed_closed_turn_commits_no_deterministic_write(net):
+    """A turn that narrates "no world-state change is committed" must not
+    commit the deterministic claim either.
+
+    Authoritative effects are merged AFTER narration, so a fail-closed turn
+    would otherwise move gold and mint an item while the prose denies any
+    change — receipts recording a write the player was told never happened.
+    """
+    await net.inv_repo.add_gold(net.character.id, 100)
+
+    class _FailedClosedStrategy:
+        last_diagnostics = {"resolved_outcome_failed_closed": True}
+
+        async def run(self, spec, context, triage):
+            return (
+                "*The declared outcome could not be resolved consistently; "
+                "no world-state change is committed.*",
+                [],
+            )
+
+    net.monkeypatch.setattr(net.orch, "_narration_strategy", _FailedClosedStrategy())
+
+    result = await net.run(
+        action="I buy a healing potion from the merchant",
+        triage=triage_response(
+            "purchase", needs_roll=False,
+            item_name="Healing Potion", item_cost=30, quantity=1,
+        ),
+        narration=narration_response("unused — the strategy is stubbed"),
+    )
+
+    assert result.proposed_effects == []
+    currency = await net.inv_repo.get_currency(net.character.id)
+    assert currency.gold == 100
+    assert await net.inv_repo.get_all_items(net.character.id) == []
+
+
+@pytest.mark.asyncio
+async def test_generic_item_use_defers_to_narrator_and_preserves_row(net):
+    """Item use claims no deterministic mechanics and consumes nothing.
+
+    Consumption is narrator-owned (receipted update_player), with Step 5's
+    receipted consumption net as backstop — so a use turn defers entirely
+    instead of feeding the narrator a [RESULT: FAILURE] that contradicts an
+    established premise. With no narrator tool call and no triage
+    resources_consumed, the row must survive untouched.
+    """
     item = InventoryItem(
         character_id=net.character.id,
         item_index="mystery-tonic",
@@ -619,9 +664,9 @@ async def test_generic_item_use_is_honest_failure_and_preserves_row(net):
         narration=narration_response("The sealed tonic remains in your hand."),
     )
 
-    assert result.mechanical_result["operation"] == "use"
-    assert result.mechanical_result["success"] is False
-    assert "not implemented" in result.mechanical_result["error"].lower()
+    assert result.mechanical_result is None
+    assert result.proposed_effects == []
+    assert net.narrator.calls
     unchanged = await net.inv_repo.get_item_by_id(item.id)
     assert unchanged is not None
     assert unchanged.quantity == 1

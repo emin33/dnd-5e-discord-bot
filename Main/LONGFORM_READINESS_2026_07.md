@@ -186,11 +186,12 @@ product experience and how well authored canon evolves under play.
   `test_tool_reliability --scenario player_state_sweep` forces currency
   both directions, item grant/remove with npc source/destination
   mirrors, condition add/remove, and a spell-slot expenditure, plus the
-  scene families, then replays every recorded receipt (update_player +
-  triage Step-5 consumption) against the character/inventory DB. Its
-  receipt-vs-state gate found real product defects on day one (the
-  deterministic commerce double-writer — chip filed) and stays red
-  until that seam is fixed;
+  scene families, then replays every recorded `update_player` receipt
+  against the character/inventory DB. Its receipt-vs-state gate found
+  real product defects on day one (the deterministic commerce
+  double-writer), which are now closed — 16/16 gates green on
+  `20260725_003213` with the defect phrasing restored (see the
+  2026-07-25 section below);
 - ~~cap/retract established facts and move synchronous vector work off the
   event loop~~ DONE 2026-07-24 (see the dated section below): fact
   supersession + the scene-anchored fact projection had already landed; the
@@ -1030,12 +1031,12 @@ outright defects caught live on day one: a narrated 2gp payment charged
 TWICE (commerce handler + update_player, with the service phrase
 'investigation assistance from Mara Venn' minted as an inventory item),
 and a payment TO the player triaged as a purchase (charged the player
-and minted an 'unknown item' row). Filed as its own chip (fix direction:
-one writer per narrated event + triage classifier tightening); the
-agreement gate deliberately stays red until that seam lands. Harness
-fixture note found live: `CharacterRepository.create` skips zero-max
-slot levels and `update` only UPDATEs existing rows, so the sweep
-inserts its level-1 slot row directly.
+and minted an 'unknown item' row). **That seam is now closed (see the
+2026-07-25 entry below) and the sweep passes 16/16 with the original
+purchase-baiting phrasing restored.** Harness fixture note found live:
+`CharacterRepository.create` skips zero-max slot levels and `update`
+only UPDATEs existing rows, so the sweep inserts its level-1 slot row
+directly.
 
 **3. Multi-run threshold gate** (matrix soak row: "stable pass rate and
 cost", "bounded latency"). `soak_gate.py` — stdlib-only, runs anywhere
@@ -1055,6 +1056,72 @@ invocation:
 With these, every row of the promotion matrix has its harness: the
 memory-graph track gets `--restart-at-turn`, the tool track gets the
 sweep + agreement, and the soak row gets the threshold gate over
-repeated runs. Remaining before promotion: the commerce double-writer
-chip (blocks a green sweep agreement gate), then the user's go-ahead to
-spend on the 100-200 turn matrix itself.
+repeated runs. Remaining before promotion: the user's go-ahead to spend
+on the 100-200 turn matrix itself.
+
+### 2026-07-25: one writer per narrated event (the double-writer seam)
+
+The agreement gate's first live runs attributed every residual mismatch
+to deterministic handlers writing player state outside the receipt seam.
+Three defects, all reproduced from the artifacts and now closed:
+
+- **A narrated payment charged twice.** "I pay Mara Venn exactly two gold
+  pieces for her help" triaged `purchase`; `_handle_purchase` charged 2gp
+  and minted 'investigation-assistance-from-mara-venn' as an inventory
+  row, while the narrator's `update_player` currency_delta ALSO executed.
+- **A player being PAID was charged.** The same classifier took "she
+  counts five silver pieces into my palm" as a purchase with no
+  item_name, so the handler bought the literal "unknown item" fallback.
+- **The transfer fallback moved the wrong row.** With no resolvable item
+  name, `_handle_inventory` fell back to the string `"item"`, which
+  substring-matched that junk 'unknown item' row — so the compass
+  handover transferred the junk row instead.
+
+The fix makes the effect pipeline the ONE receipted writer for player
+state. Deterministic handlers no longer touch the repos: purchase,
+pickup, drop, and NPC transfers return `authoritative_effects`
+(`update_player`) that execute through the pipeline, and Step 5's
+consumption does the same after deduping against the turn's receipts.
+Handlers with nothing deterministic to transact — a purchase naming no
+concrete goods, item use, unclassifiable interaction, an unresolvable
+transfer — return None and defer the whole turn to the narrator's
+receipted tools rather than inventing a write or a false failure. The
+`_execute_purchase_item` / `_execute_add_item` direct writers are
+deleted. Claim dedup is now per field (update_player) and per entity
+(update_entity) instead of per effect type, so a claimed family is
+replaced without discarding an unrelated narrator mutation on the same
+turn (narrated HP damage during a purchase used to be silently dropped).
+Supporting changes: the triage prompt requires goods-received for
+`purchase` and forbids `currency_spent` on money the player RECEIVES; a
+goods check against the SRD catalog (token-set equality, not subset —
+subset would have sold "Silver Dragon Scale Mail" to a player being paid
+in silver) keeps service phrases off the commerce path; the "item"
+fallback is gone entirely; and PGI item matching became bidirectional
+after a live hard-fail blocked a whole turn because triage said "Silver
+Antidote Vial" for a row reading "silver antidote".
+
+Adversarial pass found three more, all fixed and pinned: Step 5's
+idempotency keys were random (a retried turn would consume twice) and now
+derive from session+turn like the narrator path; the consumption dedup
+set was snapshotted before its loop, so a repeated resource entry
+consumed twice; and a turn that fails closed — narrating "no world-state
+change is committed" and dropping the narrator's effects — would still
+have committed the deterministic claim merged in afterward, so the prose
+denied a write the receipts recorded. Authoritative effects are now
+dropped on a fail-closed turn too.
+
+27 pinning tests (15 handler/consumption, 4 claim-scrub, 5 goods
+classification, 2 PGI matching, 1 fail-closed), each failing against
+pre-fix source; 1361 green, mypy clean. Live re-runs with the original
+defect phrasing restored to the sweep script (no gift-framing
+workarounds): `20260725_003213` and `20260725_004932` both PASS all 16
+gates, 13/13 expected turns, effects 41/41, ~$0.025 — currency
+reconciles in both directions (-2gp paid once, +5sp received), items
+granted/removed reconcile, and the harness's
+`_triage_consumption_receipts` reconstruction is deleted because Step 5
+now emits real receipts of its own. A third run (`20260725_004215`) held
+all four agreement gates while failing two unrelated narration gates:
+the compass handover triaged `social` that run, never reaching the
+deterministic path, and the narrator's obligation net failed it closed —
+model variance in the pre-existing safety net, with the ledger agreeing
+(no write, no receipt).
