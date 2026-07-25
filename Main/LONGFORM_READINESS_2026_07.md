@@ -169,14 +169,41 @@ product experience and how well authored canon evolves under play.
   below maximum. Spend-side combat wiring (a Second Wind action consuming
   the counter) is future work — the counters now exist, persist, and
   recover truthfully;
-- add restart checkpoints and graph-projection convergence assertions;
-- expand tool coverage beyond the current NPC-reference-heavy trajectory;
+- ~~add restart checkpoints and graph-projection convergence
+  assertions~~ DONE 2026-07-24 (see the dated section below):
+  `test_long_horizon --restart-at-turn N` crashes the in-process state
+  after turn N through `TestSession.simulate_process_restart` (session
+  registry, scene registry, memory LRU with crash semantics, Chroma
+  client, orchestrator singleton, SQLite handle), recovers through the
+  production `recover_sessions` path, and continues the run;
+  `evaluate_restart_convergence` asserts identical roster/fact
+  ledgers/KG node set, alive-roster registry joins, full vector
+  coverage, and clean audits from pre/post projection captures. Pinned
+  by an offline crash+recover integration round trip (zero LLM) plus 17
+  synthetic-divergence unit tests;
+- ~~expand tool coverage beyond the current NPC-reference-heavy
+  trajectory~~ DONE 2026-07-24 (see the dated section below):
+  `test_tool_reliability --scenario player_state_sweep` forces currency
+  both directions, item grant/remove with npc source/destination
+  mirrors, condition add/remove, and a spell-slot expenditure, plus the
+  scene families, then replays every recorded receipt (update_player +
+  triage Step-5 consumption) against the character/inventory DB. Its
+  receipt-vs-state gate found real product defects on day one (the
+  deterministic commerce double-writer — chip filed) and stays red
+  until that seam is fixed;
 - ~~cap/retract established facts and move synchronous vector work off the
   event loop~~ DONE 2026-07-24 (see the dated section below): fact
   supersession + the scene-anchored fact projection had already landed; the
   last on-loop vector site (session-start re-sync) now runs in a worker
   thread behind a content-hash skip-unchanged gate;
-- establish a multi-run pass-rate threshold, cost budget, and p95 latency gate.
+- ~~establish a multi-run pass-rate threshold, cost budget, and p95
+  latency gate~~ DONE 2026-07-24 (see the dated section below):
+  `soak_gate.py` aggregates mixed long_horizon manifests and
+  tool_reliability reports and enforces pass-rate floor, per-run cost
+  budget, and per-run p95 whole-turn latency, failing closed on
+  unpriced cost, missing latency samples, and corrupt artifacts, and
+  naming the violating run/turns on exit 1. 16 unit tests pin both
+  manifest dialects and the observed schema-drift shapes.
 - ~~migrate the Flash-Lite player driver from the end-of-support
   `google.generativeai` SDK to `google.genai`~~ DONE — the code migration
   landed 2026-07-22 (5caa79a: GeminiClient on `google.genai`, and the
@@ -947,3 +974,87 @@ earlier in the same batch (narrator tool order); numeric player resources
 remain tool/mechanic-only by construction (StateDelta has no player
 fields — the player-prose extractor design should keep it that way for
 numerics when it lands).
+
+## 2026-07-24 (late night): the last three harness blockers closed — the matrix is unblocked
+
+All three remaining blockers were harness/instrumentation; all landed
+(commits 5d9ccaf + 337e82a, the second from a 33-agent / 5-lens
+adversarial review of the first — every finding attacked by two
+independent refuters — plus four live sweep runs). 1325 green (+44),
+mypy clean.
+
+**1. Restart checkpoint + projection convergence** (matrix memory-graph
+row: "one process restart ... projection convergence after restart").
+`TestSession.capture_projection_state` snapshots the identity-level
+projections (roster + alive slice, fact ledgers, KG node set, described
+vs indexed vector ids, registry npc joins, plus the cross-store audit);
+`TestSession.simulate_process_restart` crashes every piece of in-process
+state a real bot restart loses — session registry, scene registry,
+memory LRU (crash semantics: tiers persist only at graceful end), Chroma
+client, orchestrator singleton (scratchpad, idempotency keys), SQLite
+handle — then rebuilds through the production `recover_sessions` path
+(the same call `bot/client.py` runs at startup; guarded to isolated
+storage so it can never retire real sessions). `test_long_horizon
+--restart-at-turn N` fires the checkpoint between turns N and N+1 and
+the run continues on the recovered session; `evaluate_restart_convergence`
+turns the pre/post captures into two deterministic gates
+(`restart_recovery_succeeded`, `restart_projection_convergence`), stored
+in the manifest and preserved by `--assert-only`. The first offline
+crash+recover round trip converged on every axis. The review's two
+confirmed HIGHs were both false-FAIL classes on *designed* recovery
+behavior, now pinned as tolerances: dead roster NPCs round-trip in
+world.npcs but are deliberately not re-registered (join expectation is
+alive-only), and recovery preloads the registry campaign-wide so the
+post-restart audit's `scene_link_dangling` is an expected transient
+(every other violation class stays fatal; pre-side stays strict).
+
+**2. Tool-coverage sweep + receipt-vs-state agreement** (matrix
+tool-reliability row: "explicit item, currency, NPC, location,
+condition, and spell-slot mutations; receipt matches DB/WorldState").
+`test_tool_reliability --scenario player_state_sweep`: 13 turns forcing
+currency out (debt repayment) and in (counted coins), item grant/remove
+with npc source/destination mirrors, poisoned add/remove, a spell-slot
+drain, spawn_object/remove_entity/change_location/add_npc. Beyond the
+per-turn expected-family checks, the agreement gates replay every
+recorded receipt — update_player `applied` payloads plus triage Step-5
+`currency_spent`/`resources_consumed`, the two sanctioned turn-logged
+writers — over the initial DB snapshot and require equality with the
+final DB snapshot per family (currency/inventory/conditions/slots), with
+a family-coverage gate and per-turn `triage_action_type` + wall-clock
+attribution in the artifact. Four live runs (~$0.02 each, 12-15/16
+gates, effect execution 100% in all four): conditions, slots, and
+currency-by-receipt all reconciled; every residual mismatch was
+attributed to ONE product seam — the deterministic purchase/inventory
+handlers write player state with NO turn-log receipt. That includes two
+outright defects caught live on day one: a narrated 2gp payment charged
+TWICE (commerce handler + update_player, with the service phrase
+'investigation assistance from Mara Venn' minted as an inventory item),
+and a payment TO the player triaged as a purchase (charged the player
+and minted an 'unknown item' row). Filed as its own chip (fix direction:
+one writer per narrated event + triage classifier tightening); the
+agreement gate deliberately stays red until that seam lands. Harness
+fixture note found live: `CharacterRepository.create` skips zero-max
+slot levels and `update` only UPDATEs existing rows, so the sweep
+inserts its level-1 slot row directly.
+
+**3. Multi-run threshold gate** (matrix soak row: "stable pass rate and
+cost", "bounded latency"). `soak_gate.py` — stdlib-only, runs anywhere
+the artifacts do — takes N manifests (long_horizon manifests and
+tool_reliability reports, freely mixed; tool_reliability artifacts now
+carry per-turn `elapsed_seconds` for this) and enforces: pass-rate
+floor (LH `verdict == "PASS"`; TR all-gates-true — those artifacts
+store no verdict), per-run cost budget, per-run p95 whole-turn latency.
+Fails closed on unpriced-model cost, missing latency samples, corrupt/
+unrecognized/unfinalized artifacts (each waivable only where a flag
+says so, and corrupt artifacts violate unconditionally); exit 1 names
+the violating run and the turns over the latency bound. Example matrix
+invocation:
+`python soak_gate.py --pass-rate 0.75 --max-cost-usd 0.40
+--max-p95-turn-s 90 --min-runs 3 data/long_horizon/*.manifest.json`.
+
+With these, every row of the promotion matrix has its harness: the
+memory-graph track gets `--restart-at-turn`, the tool track gets the
+sweep + agreement, and the soak row gets the threshold gate over
+repeated runs. Remaining before promotion: the commerce double-writer
+chip (blocks a green sweep agreement gate), then the user's go-ahead to
+spend on the 100-200 turn matrix itself.
