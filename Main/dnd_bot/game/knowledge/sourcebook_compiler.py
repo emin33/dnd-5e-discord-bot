@@ -15,12 +15,27 @@ types (``parent_of``, ``owes``, ``fears`` and friends all collapse toward
 graph exists to answer "what is near what" for context assembly. Nothing
 reads the graph expecting authored fidelity.
 
-**Visibility is enforced at the boundary.** Only PUBLIC and PLAYER_KNOWN
-claims — plus whatever ``starting_state`` explicitly grants — reach world
-state. DM_ONLY and DISCOVERABLE claims are compiled into a separate
-``withheld`` bucket that never touches the narrator's context. A campaign
-book is full of secrets the party has to earn, and leaked canon is invisible
-to self-consistency grading precisely because it is perfectly consistent.
+**Visibility is enforced on EVERY channel, not just claims.** A campaign book
+is mostly secrets, and leaked canon is invisible to self-consistency grading
+precisely because it is perfectly consistent — so the boundary has to hold
+everywhere authored text can reach the narrator, which is more places than it
+first appears:
+
+- claims: only PUBLIC/PLAYER_KNOWN, and only ``CanonStatus.CANON`` — a claim
+  can be public and *false*, and asserting a legend as fact is a different
+  bug with the same shape;
+- quests: the player-facing ``hook``, never the ``summary`` where an author
+  writes the twist, and only quests ``starting_state`` says are active;
+- relationships: a tie authored with only a ``private_description`` is the
+  schema's way of saying nobody knows it, so it becomes no edge;
+- inventory: ``hidden`` entries yield no ownership edge, and an item whose
+  only presence in the book is a concealed one is not projected at all;
+- NPCs: ``private_history`` is never read, and a MISSING character is not
+  placed anywhere.
+
+Everything excluded lands in ``withheld`` / ``withheld_notes`` — a bucket
+that exists so tests can assert an ABSENCE, which is the only way this class
+of failure gets caught at all.
 """
 
 from __future__ import annotations
@@ -31,6 +46,7 @@ import structlog
 
 from ...models.sourcebook import (
     CampaignSourcebook,
+    CanonStatus,
     CharacterStatus,
     KnowledgeClaim,
     RelationshipKind,
@@ -44,6 +60,7 @@ from .models import (
     GraphOperation,
     RelationType,
     Relationship,
+    slugify,
 )
 
 logger = structlog.get_logger()
@@ -73,8 +90,17 @@ _RELATION_MAP: dict[RelationshipKind, RelationType] = {
 # Claims the party may be told. Everything else is the DM's.
 _VISIBLE_TO_PLAY = frozenset({Visibility.PUBLIC, Visibility.PLAYER_KNOWN})
 
+# Only settled truth becomes an established fact. A claim can be PUBLIC and
+# FALSE (a rumour everyone repeats) or LEGEND (told, not verified); projecting
+# either as an established fact asserts it as canon in the narrator's context.
+_ASSERTABLE = frozenset({CanonStatus.CANON})
+
 # Sourcebook statuses that mean "not walking around alive".
 _NOT_ALIVE = frozenset({CharacterStatus.DEAD, CharacterStatus.UNDEAD})
+
+# Statuses that mean "not standing anywhere the party can find". Placing one
+# of these would assert a location the book never claims.
+_UNPLACED = frozenset({CharacterStatus.MISSING, CharacterStatus.UNKNOWN})
 
 
 @dataclass
@@ -90,6 +116,9 @@ class CompiledSourcebook:
     # Claims withheld from play — ground truth for tests and for the DM
     # layer, never projected into narrator-visible state.
     withheld: list[KnowledgeClaim] = field(default_factory=list)
+    # Everything else the boundary held back (secret ties, concealed items,
+    # inactive quests), as "<channel> <id>: <reason>". Assertable absence.
+    withheld_notes: list[str] = field(default_factory=list)
     # Non-fatal authoring problems (dangling references the schema's own
     # validators do not cover). Compilation continues around them.
     warnings: list[str] = field(default_factory=list)
@@ -104,7 +133,10 @@ class CompiledSourcebook:
 
 
 def _npc_properties(npc) -> dict[str, str]:
-    description = npc.appearance or npc.summary or npc.role
+    # Player-facing fields first. `summary` is the author's shelf for "what
+    # this character IS", twist included, so it is the last resort rather
+    # than the first choice. private_history is never read at all.
+    description = npc.appearance or npc.role or npc.summary
     properties = {
         "description": description,
         "alive": "false" if npc.status in _NOT_ALIVE else "true",
@@ -141,20 +173,68 @@ def compile_sourcebook(
             properties={k: v for k, v in properties.items() if v},
         )))
 
+    # An item whose ONLY presence in the book is a concealed inventory entry
+    # is not something the world can show yet; projecting a described node
+    # for it hands the narrator the secret without the ownership edge.
+    concealed_only: set[str] = set()
+    for item in book.items:
+        entries = [
+            entry
+            for npc in book.npcs
+            for entry in npc.inventory
+            if entry.item_id == item.id
+        ]
+        if entries and all(e.hidden for e in entries) and not item.default_location_id:
+            concealed_only.add(item.id)
+
+    active_quests = set(book.starting_state.active_quest_ids)
+
     for location in book.locations:
         _add_node(location, EntityType.LOCATION, {
             "description": location.description or location.summary,
             "kind": location.location_kind.value,
         })
+        if location.id != slugify(location.name):
+            out.warnings.append(
+                f"location {location.id!r} id is not slugify(name) "
+                f"({slugify(location.name)!r}) — code that resolves a location "
+                "by slugified name will fork a second node for it"
+            )
+
+    seen_npc_names: dict[str, str] = {}
     for npc in book.npcs:
         _add_node(npc, EntityType.NPC, _npc_properties(npc))
+        key = npc.name.strip().casefold()
+        if key in seen_npc_names:
+            out.warnings.append(
+                f"npc {npc.id!r} shares the name {npc.name!r} with "
+                f"{seen_npc_names[key]!r} — the graph MERGES same-named NPCs, "
+                "so one of them will be destroyed on apply; give them "
+                "distinguishing names"
+            )
+        else:
+            seen_npc_names[key] = npc.id
+
     for item in book.items:
+        if item.id in concealed_only:
+            out.withheld_notes.append(
+                f"item {item.id}: only ever held as a hidden inventory entry"
+            )
+            continue
         _add_node(item, EntityType.ITEM, {
             "description": item.description or item.summary,
             "category": item.category,
         })
+
     for quest in book.quests:
-        _add_node(quest, EntityType.QUEST, {"description": quest.summary})
+        if quest.id not in active_quests:
+            out.withheld_notes.append(
+                f"quest {quest.id}: not listed in starting_state.active_quest_ids"
+            )
+            continue
+        # `hook` is what the party could have heard. `summary` is where the
+        # author writes the answer, and it is NOT projected.
+        _add_node(quest, EntityType.QUEST, {"description": quest.hook})
     # Factions and lore domains have no graph entity type. They stay in the
     # book; membership still projects as ALLIED_WITH edges between NPCs and
     # whatever faction node a future schema version introduces.
@@ -170,7 +250,11 @@ def compile_sourcebook(
         edges.append((source, target, relation))
 
     for npc in book.npcs:
-        if npc.current_location_id:
+        if npc.status in _UNPLACED:
+            out.withheld_notes.append(
+                f"npc {npc.id}: status {npc.status.value} — not placed anywhere"
+            )
+        elif npc.current_location_id:
             _edge(npc.id, npc.current_location_id, RelationType.LOCATED_AT,
                   f"npc {npc.id} current_location")
         elif npc.home_location_id:
@@ -178,9 +262,19 @@ def compile_sourcebook(
                   f"npc {npc.id} home_location")
         for entry in npc.inventory:
             item_id = getattr(entry, "item_id", "") or ""
-            if item_id:
-                _edge(npc.id, item_id, RelationType.OWNS,
-                      f"npc {npc.id} inventory")
+            if not item_id:
+                continue
+            if entry.hidden:
+                # A concealed possession must not be published as ownership:
+                # the edge alone answers "who has the forged deed".
+                out.withheld_notes.append(
+                    f"inventory {npc.id}->{item_id}: hidden"
+                )
+                continue
+            if item_id in concealed_only:
+                continue
+            _edge(npc.id, item_id, RelationType.OWNS,
+                  f"npc {npc.id} inventory")
 
     for item in book.items:
         if item.default_location_id:
@@ -201,6 +295,15 @@ def compile_sourcebook(
 
     for relationship in book.relationships:
         if not relationship.active:
+            continue
+        # A tie the author described ONLY privately is a secret tie. The
+        # collapse onto retrieval types makes publishing it worse, not
+        # merely lossy: a covert chain of command (SERVES) would surface as
+        # a plain alliance, disclosing the conspiracy in the first retrieval.
+        if relationship.private_description and not relationship.public_description:
+            out.withheld_notes.append(
+                f"relationship {relationship.id}: private_description only"
+            )
             continue
         relation = _RELATION_MAP.get(relationship.kind, RelationType.KNOWS)
         _edge(relationship.source_id, relationship.target_id, relation,
@@ -242,10 +345,21 @@ def compile_sourcebook(
     # ── Claims: the visibility boundary ──────────────────────────────────
     granted = set(start.player_known_claim_ids)
     for claim in book.claims:
-        if claim.visibility in _VISIBLE_TO_PLAY or claim.id in granted:
-            out.established_facts.append(claim.text)
-        else:
+        visible = claim.visibility in _VISIBLE_TO_PLAY or claim.id in granted
+        if not visible:
             out.withheld.append(claim)
+        elif claim.canon_status not in _ASSERTABLE:
+            # Public but not settled truth. Stating a rumour or a known
+            # falsehood as an established fact makes it canon in the
+            # narrator's context, which is the same failure wearing a
+            # different hat.
+            out.withheld.append(claim)
+            out.withheld_notes.append(
+                f"claim {claim.id}: visible but canon_status="
+                f"{claim.canon_status.value}"
+            )
+        else:
+            out.established_facts.append(claim.text)
 
     logger.info(
         "sourcebook_compiled",
@@ -253,7 +367,8 @@ def compile_sourcebook(
         nodes=out.node_count,
         edges=out.edge_count,
         facts=len(out.established_facts),
-        withheld=len(out.withheld),
+        withheld_claims=len(out.withheld),
+        withheld_other=len(out.withheld_notes),
         warnings=len(out.warnings),
     )
     return out

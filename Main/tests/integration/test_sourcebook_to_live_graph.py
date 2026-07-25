@@ -37,12 +37,12 @@ def _book() -> CampaignSourcebook:
             LocationSpec(id="copper-finch", name="Copper Finch",
                          location_kind=LocationKind.BUILDING,
                          description="A rain-dark tavern."),
-            LocationSpec(id="ash-gate-arch", name="Ash Gate",
+            LocationSpec(id="ash-gate", name="Ash Gate",
                          location_kind=LocationKind.SITE,
                          description="A cracked black arch."),
         ],
         routes=[RouteSpec(id="finch-to-gate", from_location_id="copper-finch",
-                          to_location_id="ash-gate-arch")],
+                          to_location_id="ash-gate")],
         npcs=[
             NPCSpec(id="mara-venn", name="Mara Venn",
                     appearance="A sharp-eyed woman in a charcoal coat.",
@@ -52,7 +52,7 @@ def _book() -> CampaignSourcebook:
                     current_location_id="copper-finch"),
             NPCSpec(id="old-bram", name="Old Bram", status=CharacterStatus.DEAD,
                     summary="The dead ferryman.",
-                    current_location_id="ash-gate-arch"),
+                    current_location_id="ash-gate"),
         ],
         claims=[
             # Both claims name Mara Venn, who is on stage — so scene-relevance

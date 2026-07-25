@@ -558,7 +558,7 @@ class WorldStateStore:
     # sanctioned channel for these is update_entity(status=...), which
     # deliberately does NOT clear the residency edge (remove_entity is
     # forbidden for them), so residency alone cannot mean "still here".
-    _OFFSTAGE_STATUSES = frozenset({"dead", "fled", "captured"})
+    _OFFSTAGE_STATUSES = frozenset({"dead", "fled", "captured", "missing"})
 
     def hydrate_residents(
         self,
