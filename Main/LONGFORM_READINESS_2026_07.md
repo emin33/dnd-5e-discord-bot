@@ -1100,12 +1100,28 @@ fallback is gone entirely; and PGI item matching became bidirectional
 after a live hard-fail blocked a whole turn because triage said "Silver
 Antidote Vial" for a row reading "silver antidote".
 
-24 pinning tests (13 handler/consumption, 4 claim-scrub, 5 goods
-classification, 2 PGI matching), each failing against pre-fix source;
-1358 green, mypy clean. Live re-run with the original defect phrasing
-restored to the sweep script (no gift-framing workarounds):
-`20260725_003213` PASSES all 16 gates, 13/13 expected turns, effects
-41/41, $0.025 — currency reconciles in both directions (-2gp paid once,
-+5sp received), items granted/removed reconcile, and the harness's
+Adversarial pass found three more, all fixed and pinned: Step 5's
+idempotency keys were random (a retried turn would consume twice) and now
+derive from session+turn like the narrator path; the consumption dedup
+set was snapshotted before its loop, so a repeated resource entry
+consumed twice; and a turn that fails closed — narrating "no world-state
+change is committed" and dropping the narrator's effects — would still
+have committed the deterministic claim merged in afterward, so the prose
+denied a write the receipts recorded. Authoritative effects are now
+dropped on a fail-closed turn too.
+
+27 pinning tests (15 handler/consumption, 4 claim-scrub, 5 goods
+classification, 2 PGI matching, 1 fail-closed), each failing against
+pre-fix source; 1361 green, mypy clean. Live re-runs with the original
+defect phrasing restored to the sweep script (no gift-framing
+workarounds): `20260725_003213` and `20260725_004932` both PASS all 16
+gates, 13/13 expected turns, effects 41/41, ~$0.025 — currency
+reconciles in both directions (-2gp paid once, +5sp received), items
+granted/removed reconcile, and the harness's
 `_triage_consumption_receipts` reconstruction is deleted because Step 5
-now emits real receipts of its own.
+now emits real receipts of its own. A third run (`20260725_004215`) held
+all four agreement gates while failing two unrelated narration gates:
+the compass handover triaged `social` that run, never reaching the
+deterministic path, and the narrator's obligation net failed it closed —
+model variance in the pre-existing safety net, with the ledger agreeing
+(no write, no receipt).

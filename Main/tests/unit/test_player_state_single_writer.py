@@ -85,10 +85,12 @@ class _RecordingExecutor:
 
     def __init__(self):
         self.executed: list[ProposedEffect] = []
+        self.keys: list[str] = []
         self.acting_character_id = None
 
     async def execute(self, effect, idempotency_key=None):
         self.executed.append(effect)
+        self.keys.append(idempotency_key)
         applied = {}
         if effect.player_currency_delta:
             applied["currency_delta"] = dict(effect.player_currency_delta)
@@ -395,6 +397,44 @@ async def test_consume_resources_writes_residual_with_receipt(rig):
         "items_removed": [{"name": "Arrow", "quantity": 2}]
     }
     assert repo.writes == []
+
+
+@pytest.mark.asyncio
+async def test_repeated_resource_entry_dedupes_against_its_own_write(rig):
+    """The dedup set must see writes this loop just made.
+
+    Snapshotting receipts once before the loop let a repeated entry consume
+    the item a second time — the same double-write shape, self-inflicted.
+    """
+    orch, repo, executor, _ = rig
+    orch._last_effect_executions = []
+
+    await orch._consume_resources(
+        [{"item": "Arrow", "quantity": 2}, {"item": "Arrow", "quantity": 2}],
+        "Test Hero",
+    )
+
+    assert len(executor.executed) == 1
+
+
+@pytest.mark.asyncio
+async def test_step5_idempotency_keys_are_turn_stable(rig):
+    """Keys derive from session+turn, so a retried turn collapses instead
+    of consuming twice — matching the narrator path's derivation."""
+    orch, _, executor, _ = rig
+
+    orch._last_effect_executions = []
+    orch._last_deterministic_proposed = []
+    await orch._consume_currency({"gold": 2}, "Test Hero")
+
+    # Same turn replayed (receipts cleared as they would be on a retry).
+    orch._last_effect_executions = []
+    orch._last_deterministic_proposed = []
+    await orch._consume_currency({"gold": 2}, "Test Hero")
+
+    assert len(executor.keys) == 2
+    assert executor.keys[0] == executor.keys[1]
+    assert "turn-" in executor.keys[0] and "step5" in executor.keys[0]
 
 
 # ── Claim scrubbing: per field/entity, not per effect type ───────────────────

@@ -602,6 +602,44 @@ async def test_inventory_equip_and_take_off_persist_real_state(net):
 
 
 @pytest.mark.asyncio
+async def test_failed_closed_turn_commits_no_deterministic_write(net):
+    """A turn that narrates "no world-state change is committed" must not
+    commit the deterministic claim either.
+
+    Authoritative effects are merged AFTER narration, so a fail-closed turn
+    would otherwise move gold and mint an item while the prose denies any
+    change — receipts recording a write the player was told never happened.
+    """
+    await net.inv_repo.add_gold(net.character.id, 100)
+
+    class _FailedClosedStrategy:
+        last_diagnostics = {"resolved_outcome_failed_closed": True}
+
+        async def run(self, spec, context, triage):
+            return (
+                "*The declared outcome could not be resolved consistently; "
+                "no world-state change is committed.*",
+                [],
+            )
+
+    net.monkeypatch.setattr(net.orch, "_narration_strategy", _FailedClosedStrategy())
+
+    result = await net.run(
+        action="I buy a healing potion from the merchant",
+        triage=triage_response(
+            "purchase", needs_roll=False,
+            item_name="Healing Potion", item_cost=30, quantity=1,
+        ),
+        narration=narration_response("unused — the strategy is stubbed"),
+    )
+
+    assert result.proposed_effects == []
+    currency = await net.inv_repo.get_currency(net.character.id)
+    assert currency.gold == 100
+    assert await net.inv_repo.get_all_items(net.character.id) == []
+
+
+@pytest.mark.asyncio
 async def test_generic_item_use_defers_to_narrator_and_preserves_row(net):
     """Item use claims no deterministic mechanics and consumes nothing.
 

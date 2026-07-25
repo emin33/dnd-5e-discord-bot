@@ -2095,6 +2095,19 @@ class DMOrchestrator:
         authoritative_effects = list(
             (mechanical_result or {}).get("authoritative_effects") or []
         )
+        # A turn that failed closed narrates "no world-state change is
+        # committed" and drops the narrator's effects. The deterministic
+        # claim has to honor that same sentence, or the prose denies a write
+        # the receipts record. The player's action simply didn't land.
+        if authoritative_effects and (
+            getattr(self._narration_strategy, "last_diagnostics", {}) or {}
+        ).get("resolved_outcome_failed_closed"):
+            logger.info(
+                "authoritative_effects_dropped_failed_closed",
+                count=len(authoritative_effects),
+                action_type=(mechanical_result or {}).get("action_type"),
+            )
+            authoritative_effects = []
         if authoritative_effects:
             proposed_effects = _scrub_claimed_mutations(
                 proposed_effects, authoritative_effects
@@ -3441,12 +3454,26 @@ class DMOrchestrator:
             )
         self._effect_executor.acting_character_id = character_id
 
+        # Same derivation the narrator path uses (session+turn, not a fresh
+        # id), so a retried turn collapses onto the same keys instead of
+        # consuming twice; the index is this turn's deterministic-write
+        # sequence, mirroring the tool path's per-effect position.
         campaign_id = (
             (self._current_session.campaign_id if self._current_session else None)
             or "unknown"
         )
+        world_state = (
+            getattr(self._current_session, "world_state", None)
+            if self._current_session else None
+        )
+        session_key = getattr(self._current_session, "session_key", None)
+        message_id = (
+            f"{session_key}:turn-{world_state.turn}:step5"
+            if session_key and world_state is not None
+            else f"step5:{uuid.uuid4()}"
+        )
         idem_key = build_effect_idempotency_key(
-            campaign_id, f"step5:{uuid.uuid4()}", 0
+            campaign_id, message_id, len(self._last_deterministic_proposed)
         )
         result = await self._effect_executor.execute(effect, idem_key)
         if not result.success:
@@ -3502,11 +3529,15 @@ class DMOrchestrator:
         def _slug(name: str) -> str:
             return (name or "").strip().lower().replace(" ", "-")
 
-        receipted_removals = {
-            _slug(str(entry.get("name") or ""))
-            for applied in self._turn_update_player_receipts()
-            for entry in (applied.get("items_removed") or [])
-        }
+        def _receipted_removals() -> set[str]:
+            # Recomputed per resource: a residual write earlier in this loop
+            # adds its own receipt, and a repeated entry must dedupe against
+            # it just as it would against the narrator's.
+            return {
+                _slug(str(entry.get("name") or ""))
+                for applied in self._turn_update_player_receipts()
+                for entry in (applied.get("items_removed") or [])
+            }
 
         for resource in resources:
             item_name = resource.get("item", "")
@@ -3533,6 +3564,7 @@ class DMOrchestrator:
                 continue
 
             item = matching[0]
+            receipted_removals = _receipted_removals()
             if (
                 item.item_index in receipted_removals
                 or _slug(item.item_name) in receipted_removals
