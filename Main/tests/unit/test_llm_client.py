@@ -526,8 +526,11 @@ class TestOllamaCompatStructuredOutput:
         )
 
         assert captured["response_format"] == {"type": "json_object"}
-        # think unset -> not injected
-        assert "think" not in captured["extra_body"]
+        # think unset -> explicitly DISABLED, not omitted. Omitting it left
+        # thinking on, and a thinking model (qwen3.5) returns an empty
+        # visible response — on this, the tool-bearing path, that means no
+        # tool calls at all. Opt in with think=True.
+        assert captured["extra_body"]["think"] is False
 
 
 # ── AQ-ASYNC-08: executor hygiene ────────────────────────────────────────────

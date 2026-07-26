@@ -302,11 +302,18 @@ class OllamaClient:
             elif json_mode:
                 kwargs["format"] = "json"
 
-            # Pass think mode to Ollama. Qwen3/3.5 can hang or produce
-            # empty output with thinking enabled, so callers pass
-            # think=False for reliability.
-            if think is not None:
-                kwargs["think"] = think
+            # Thinking mode: default OFF, matching the DeepSeek client's
+            # policy and for the same reason — we want prose, not CoT.
+            #
+            # It used to be opt-out (forward only when a caller passed it),
+            # and every caller that FORGOT got thinking on. On qwen3.5 that
+            # does not merely leak reasoning: the visible response comes back
+            # EMPTY, with the whole budget spent in the thinking field. A
+            # live local run showed the shape of that failure — turn 1 timed
+            # out, then every later turn produced no tool calls and invented
+            # a setting, because the narrator leg was reading empty strings.
+            # think=True still opts in for reasoning-heavy work.
+            kwargs["think"] = think is True
 
             return self._client.chat(**kwargs)
 
@@ -614,9 +621,10 @@ class OllamaClient:
             extra_body["options"]["min_p"] = min_p
         # think is Ollama-native (not an OpenAI param); forward it as a
         # top-level extra field like ``options`` — previously it was
-        # silently dropped on the tool-bearing path (R4).
-        if think is not None:
-            extra_body["think"] = think
+        # silently dropped on the tool-bearing path (R4). Default OFF: this
+        # is the TOOL-bearing path, and a thinking model returns an empty
+        # visible response, so an omitted think meant no tool calls at all.
+        extra_body["think"] = think is True
         kwargs["extra_body"] = extra_body
 
         try:
@@ -754,8 +762,7 @@ class OllamaClient:
                 "options": options,
                 "stream": True,
             }
-            if think is not None:
-                kwargs["think"] = think
+            kwargs["think"] = think is True
 
             return self._client.chat(**kwargs)
 
