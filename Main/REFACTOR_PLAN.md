@@ -680,10 +680,10 @@ both **DONE** (`c0b3d67`; the three helpers now route via `_resolve_player_chara
 
 1. This file (`REFACTOR_PLAN.md`).
 2. `research/testing-llm-pipelines.md` and `research/decomposing-orchestrator.md` (the detail).
-3. `AUDIT_QUALITY_2026_05_29.md` (quality findings + grades).
-4. `AUDIT_DATAFLOW_2026_05_29.md` — esp. §0 (unified state model), §4 (state-ownership map
+3. `archive/audits/AUDIT_QUALITY_2026_05_29.md` (quality findings + grades).
+4. `archive/audits/AUDIT_DATAFLOW_2026_05_29.md` — esp. §0 (unified state model), §4 (state-ownership map
    = the decomposition blueprint), §5b (refactor progress).
-5. `AUDIT_FULL_2026_05.md` (the #6/#7 deferred-cluster rationale).
+5. `archive/audits/AUDIT_FULL_2026_05.md` (the #6/#7 deferred-cluster rationale).
 6. Memory: `audit_quality_2026_05_29.md`, `audit_dataflow_2026_05_29.md`, `roadmap_audit_2026_05.md`.
 7. `git log --oneline -10`; run the suite with the controlled-file pattern
    (`timeout 180 python -m pytest tests/ --timeout=45 -q > _testout.txt 2>&1; echo EXIT=$?`)

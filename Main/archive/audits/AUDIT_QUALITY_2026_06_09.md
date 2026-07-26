@@ -1,3 +1,11 @@
+> **ARCHIVED — historical record, not a worklist.**
+> Superseded by `WORKLIST_2026_07_16.md`, whose 33-agent survey read this
+> document (with the other audits) and triaged 216 raw findings down to 22
+> confirmed still open against the working tree. **The checkboxes below are
+> stale** — most unchecked items here were already fixed by the time of that
+> survey. Kept for provenance: finding ids cited elsewhere (AQ-*, DF-*,
+> C*/N*/R*) resolve here. Current picture: `STATUS_2026_07_26.md`.
+
 # Code Quality Audit - 2026-06-09
 
 Branch `audit-and-single-authority-refactor`, commit `834a14b` — 10 Fable 5 dimension reviewers + hostile per-finding verification; 130 findings confirmed (110 verbatim, 20 adjusted with corrected counts), 0 refuted; 109 distinct findings after cross-dimension dedupe (21 merged as cross-references). No dimension was left unverified.

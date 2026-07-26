@@ -1,3 +1,11 @@
+> **ARCHIVED — historical record, not a worklist.**
+> Superseded by `WORKLIST_2026_07_16.md`, whose 33-agent survey read this
+> document (with the other audits) and triaged 216 raw findings down to 22
+> confirmed still open against the working tree. **The checkboxes below are
+> stale** — most unchecked items here were already fixed by the time of that
+> survey. Kept for provenance: finding ids cited elsewhere (AQ-*, DF-*,
+> C*/N*/R*) resolve here. Current picture: `STATUS_2026_07_26.md`.
+
 # Immersion & Modularity Audit — April 2026
 
 Audit of the immersion system, web/discord parity, provider modularity, and image generation.
