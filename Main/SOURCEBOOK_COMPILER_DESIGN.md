@@ -105,3 +105,39 @@ The v1 authoring contract is ready; production import is intentionally not wired
 7. A compact quality report covering lore density, connectedness, quest/reveal reachability, relationship depth, contradictions, and orphan content.
 
 That sequencing lets the creative protocol become ambitious without making generated prose a privileged database writer.
+
+## Why canonical tables, and not a document blob
+
+Recorded because the shortcut is tempting and wrong. Storing the validated
+book as one versioned JSON document would give canonicality and a rebuild
+path cheaply — and it fails the moment the runtime overlay needs to join
+against it.
+
+The purpose of pre-seeding is to give the realtime systems a coherent
+foundation to build on. That makes the seeded corpus a *query target*, not
+an archive. The queries play actually generates are not BFS-from-a-seed:
+
+- Which DISCOVERABLE claims has this party not yet earned?
+- Which claim currently supersedes which, once play overturns canon?
+- Every member of a faction; every NPC hostile to X; everything authored in
+  a region the party has not touched.
+- What did the party learn, and when — overlay events joined to canon.
+
+None of those are answerable against a blob without loading the whole book
+and scanning it per turn, and all of them are cheap against indexed columns.
+
+The graph cannot substitute either, by construction: node properties are
+`dict[str, str]`, there are four entity types, and there is no provenance,
+visibility, or temporal validity. `sourcebook_compiler` is deliberately a
+LOSSY projection — 24 relationship kinds collapse onto 9 relation types, and
+visibility is enforced by dropping content. Graph-only storage therefore
+discards exactly the structure that makes seeded lore coherent.
+
+**Column vs JSON rule.** Normalize what the overlay joins, filters or
+traverses: locations, npcs, items, factions, quests, relationships, and
+above all `claims` (subject_id, visibility, canon_status, superseded_by)
+plus a per-campaign discovery table. Keep as JSON columns the sub-structures
+that are read whole and never filtered — `BehaviorProfile`, sensory details,
+authoring notes, story beats. This keeps the migration surface proportional
+to what is genuinely queried, which is the real cost concern, rather than
+mirroring all 25+ authoring classes.
