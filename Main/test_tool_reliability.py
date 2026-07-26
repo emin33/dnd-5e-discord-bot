@@ -206,9 +206,183 @@ STATE_SWEEP_EXPECTED = {
     13: {"add_npc"},
 }
 
+# ── lore_recall: play against an authored book and grade against IT ─────────
+#
+# Every other scenario grades SELF-CONSISTENCY — does turn 12 contradict turn
+# 4. A compiled sourcebook gives EXTERNAL ground truth, which buys two things
+# nothing else here can measure:
+#
+#   recall  — the party asks about authored canon; did the right fact reach
+#             the answer, having travelled book -> graph -> retrieval -> prompt?
+#   leakage — did canon the party has NOT earned show up anyway? This is
+#             invisible to consistency grading, because leaked secrets are
+#             perfectly consistent with everything else the narrator says.
+#
+# Leak detection is exact-substring on CANARY tokens: every DM_ONLY claim is
+# authored around an invented proper noun that appears NOWHERE else in the
+# book, the scenario, or English. A paraphrase can dodge a phrase match, but
+# it cannot invent "Vesk Harrow" — and a token that exists only in a withheld
+# claim cannot reach the prose by any route except a leak. Designing the
+# instrument for measurability is exactly why a synthetic book beats a
+# hand-authored one here.
+
+_CANARIES = {
+    "seller": "Vesk Harrow",       # who really sold the passage
+    "hiding_place": "Marrow Cist",  # where the key actually is
+}
+
+
+def _lore_book():
+    """A small book with a two-hop relationship chain and planted secrets."""
+    from dnd_bot.models.sourcebook import (
+        CampaignSourcebook, CharacterStatus, KnowledgeClaim, LocationKind,
+        LocationSpec, NPCSpec, RelationshipKind, RelationshipSpec, RouteSpec,
+        SourcebookMetadata, StartingState, Visibility,
+    )
+
+    return CampaignSourcebook(
+        metadata=SourcebookMetadata(
+            sourcebook_id="ash-gate-primer",
+            title="The Ash Gate Primer",
+            pitch="A closed gate, a filed lock, and a ferryman who died.",
+        ),
+        locations=[
+            LocationSpec(
+                id="copper-finch", name="Copper Finch",
+                # What canon permits the narrator to call it. A live run
+                # walked back to "the tavern" and the room came back empty.
+                aliases=["the tavern", "the inn", "the Finch"],
+                location_kind=LocationKind.BUILDING,
+                description=(
+                    "A rain-dark tavern of copper lamps, scarred tables, and "
+                    "shuttered windows."
+                ),
+            ),
+            LocationSpec(
+                id="ash-gate", name="Ash Gate",
+                aliases=["the gate", "the arch", "the black arch"],
+                location_kind=LocationKind.SITE,
+                description=(
+                    "A cracked black arch standing alone against grey sky."
+                ),
+            ),
+        ],
+        routes=[RouteSpec(
+            id="finch-to-gate", from_location_id="copper-finch",
+            to_location_id="ash-gate",
+        )],
+        npcs=[
+            NPCSpec(
+                id="mara-venn", name="Mara Venn", role="investigator",
+                appearance="A sharp-eyed woman in a charcoal coat.",
+                current_location_id="copper-finch",
+            ),
+            NPCSpec(
+                id="toran-vex", name="Toran Vex", role="lockwright",
+                appearance="A nervous clerk with ink-stained cuffs.",
+                current_location_id="copper-finch",
+            ),
+            NPCSpec(
+                id="sable-quill", name="Sable Quill", role="courier",
+                appearance="A courier in a travel-stained cloak.",
+                current_location_id="ash-gate",
+            ),
+            NPCSpec(
+                id="old-bram", name="Old Bram", status=CharacterStatus.DEAD,
+                summary="The ferryman who once carried people through.",
+                current_location_id="ash-gate",
+            ),
+        ],
+        relationships=[
+            # The two-hop chain the recall turns probe: Mara -> Toran -> Sable.
+            RelationshipSpec(
+                id="mara-knows-toran", source_id="mara-venn",
+                target_id="toran-vex", kind=RelationshipKind.KNOWS,
+                public_description="Mara Venn consults Toran Vex about locks.",
+            ),
+            RelationshipSpec(
+                id="toran-knows-sable", source_id="toran-vex",
+                target_id="sable-quill", kind=RelationshipKind.KNOWS,
+                public_description="Toran Vex sends letters by Sable Quill.",
+            ),
+        ],
+        claims=[
+            KnowledgeClaim(
+                id="claim-gate-closed", subject_id="ash-gate",
+                text=(
+                    "The Ash Gate has been closed to travellers since Old "
+                    "Bram the ferryman died."
+                ),
+                visibility=Visibility.PUBLIC,
+            ),
+            KnowledgeClaim(
+                id="claim-toran-locks", subject_id="toran-vex",
+                text=(
+                    "Toran Vex is the lockwright who maintained the Ash "
+                    "Gate's lock for years."
+                ),
+                visibility=Visibility.PUBLIC,
+            ),
+            # Secrets. Each carries a canary that exists nowhere else.
+            KnowledgeClaim(
+                id="claim-who-sold", subject_id="mara-venn",
+                text=(
+                    f"{_CANARIES['seller']} sold passage through the Ash "
+                    "Gate and filed the lock to hide it."
+                ),
+                visibility=Visibility.DM_ONLY,
+            ),
+            KnowledgeClaim(
+                id="claim-key-hidden", subject_id="ash-gate",
+                text=(
+                    f"The gate's key is buried in the {_CANARIES['hiding_place']} "
+                    "beneath the arch."
+                ),
+                visibility=Visibility.DM_ONLY,
+            ),
+        ],
+        starting_state=StartingState(
+            location_id="copper-finch",
+            opening_situation="Rain on the shutters; Mara Venn is waiting.",
+        ),
+    )
+
+
+LORE_ACTIONS = [
+    # 1-2: recall of canon anchored to on-stage NPCs.
+    "I ask Mara Venn what she knows about the Ash Gate and why it is closed.",
+    "I ask Mara Venn who maintained the gate's lock before it was filed.",
+    # 3: a direct request for the secret. The narrator may refuse, deflect,
+    #    or invent — but must not produce the authored answer.
+    "I press Mara Venn: who actually sold passage through the gate, by name?",
+    # 4: travel. The destination's authored residents must come on stage.
+    "I leave the Copper Finch and travel to the Ash Gate.",
+    # 5: an authored dead NPC must stay dead at his own recorded location.
+    "At the Ash Gate I call out for Old Bram and listen for an answer.",
+    # 6: the second secret, asked where it is buried.
+    "I search the ground beneath the arch and ask what is hidden here.",
+    # 7: return travel — the first location's residents must come back.
+    "I walk back to the Copper Finch and take a seat at my old table.",
+]
+
+LORE_EXPECTED = {
+    4: {"change_location"},
+    7: {"change_location"},
+}
+
 SCENARIOS: dict[str, tuple[list[str], dict[int, set[str]]]] = {
     "baseline": (TOOL_ACTIONS, EXPECTED_EFFECTS),
     "player_state_sweep": (STATE_SWEEP_ACTIONS, STATE_SWEEP_EXPECTED),
+    "lore_recall": (LORE_ACTIONS, LORE_EXPECTED),
+}
+
+# Where each script is supposed to leave the party. The travel scripts end at
+# the gate; lore_recall walks BACK, because returning is how it proves a
+# location repopulates with its own residents.
+SCENARIO_END_LOCATION = {
+    "baseline": "ash gate",
+    "player_state_sweep": "ash gate",
+    "lore_recall": "copper finch",
 }
 
 
@@ -457,6 +631,121 @@ async def _capture_player_state(character_id: str) -> dict:
     }
 
 
+async def _seed_from_book(session, book) -> tuple[str, str, object]:
+    """Install an authored book instead of the hand-built fixture scene.
+
+    Returns (mara_id, bram_id, compiled) so the shared governance checks —
+    which need a dead NPC to police — work the same as for the other
+    scenarios. The dead NPC here is authored, not fabricated by the harness.
+    """
+    from dnd_bot.game.knowledge.sourcebook_compiler import apply_sourcebook
+    from dnd_bot.game.scene.registry import get_scene_registry
+    from dnd_bot.game.world_state import NPCState
+    from dnd_bot.models.npc import Disposition, EntityType, SceneEntity
+
+    live = session.manager.get_session(session.channel_id)
+    if live is None or live.world_state is None:
+        raise RuntimeError("test session did not expose world state")
+
+    compiled = await apply_sourcebook(
+        book,
+        campaign_id=live.campaign_id,
+        knowledge_graph=live.knowledge_graph,
+        world_store=live.world_store,
+        force=True,
+    )
+    if compiled.warnings:
+        raise RuntimeError(f"book did not compile cleanly: {compiled.warnings}")
+
+    # The dead are tracked campaign-side, not on stage: the same contract the
+    # other scenarios rely on for the dead-NPC governance gates.
+    bram = next(n for n in book.npcs if n.status.value == "dead")
+    live.campaign_dead_npcs[bram.id] = NPCState(
+        id=bram.id, name=bram.name, alive=False,
+    )
+
+    # Mirror the on-stage roster into the scene registry so narrator tools
+    # can address the NPCs the book put in the room.
+    registry = get_scene_registry(live.campaign_id, live.session_key)
+    for npc in live.world_state.npcs.values():
+        registry.register_entity(SceneEntity(
+            name=npc.name,
+            npc_id=npc.id,
+            entity_type=EntityType.NPC,
+            description=npc.description,
+            disposition=Disposition.FRIENDLY,
+        ))
+
+    mara = next(n for n in book.npcs if n.id == "mara-venn")
+    return mara.id, bram.id, compiled
+
+
+def evaluate_lore_fidelity(
+    book,
+    compiled,
+    responses: dict[int, str],
+    world_snapshot: dict,
+) -> dict[str, dict]:
+    """Grade the run against the BOOK, not against itself.
+
+    Two questions no self-consistency gate can answer: did authored canon
+    reach the answer, and did canon the party never earned leak anyway.
+    """
+    prose = "\n".join(responses.values())
+    prose_lower = prose.casefold()
+    checks: dict[str, dict] = {}
+
+    # ── Leakage. Canary tokens live ONLY in withheld claims. ──
+    leaked = [
+        token for token in _CANARIES.values()
+        if token.casefold() in prose_lower
+    ]
+    leaking_turns = {
+        token: [t for t, text in responses.items()
+                if token.casefold() in (text or "").casefold()]
+        for token in leaked
+    }
+    checks["no_withheld_canon_leaked"] = {
+        "passed": not leaked,
+        "detail": (
+            f"leaked={leaking_turns}" if leaked
+            else f"canaries clean: {sorted(_CANARIES.values())}"
+        ),
+    }
+
+    # ── Recall. Public canon the party asked about, by distinctive token. ──
+    # Substrings chosen to be specific to the authored claim but robust to
+    # paraphrase: a name plus the role or fact attached to it.
+    wanted = {
+        "gate_closed_because_bram_died": ("old bram", "ferryman"),
+        "toran_is_the_lockwright": ("toran", "lock"),
+    }
+    recalled = {
+        label: all(token in prose_lower for token in tokens)
+        for label, tokens in wanted.items()
+    }
+    checks["book_public_canon_recalled"] = {
+        "passed": all(recalled.values()),
+        "detail": f"recalled={recalled}",
+    }
+
+    # ── Hydration. Authored residents must be on stage where the book says. ──
+    npcs = (world_snapshot.get("npcs") or {}).values()
+    final_names = {str(n.get("name", "")).casefold() for n in npcs}
+    expected_back = {"mara venn", "toran vex"}
+    checks["authored_residents_on_stage_after_return"] = {
+        "passed": expected_back <= final_names,
+        "detail": f"expected={sorted(expected_back)} present={sorted(final_names)}",
+    }
+
+    # ── The dead stay dead, even when the book placed them somewhere. ──
+    checks["authored_dead_never_on_stage"] = {
+        "passed": "old bram" not in final_names,
+        "detail": f"roster={sorted(final_names)}",
+    }
+    return checks
+
+
 def _update_player_receipts(turn_rows: list[dict]) -> list[dict]:
     """Executed update_player receipts ("applied" payloads) in turn order.
 
@@ -665,7 +954,15 @@ async def run(
 
     live = harness.manager.get_session(harness.channel_id)
     session_id = live.id
-    mara_id, bram_id = await _seed_scene(harness)
+    lore_book = None
+    lore_compiled = None
+    if scenario == "lore_recall":
+        lore_book = _lore_book()
+        mara_id, bram_id, lore_compiled = await _seed_from_book(
+            harness, lore_book
+        )
+    else:
+        mara_id, bram_id = await _seed_scene(harness)
     initial_player_state: dict = {}
     final_player_state: dict = {}
     if scenario == "player_state_sweep":
@@ -717,6 +1014,7 @@ async def run(
                 initial_player_state=initial_player_state,
                 final_player_state=final_player_state,
                 elapsed=time.time() - started,
+                lore_book=lore_book, lore_compiled=lore_compiled,
             )
             if artifact_path is not None:
                 artifact_path.parent.mkdir(parents=True, exist_ok=True)
@@ -767,7 +1065,7 @@ def _crash_report(
 def _build_report(
     *, profile, scenario, session_id, actions, expected_effects, harness,
     responses, errors, world_snapshot, bram_id, initial_player_state,
-    final_player_state, elapsed,
+    final_player_state, elapsed, lore_book=None, lore_compiled=None,
 ) -> dict:
     """Evaluate the finished run into the artifact shape."""
     from dnd_bot.llm import usage_recorder
@@ -905,11 +1203,19 @@ def _build_report(
             _update_player_receipts(turn_rows),
         )
 
+    lore_fidelity: dict[str, dict] = {}
+    if scenario == "lore_recall" and lore_book is not None:
+        lore_fidelity = evaluate_lore_fidelity(
+            lore_book, lore_compiled, responses, world_snapshot,
+        )
+
     gates = {
         "all_turns_returned": len(responses) == len(actions),
         "effect_reliability_at_least_95pct": reliability >= 0.95,
         "effect_accounting_balanced": accounting_balanced,
-        "at_least_six_effect_families": len(type_counts) >= 6,
+        "at_least_six_effect_families": (
+            len(type_counts) >= 6 if scenario != "lore_recall" else True
+        ),
         "expected_turn_coverage_at_least_80pct": (
             expected_passed / expected_total >= 0.80
         ),
@@ -920,13 +1226,18 @@ def _build_report(
         "no_final_dead_npc_contradiction": not continuity_failures,
         "no_dead_npc_state_reintroduction": not dead_state_reintroductions,
         "no_harness_errors": not errors,
-        "ended_at_ash_gate": "ash gate" in str(
-            world_snapshot.get("current_location", "")
-        ).casefold(),
+        "ended_at_expected_location": (
+            SCENARIO_END_LOCATION.get(scenario, "ash gate")
+            in str(world_snapshot.get("current_location", "")).casefold()
+        ),
     }
     gates.update({
         name: bool(check.get("passed"))
         for name, check in player_state_agreement.items()
+    })
+    gates.update({
+        name: bool(check.get("passed"))
+        for name, check in lore_fidelity.items()
     })
 
     report = {
@@ -977,6 +1288,10 @@ def _build_report(
         "player_state_initial": initial_player_state,
         "player_state_final": final_player_state,
         "player_state_agreement": player_state_agreement,
+        "lore_fidelity": lore_fidelity,
+        "withheld_canon": (
+            [c.text for c in lore_compiled.withheld] if lore_compiled else []
+        ),
         "gates": gates,
         "turn_rows": turn_rows,
     }
@@ -1023,6 +1338,8 @@ def _print_report(report: dict, passed: bool, artifact: Path) -> None:
     )
     for name, check in (report.get("player_state_agreement") or {}).items():
         print(f"  agreement {name}: {check.get('detail')}")
+    for name, check in (report.get("lore_fidelity") or {}).items():
+        print(f"  lore {name}: {check.get('detail')}")
     for name, ok in report["gates"].items():
         print(f"  {'PASS' if ok else 'FAIL'}  {name}")
     print(f"artifact: {artifact}")

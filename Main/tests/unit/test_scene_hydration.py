@@ -297,6 +297,40 @@ async def test_a_location_spelling_variant_still_finds_its_residents():
 
 
 @pytest.mark.asyncio
+async def test_a_paraphrased_destination_resolves_through_an_alias():
+    """Narrators rename rooms. A live lore run walked the party back to "the
+    tavern" and the Copper Finch came back empty, because no spelling-variant
+    rule can bridge a descriptive paraphrase to a proper name."""
+    kg = KnowledgeGraph(campaign_id="camp", repository=_MemoryRepo())
+    await kg.load()
+    assert not await kg.apply_operations([
+        AddNode(entity=Entity(
+            node_id="copper-finch", entity_type=EntityType.LOCATION,
+            name="Copper Finch", aliases=["the tavern"], campaign_id="camp",
+        )),
+        AddNode(entity=Entity(
+            node_id="barkeep-id", entity_type=EntityType.NPC,
+            name="Barkeep", campaign_id="camp",
+        )),
+    ])
+    assert not await kg.apply_operations([
+        AddEdge(relationship=Relationship(
+            source_id="barkeep-id", target_id="copper-finch",
+            relation_type=RelationType.LOCATED_AT, campaign_id="camp",
+        )),
+    ])
+    ws = WorldState(current_location="the tavern")
+
+    restored = _orch(ws)._hydrate_scene_from_knowledge(ws, kg, "Ash Gate")
+
+    assert restored == ["Barkeep"]
+    # And the scene is re-anchored to canon's name, so every later comparison
+    # (rescope, residency, fact relevance) lines up instead of missing.
+    assert ws.current_location == "Copper Finch"
+    assert ws.npcs["barkeep-id"].location == "Copper Finch"
+
+
+@pytest.mark.asyncio
 async def test_unknown_location_yields_nothing():
     kg = await _graph_with([("barkeep-id", "Barkeep", {})])
     ws = WorldState(current_location="Somewhere Unmapped")
