@@ -1,4 +1,4 @@
-"""KnowledgeGraph — NetworkX DiGraph with SQLite write-through persistence."""
+"""KnowledgeGraph — NetworkX MultiDiGraph with SQLite write-through persistence."""
 
 from datetime import datetime
 from typing import Any, Optional
@@ -33,14 +33,35 @@ logger = structlog.get_logger()
 class KnowledgeGraph:
     """In-memory graph with write-through SQLite persistence.
 
-    All read queries hit the NetworkX DiGraph (microsecond latency).
+    All read queries hit the NetworkX MultiDiGraph (microsecond latency).
     All mutations write to both NetworkX and SQLite via the repository.
+
+    **Edge identity is (source, target, relation_type)** — the same key
+    ``kg_edge``'s primary key uses, which is why the in-memory shape is a
+    MultiDiGraph keyed by relation type rather than a DiGraph. A DiGraph
+    holds at most ONE edge per (source, target) pair, so a second relation
+    between the same two entities silently REPLACED the first: an author
+    who wrote both ALLIED_WITH and HOSTILE_TO between two NPCs got one of
+    them, with no rejection to show for it. ``apply_operations`` returned
+    clean and any receipt counting applied ops overstated what landed.
+
+    Worse than the loss was its instability: ``load_edges`` decided the
+    winner by row order, so the same campaign could present a different
+    social graph after a reload. Keying on the relation type removes both
+    — the projection stays lossy where it is *designed* to be (24 authored
+    RelationshipKinds collapse onto 9 RelationTypes in
+    ``sourcebook_compiler``), and stops being lossy where nothing intended
+    it.
+
+    Every edge also carries its relation type in the ``relationship`` data
+    attribute, duplicating the key. Readers filter on the attribute, and
+    keeping it means the key change did not have to reach all of them.
     """
 
     def __init__(self, campaign_id: str, repository: KnowledgeGraphRepository):
         self._campaign_id = campaign_id
         self._repo = repository
-        self._graph = nx.DiGraph()
+        self._graph = nx.MultiDiGraph()
         self._entities: dict[str, Entity] = {}  # node_id → Entity model
         self._loaded = False
 
@@ -62,6 +83,7 @@ class KnowledgeGraph:
                 self._graph.add_edge(
                     rel.source_id,
                     rel.target_id,
+                    key=rel.relation_type.value,
                     relationship=rel.relation_type.value,
                     weight=rel.weight,
                 )
@@ -204,9 +226,13 @@ class KnowledgeGraph:
         if rel.target_id not in self._graph:
             raise ValueError(f"Target node not found: {rel.target_id}")
 
+        # Keyed by relation type, so re-adding the SAME relation updates it in
+        # place (matching the repository's ON CONFLICT ... DO UPDATE) while a
+        # DIFFERENT relation between the same pair lands beside it.
         self._graph.add_edge(
             rel.source_id,
             rel.target_id,
+            key=rel.relation_type.value,
             relationship=rel.relation_type.value,
             weight=rel.weight,
         )
@@ -225,10 +251,14 @@ class KnowledgeGraph:
 
     async def _apply_remove_edge(self, op: RemoveEdge) -> None:
         if op.target_id:
-            if self._graph.has_edge(op.source_id, op.target_id):
-                edge = self._graph.get_edge_data(op.source_id, op.target_id) or {}
-                if edge.get("relationship") == op.relation_type.value:
-                    self._graph.remove_edge(op.source_id, op.target_id)
+            # The relation type is the edge KEY, so this removes exactly the
+            # relation named and leaves any other relation between the same
+            # pair standing — which is what the repository's DELETE ... AND
+            # relation_type = ? has always done on the persisted side.
+            if self._graph.has_edge(op.source_id, op.target_id, op.relation_type.value):
+                self._graph.remove_edge(
+                    op.source_id, op.target_id, key=op.relation_type.value
+                )
             await self._repo.delete_edge(
                 self._campaign_id,
                 op.source_id,
@@ -240,14 +270,12 @@ class KnowledgeGraph:
         # Empty target is the bridge's explicit "remove every relationship of
         # this type from this source" operation. Apply identical wildcard
         # semantics to the in-memory and persisted projections.
-        matching_targets = [
-            target
-            for _, target, data in self._graph.out_edges(op.source_id, data=True)
-            if data.get("relationship") == op.relation_type.value
+        matching = [
+            (source, target, key)
+            for source, target, key in self._graph.out_edges(op.source_id, keys=True)
+            if key == op.relation_type.value
         ]
-        self._graph.remove_edges_from(
-            (op.source_id, target) for target in matching_targets
-        )
+        self._graph.remove_edges_from(matching)
         await self._repo.delete_edges_by_source(
             self._campaign_id,
             op.source_id,
@@ -283,6 +311,15 @@ class KnowledgeGraph:
         return self._graph.number_of_nodes()
 
     def edge_count(self) -> int:
+        """Number of distinct (source, target, relation_type) edges.
+
+        Counts parallel edges individually, so this now agrees row-for-row
+        with what ``kg_edge`` holds. Under the old DiGraph it counted
+        (source, target) PAIRS, which under-reported every campaign whose
+        author wrote two relations between the same two entities — and
+        ``RebuildReceipt.edges_added``, measured as a delta of this number,
+        under-reported with it.
+        """
         return self._graph.number_of_edges()
 
     def has_node(self, node_id: str) -> bool:
@@ -441,16 +478,24 @@ class KnowledgeGraph:
         Returns entities in stable id order; callers apply their own policy
         (alive-only, caps, dead-roster exclusion). Unknown locations and
         unloaded graphs yield an empty list rather than raising.
+
+        Deduplicated by node: one entity can now hold SEVERAL edges into the
+        same location (edges are keyed by relation type), so a caller asking
+        for more than one ``relation_types`` would otherwise get whoever
+        satisfies two of them listed twice — and a duplicated resident is a
+        duplicated NPC on stage after hydration.
         """
         if not location_id or location_id not in self._graph:
             return []
         wanted = {rel.value for rel in relation_types}
         residents: list[Entity] = []
-        for source_id, _target, data in self._graph.in_edges(location_id, data=True):
-            if data.get("relationship") not in wanted:
+        seen: set[str] = set()
+        for source_id, _target, key in self._graph.in_edges(location_id, keys=True):
+            if key not in wanted or source_id in seen:
                 continue
             entity = self._entities.get(source_id)
             if entity is not None:
+                seen.add(source_id)
                 residents.append(entity)
         return sorted(residents, key=lambda e: e.node_id)
 
@@ -516,22 +561,34 @@ class KnowledgeGraph:
             if not entity:
                 continue
 
-            # Collect outgoing relationships within the subgraph
-            relationships = []
+            # Collect outgoing relationships within the subgraph. Parallel
+            # edges are distinct relations between the same pair, so an NPC
+            # who is both allied with and hostile to another now reports
+            # BOTH — under the old DiGraph one of the two never existed to
+            # be reported.
+            #
+            # Sorted within each direction because insertion order is not a
+            # stable fact: a graph built by play and the same graph reloaded
+            # from SQLite would otherwise order these differently, changing
+            # the narrator's prompt for no reason anyone authored.
+            outgoing = []
             for _, target, data in self._graph.edges(node_id, data=True):
                 if target in combined_nodes:
                     target_entity = self._entities.get(target)
                     target_name = target_entity.name if target_entity else target
                     rel_type = data.get("relationship", "related_to")
-                    relationships.append(f"{rel_type} {target_name}")
+                    outgoing.append(f"{rel_type} {target_name}")
 
             # Collect incoming relationships within the subgraph
+            incoming = []
             for source, _, data in self._graph.in_edges(node_id, data=True):
                 if source in combined_nodes and source != node_id:
                     source_entity = self._entities.get(source)
                     source_name = source_entity.name if source_entity else source
                     rel_type = data.get("relationship", "related_to")
-                    relationships.append(f"{source_name} {rel_type} this")
+                    incoming.append(f"{source_name} {rel_type} this")
+
+            relationships = sorted(outgoing) + sorted(incoming)
 
             entry: dict[str, Any] = {
                 "id": entity.node_id,
