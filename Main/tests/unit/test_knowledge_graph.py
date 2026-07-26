@@ -333,6 +333,56 @@ class TestKnowledgeGraph:
             "test-campaign", "npc", "located_at",
         )
 
+    async def test_a_relocate_batch_applies_in_the_order_it_was_written(self, kg):
+        """Within one batch the sequence IS the intent.
+
+        The bridge relocates an NPC by removing every LOCATED_AT edge from
+        them and then adding the new one. A type-priority sort ranked
+        add_edge ahead of remove_edge and inverted exactly that pair, so the
+        wildcard removal deleted the residency edge just written and the NPC
+        was left with none — invisible to ``residents_of``, so scene
+        hydration had nothing to put back (lore_recall 20260726_011328).
+        """
+        await kg.load()
+        await kg.apply_operations([
+            AddNode(entity=_make_entity("npc")),
+            AddNode(entity=_make_entity("loc-a", EntityType.LOCATION)),
+            AddNode(entity=_make_entity("loc-b", EntityType.LOCATION)),
+            AddEdge(relationship=_make_relationship(
+                "npc", "loc-a", RelationType.LOCATED_AT,
+            )),
+        ])
+
+        # The bridge's relocate pair, in bridge order.
+        await kg.apply_operations([
+            RemoveEdge(
+                source_id="npc",
+                target_id="",
+                relation_type=RelationType.LOCATED_AT,
+            ),
+            AddEdge(relationship=_make_relationship(
+                "npc", "loc-b", RelationType.LOCATED_AT,
+            )),
+        ])
+
+        assert [e.node_id for e in kg.residents_of("loc-b")] == ["npc"]
+        assert kg.residents_of("loc-a") == []
+
+    async def test_new_nodes_still_land_before_edges_that_reference_them(self, kg):
+        """The one reordering that survives: an edge never references an
+        endpoint that does not exist yet, whatever order the producer used."""
+        await kg.load()
+        rejections = await kg.apply_operations([
+            AddEdge(relationship=_make_relationship(
+                "npc", "loc-a", RelationType.LOCATED_AT,
+            )),
+            AddNode(entity=_make_entity("npc")),
+            AddNode(entity=_make_entity("loc-a", EntityType.LOCATION)),
+        ])
+
+        assert not rejections
+        assert [e.node_id for e in kg.residents_of("loc-a")] == ["npc"]
+
     async def test_get_all_names(self, kg):
         await kg.load()
         entity = _make_entity("grimjaw", name="Grimjaw")

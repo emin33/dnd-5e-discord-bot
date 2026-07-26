@@ -13,6 +13,8 @@ both end up as the same durable residency record.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from dnd_bot.game.knowledge.graph import KnowledgeGraph
@@ -152,3 +154,79 @@ async def test_secrets_never_reach_narrator_visible_state():
     assert "everyone at the Copper Finch defers to" in ws.to_yaml()
     # And the book still holds the secret, for the DM layer and assertions.
     assert any(secret in c.text for c in compiled.withheld)
+
+
+@pytest.mark.asyncio
+async def test_an_authored_death_reaches_the_continuity_layer():
+    """The roster kept Old Bram off stage; nothing kept him out of PROSE.
+
+    Two layers keep the dead dead, and only the first one saw an authored
+    death. ``hydrate_residents`` skips him (pinned above) — but governance
+    was built from ``world_state.npcs`` plus ``campaign_dead_npcs``, and a
+    book NPC is in NEITHER: no DB row mints one, and hydration's correct
+    refusal is what keeps him out of the other. So the dead-list came back
+    empty, ``requires_buffering`` was False, and the narrator could put a
+    corpse on stage with nothing to match the claim against.
+    """
+    from dnd_bot.llm.orchestrator import DMOrchestrator
+
+    kg, _compiled, _ = await _loaded_graph(_book())
+    session = SimpleNamespace(
+        world_state=WorldState(current_location="Copper Finch"),
+        campaign_dead_npcs={},
+        knowledge_graph=kg,
+    )
+    orchestrator = object.__new__(DMOrchestrator)
+    orchestrator._current_session = session
+
+    governance = orchestrator._get_narrative_governance()
+
+    assert "Old Bram" in governance.dead_names
+    # Prose must be held back before it streams: a violation found after the
+    # fact is one the player has already read.
+    assert governance.requires_buffering is True
+    violations = governance.validate(
+        "Old Bram takes the copper and steps down to the ferry."
+    )
+    assert [v.entity_id for v in violations] == ["old-bram"]
+    # Framed as a corpse or a memory, the same name is legitimate prose.
+    assert governance.validate(
+        "You remember Old Bram taking a copper for the crossing."
+    ) == []
+    # The living authored NPCs are not swept in with him.
+    assert "Mara Venn" not in governance.dead_names
+
+
+@pytest.mark.asyncio
+async def test_an_authored_death_cannot_be_minted_as_a_living_npc():
+    """The same empty dead-list also un-guarded the WRITE seam.
+
+    ``apply_delta`` only refuses an id COLLISION, and an authored death has
+    no ``world_state.npcs`` row to collide with — so the extractor's "Old
+    Bram" arrived as a brand-new UUID with ``alive`` defaulted True and the
+    party's location. The dead-list is what
+    ``_drop_dead_npc_reintroductions`` resolves against, so filling it from
+    the graph closes the prose seam and this one together.
+    """
+    from dnd_bot.game.world_state import NPCState, StateDelta
+    from dnd_bot.llm.orchestrator import (
+        DMOrchestrator, _drop_dead_npc_reintroductions,
+    )
+
+    kg, _compiled, _ = await _loaded_graph(_book())
+    orchestrator = object.__new__(DMOrchestrator)
+    orchestrator._current_session = SimpleNamespace(
+        world_state=WorldState(current_location="Copper Finch"),
+        campaign_dead_npcs={},
+        knowledge_graph=kg,
+    )
+    # The extractor names him the way the prose did — no id, so nothing but
+    # the death fact can stop him.
+    delta = StateDelta(new_npcs=[NPCState(name="Old Bram"), NPCState(name="Toran Vex")])
+
+    rejections = _drop_dead_npc_reintroductions(
+        delta, orchestrator._known_dead_npcs()
+    )
+
+    assert rejections == ["Dead NPC cannot be reintroduced as living: Old Bram"]
+    assert [npc.name for npc in delta.new_npcs] == ["Toran Vex"]

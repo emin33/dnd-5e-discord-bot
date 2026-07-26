@@ -79,12 +79,28 @@ class KnowledgeGraph:
     # ------------------------------------------------------------------
 
     async def apply_operations(self, ops: list[GraphOperation]) -> list[str]:
-        """Apply a batch of graph operations. Returns rejection messages."""
+        """Apply a batch of graph operations. Returns rejection messages.
+
+        Node creation is hoisted so an edge never references an endpoint that
+        does not exist yet. Everything else runs in the order its producer
+        wrote, because within a batch the sequence IS the intent.
+
+        A blanket type-priority sort (add_edge ranked ahead of remove_edge)
+        silently inverted the one batch that depends on order: the bridge
+        relocates an NPC by removing every LOCATED_AT edge from them and then
+        adding the new one. Inverted, the wildcard removal deleted the
+        residency edge that had just been written, leaving the NPC with NO
+        residency at all — so ``residents_of`` no longer listed them and
+        scene hydration had nothing to restore. That is how an authored
+        tavern regular vanished from the roster on return (lore_recall
+        20260726_011328 lost Mara Venn, _011459 lost Toran Vex; both deltas
+        carried an ``npc_updates[].location`` for exactly the NPC that went
+        missing, and the six runs without one all kept both residents).
+        """
         rejections: list[str] = []
 
-        # Sort by operation priority: AddNode → AddEdge → UpdateNode → RemoveEdge → RemoveNode
-        priority = {"add_node": 0, "add_edge": 1, "update_node": 2, "remove_edge": 3, "remove_node": 4}
-        sorted_ops = sorted(ops, key=lambda o: priority.get(o.op, 5))
+        # Stable sort: AddNode first, everything else in authored order.
+        sorted_ops = sorted(ops, key=lambda o: 0 if o.op == "add_node" else 1)
 
         for op in sorted_ops:
             try:
@@ -288,6 +304,35 @@ class KnowledgeGraph:
             if e.properties.get("description")
             and e.properties.get("placeholder") != "true"
         ]
+
+    def dead_npcs(self) -> list[Entity]:
+        """NPC nodes canon records as NOT alive — authored or played-in.
+
+        The graph is the one campaign-wide store that carries both kinds:
+        ``sourcebook_compiler`` writes ``alive=false`` for a character the
+        book authored as DEAD/UNDEAD, and ``bridge`` writes it when someone
+        dies in play. Scene hydration already treats this property as
+        authoritative — ``WorldStateStore.hydrate_residents`` refuses to
+        restore anyone carrying it — so exposing it here lets the continuity
+        layer guard prose about exactly the same set, rather than the
+        strictly smaller one that happens to have a session or a DB row.
+
+        Only an EXPLICIT ``alive=false`` counts. An absent property means no
+        writer has spoken, which is not a death.
+
+        Returns entities in stable id order; callers apply their own policy
+        (a live revival outranking a stale node, name matching, caps).
+        """
+        return sorted(
+            (
+                entity
+                for entity in self._entities.values()
+                if entity.entity_type == EntityType.NPC
+                and str(entity.properties.get("alive", "")).strip().lower()
+                == "false"
+            ),
+            key=lambda entity: entity.node_id,
+        )
 
     async def promote_entity_name(self, node_id: str, new_name: str) -> bool:
         """Rename an entity, moving the old name to aliases.
