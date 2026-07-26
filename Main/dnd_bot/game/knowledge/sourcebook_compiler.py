@@ -40,8 +40,10 @@ of failure gets caught at all.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import structlog
 import yaml
@@ -54,6 +56,7 @@ from ...models.sourcebook import (
     RelationshipKind,
     Visibility,
 )
+from ...models.sourcebook_canon import ImportReceipt, RebuildReceipt
 from .models import (
     AddEdge,
     AddNode,
@@ -315,6 +318,12 @@ def compile_sourcebook(
                   f"relationship {relationship.id} (reverse)")
 
     for quest in book.quests:
+        # A withheld quest has no node, so every edge touching it would report
+        # itself as a dangling reference — an authoring defect the author did
+        # not commit. Its absence is already in withheld_notes; `warnings` is
+        # reserved for mistakes worth acting on.
+        if quest.id not in active_quests:
+            continue
         for giver_id in quest.giver_ids:
             _edge(giver_id, quest.id, RelationType.QUEST_GIVER,
                   f"quest {quest.id} giver")
@@ -404,18 +413,53 @@ async def apply_sourcebook(
     without standing up a session.
     """
     compiled = compile_sourcebook(book, campaign_id)
+    label = str(book.metadata.sourcebook_id)
 
-    rejections = await knowledge_graph.apply_operations(compiled.graph_ops)
+    await _install_graph(compiled, campaign_id, knowledge_graph, label)
+    _seed_opening_scene(compiled, knowledge_graph, world_store, label, force)
+    return compiled
+
+
+async def _install_graph(
+    compiled: CompiledSourcebook,
+    campaign_id: str,
+    knowledge_graph,
+    label: str,
+    ops: list[GraphOperation] | None = None,
+) -> list[str]:
+    """Apply the projection's ops; report what the graph refused.
+
+    ``ops`` narrows what is applied (the rebuild path filters out nodes the
+    graph already has); rejections still land on ``compiled.warnings``.
+    """
+    rejections = await knowledge_graph.apply_operations(
+        compiled.graph_ops if ops is None else ops
+    )
     if rejections:
         # The graph rejects rather than raises; surface them as warnings so a
         # partially-installed book is visible instead of quietly incomplete.
         compiled.warnings.extend(f"graph rejected: {r}" for r in rejections)
+        # `sourcebook_ref`, not `sourcebook`: this fires from the book-object
+        # path (which has the authored id) and the canon path (which has only
+        # a key), and a field that means two different things across callers
+        # is worse than one that promises less.
         logger.warning(
             "sourcebook_graph_rejections",
-            sourcebook=book.metadata.sourcebook_id,
+            sourcebook_ref=label,
+            campaign=campaign_id,
             count=len(rejections),
         )
+    return list(rejections)
 
+
+def _seed_opening_scene(
+    compiled: CompiledSourcebook,
+    knowledge_graph,
+    world_store,
+    label: str,
+    force: bool,
+) -> bool:
+    """The world-state leg. Every write goes through the store."""
     seeded = world_store.seed_opening_scene(
         location=compiled.current_location,
         description=compiled.location_description,
@@ -425,10 +469,10 @@ async def apply_sourcebook(
     if not seeded:
         logger.warning(
             "sourcebook_scene_not_seeded",
-            sourcebook=book.metadata.sourcebook_id,
+            sourcebook=label,
             location=compiled.current_location,
         )
-        return compiled
+        return False
 
     for fact in compiled.established_facts:
         world_store.add_established_fact(fact)
@@ -443,11 +487,337 @@ async def apply_sourcebook(
 
     logger.info(
         "sourcebook_applied",
-        sourcebook=book.metadata.sourcebook_id,
+        sourcebook=label,
         location=compiled.current_location,
         npcs_on_stage=len(world_store.state.npcs),
     )
-    return compiled
+    return True
+
+
+# ── Rebuilding the indexes from canonical rows ──────────────────────────────
+#
+# The design doc's contract: "If graph or vector projection fails, the import
+# remains recoverable: rebuild projections from canonical SQLite records
+# instead of asking a model to regenerate lore." Everything below is that
+# sentence made executable. `apply_sourcebook` needs the book OBJECT; these
+# need only a `sourcebook_key`, which is what makes the graph and the
+# embeddings genuinely disposable.
+
+
+@dataclass
+class InstalledSourcebook:
+    """What a production install wrote, across all four layers."""
+
+    imported: "ImportReceipt"
+    rebuilt: "RebuildReceipt"
+    compiled: CompiledSourcebook
+    scene_seeded: bool = False
+
+    @property
+    def sourcebook_key(self) -> str:
+        return self.imported.sourcebook_key
+
+
+def projection_fingerprint(compiled: CompiledSourcebook) -> dict[str, object]:
+    """A comparable shape for a projection.
+
+    Graph ops minus their wall-clock stamps — ``Entity``/``Relationship``
+    default ``created_at`` to ``utcnow()``, so two identical projections built
+    a millisecond apart never compare equal. Everything the game can see (ids,
+    ORDER, properties, aliases, relation types, the withheld buckets, the
+    opening scene) is kept.
+    """
+    ops: list[dict[str, Any]] = []
+    for op in compiled.graph_ops:
+        data = op.model_dump(mode="json")
+        for holder in ("entity", "relationship"):
+            if isinstance(data.get(holder), dict):
+                data[holder].pop("created_at", None)
+                data[holder].pop("updated_at", None)
+        ops.append(data)
+    return {
+        "graph_ops": ops,
+        "established_facts": list(compiled.established_facts),
+        "withheld": [claim.model_dump(mode="json") for claim in compiled.withheld],
+        "withheld_notes": list(compiled.withheld_notes),
+        "warnings": list(compiled.warnings),
+        "current_location": compiled.current_location,
+        "location_description": compiled.location_description,
+        "scene_items": dict(compiled.scene_items),
+        "opening_situation": compiled.opening_situation,
+    }
+
+
+def _assert_canon_reproduces(
+    from_book: CompiledSourcebook,
+    from_canon: CompiledSourcebook,
+    sourcebook_key: str,
+) -> None:
+    """Refuse to install when the rows cannot reproduce the book."""
+    expected = projection_fingerprint(from_book)
+    actual = projection_fingerprint(from_canon)
+    if expected == actual:
+        return
+    differing = sorted(k for k in expected if expected[k] != actual[k])
+    logger.error(
+        "sourcebook_canon_projection_mismatch",
+        key=sourcebook_key[:12],
+        fields=differing,
+    )
+    raise ValueError(
+        f"canonical rows for sourcebook {sourcebook_key[:12]} do not "
+        f"reproduce the book: {differing} differ. Refusing to install — the "
+        "visibility boundary is enforced on the projection, so a lossy round "
+        "trip can publish a secret with no warning to show for it."
+    )
+
+
+async def compile_from_canon(
+    repository, sourcebook_key: str, campaign_id: str
+) -> CompiledSourcebook:
+    """Compile straight from canonical rows — no book file involved.
+
+    Equivalent to ``compile_sourcebook(load_sourcebook(path), campaign_id)``
+    for any book that was imported, which is the property the round-trip
+    gate pins: if canon lost anything, these two projections diverge.
+    """
+    book = await repository.load_book(sourcebook_key)
+    if book is None:
+        raise LookupError(f"no imported sourcebook with key {sourcebook_key!r}")
+    return compile_sourcebook(book, campaign_id)
+
+
+async def rebuild_indexes(
+    *,
+    repository,
+    sourcebook_key: str,
+    campaign_id: str,
+    knowledge_graph,
+    vector_store=None,
+    overwrite: bool = False,
+) -> "RebuildReceipt":
+    """Regenerate the graph (and optionally the vector index) from canon.
+
+    **Nodes the graph already has are left completely alone**, which is what
+    makes this safe to run on a campaign in play. The graph merges by node id
+    via ``properties.update()``, and canon always says ``alive: "true"`` for a
+    character the BOOK considers living — so overwriting would revert
+    everything play wrote about that entity. Concretely, before this rule: an
+    NPC the party killed came back. The tool path left the node saying
+    ``alive: true`` beside ``status: dead`` and the narrator only ever sees
+    ``alive``; the delta path writes no ``status`` at all, so both of
+    ``hydrate_residents``' gates cleared and the corpse walked back on stage.
+    "The dead stay dead" outranks index freshness.
+
+    Skipping existing nodes still repairs the failure this exists for. The
+    design doc's case is a projection that FAILED — rows lost, never written,
+    a half-applied import — where the nodes are missing, not stale. Pass
+    ``overwrite=True`` to re-assert canon over a live graph deliberately.
+
+    Edges are always applied: they are keyed by (source, target, relation) and
+    carry no play-authored state, so re-adding one is idempotent.
+
+    Vector content is derived from the compiler's OWN node ops rather than
+    re-read from the canonical tables. That is deliberate: the visibility
+    boundary is enforced in exactly one place, and an embedding is the worst
+    possible second place to re-derive it — a leaked secret in the vector
+    index resurfaces on semantic similarity alone, with no scene, entity or
+    keyword to make the leak traceable.
+    """
+    compiled = await compile_from_canon(repository, sourcebook_key, campaign_id)
+    return await _rebuild_from_compiled(
+        compiled,
+        sourcebook_key=sourcebook_key,
+        campaign_id=campaign_id,
+        knowledge_graph=knowledge_graph,
+        vector_store=vector_store,
+        overwrite=overwrite,
+    )
+
+
+async def _rebuild_from_compiled(
+    compiled: CompiledSourcebook,
+    *,
+    sourcebook_key: str,
+    campaign_id: str,
+    knowledge_graph,
+    vector_store=None,
+    overwrite: bool = False,
+) -> "RebuildReceipt":
+    receipt = RebuildReceipt(
+        sourcebook_key=sourcebook_key,
+        campaign_id=campaign_id,
+        projected_nodes=compiled.node_count,
+        projected_edges=compiled.edge_count,
+    )
+
+    ops = list(compiled.graph_ops)
+    if not overwrite:
+        preserved = [
+            op.entity.node_id
+            for op in ops
+            if isinstance(op, AddNode) and knowledge_graph.has_node(op.entity.node_id)
+        ]
+        receipt.preserved_nodes = sorted(preserved)
+        skip = set(preserved)
+        ops = [
+            op for op in ops
+            if not (isinstance(op, AddNode) and op.entity.node_id in skip)
+        ]
+
+    before_nodes = knowledge_graph.node_count()
+    before_edges = knowledge_graph.edge_count()
+    receipt.graph_rejections = await _install_graph(
+        compiled, campaign_id, knowledge_graph, sourcebook_key[:12], ops=ops,
+    )
+    # Measured, not assumed. The graph MERGES or ABSTAINS on a proper-name
+    # collision and returns without raising, so apply_operations reports
+    # nothing and the projection's own count would overstate what landed.
+    receipt.nodes_added = knowledge_graph.node_count() - before_nodes
+    receipt.edges_added = knowledge_graph.edge_count() - before_edges
+    receipt.warnings = list(compiled.warnings)
+
+    if vector_store is not None:
+        # Snapshot to plain values BEFORE going off-loop: the graph mutates
+        # Entity objects in place (aliases are appended to on merge), and
+        # indexing the op's entity rather than the node the graph actually
+        # holds would drift index and graph apart exactly where a merge
+        # touched. Entities the graph does not hold are skipped, so a rejected
+        # or abstained node cannot leave an orphan document behind pointing at
+        # a node id that does not exist.
+        indexable = [
+            (
+                entity.node_id, entity.entity_type.value, entity.name,
+                entity.properties.get("description", ""), list(entity.aliases),
+            )
+            for entity in (
+                knowledge_graph.get_entity(op.entity.node_id)
+                for op in compiled.graph_ops if isinstance(op, AddNode)
+            )
+            if entity is not None
+        ]
+
+        def _embed() -> tuple[int, int]:
+            done = failed = 0
+            for node_id, entity_type, name, description, aliases in indexable:
+                if vector_store.add_entity_description(
+                    campaign_id=campaign_id,
+                    node_id=node_id,
+                    entity_type=entity_type,
+                    name=name,
+                    description=description,
+                    aliases=aliases,
+                ):
+                    done += 1
+                else:
+                    failed += 1
+            return done, failed
+
+        # Chroma client init and per-entity embedding are blocking work; a
+        # whole-book rebuild would otherwise freeze the event loop (AQ-ASYNC-03).
+        try:
+            receipt.embedded, receipt.embed_failures = await asyncio.to_thread(_embed)
+        except Exception as exc:
+            # The vector index is the most disposable layer there is — it can
+            # be rebuilt from these same rows at any time. Letting it abort an
+            # install would leave canon written and the campaign bound with no
+            # scene and no receipt for the caller to retry from.
+            receipt.embed_failures = len(indexable)
+            receipt.warnings.append(f"vector rebuild failed: {exc}")
+            logger.warning(
+                "sourcebook_vector_rebuild_failed",
+                key=sourcebook_key[:12], campaign=campaign_id,
+                error=str(exc), exc_info=True,
+            )
+        receipt.vector_skipped = False
+        if receipt.embed_failures:
+            # add_entity_description swallows its own errors and returns False,
+            # so counting only successes would let a rebuild that indexed
+            # NOTHING report success.
+            logger.warning(
+                "sourcebook_vector_rebuild_incomplete",
+                key=sourcebook_key[:12],
+                campaign=campaign_id,
+                embedded=receipt.embedded,
+                failed=receipt.embed_failures,
+            )
+
+    logger.info(
+        "sourcebook_indexes_rebuilt",
+        key=sourcebook_key[:12],
+        campaign=campaign_id,
+        nodes_added=receipt.nodes_added,
+        edges_added=receipt.edges_added,
+        preserved=len(receipt.preserved_nodes),
+        embedded=receipt.embedded,
+        rejections=len(receipt.graph_rejections),
+    )
+    return receipt
+
+
+async def install_sourcebook(
+    book: CampaignSourcebook,
+    *,
+    campaign_id: str,
+    repository,
+    knowledge_graph,
+    world_store,
+    vector_store=None,
+    force: bool = False,
+) -> InstalledSourcebook:
+    """The production import path: canon first, indexes derived from it.
+
+    The indexes are built by reading the rows BACK rather than from the book
+    still in memory, and the two projections are then COMPARED. A lossy import
+    raises here instead of surviving as a healthy-looking graph beside
+    canonical tables that quietly cannot reproduce it. That comparison is not
+    ceremony: the compiler enforces the visibility boundary in exactly one
+    place, so once the graph is built from canon rather than from the book,
+    every secret depends on canon's fidelity too. Losing a single `hidden`
+    flag would give a concealed item a node, an ownership edge, and its secret
+    text in the vector index — with no warning, no rejection, and nothing in
+    ``withheld_notes`` to show it ever happened.
+
+    **Not atomic, but idempotent.** The stages commit independently, so a
+    failure part-way through leaves canon written and the campaign bound. Just
+    re-run it: the import no-ops on an identical key, binding is a no-op,
+    starting knowledge is first-wins, and the rebuild preserves nodes the
+    graph already has.
+    """
+    imported = await repository.import_book(book)
+    key = imported.sourcebook_key
+
+    await repository.bind_campaign(campaign_id, key)
+    await repository.seed_starting_knowledge(campaign_id, key)
+
+    # Read the rows back, and prove they reproduce the book.
+    compiled = await compile_from_canon(repository, key, campaign_id)
+    _assert_canon_reproduces(compile_sourcebook(book, campaign_id), compiled, key)
+
+    rebuilt = await _rebuild_from_compiled(
+        compiled,
+        sourcebook_key=key,
+        campaign_id=campaign_id,
+        knowledge_graph=knowledge_graph,
+        vector_store=vector_store,
+    )
+
+    seeded = _seed_opening_scene(
+        compiled, knowledge_graph, world_store,
+        str(book.metadata.sourcebook_id), force,
+    )
+    if seeded:
+        # The party wakes up here, so the world has been touched here. Without
+        # this, "authored in a region the party has not touched" would count
+        # the opening tavern as untouched forever.
+        await repository.record_visit(
+            campaign_id, key, str(book.starting_state.location_id), turn=0,
+        )
+
+    return InstalledSourcebook(
+        imported=imported, rebuilt=rebuilt, compiled=compiled,
+        scene_seeded=seeded,
+    )
 
 
 def _log_compiled(book: CampaignSourcebook, out: CompiledSourcebook) -> None:

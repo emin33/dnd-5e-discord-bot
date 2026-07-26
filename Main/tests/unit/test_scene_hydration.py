@@ -336,3 +336,199 @@ async def test_unknown_location_yields_nothing():
     ws = WorldState(current_location="Somewhere Unmapped")
 
     assert _orch(ws)._hydrate_scene_from_knowledge(ws, kg, "Market") == []
+
+
+# ── The return turn's own delta must not destroy what hydration reads ──
+#
+# Hydration restores from the graph's residency record, so anything that
+# erases that record between leaving and returning is indistinguishable from
+# "nobody lives here". The state extractor writes to the same record on the
+# very turn the party walks back in — it describes the room it was just told
+# about — and two of its ordinary outputs used to wipe residency instead of
+# restating it. Both were found live: the lore_recall gate lost Mara Venn on
+# 20260726_011328 and Toran Vex on _011459, each time the NPC whose name
+# appeared in an ``npc_updates`` entry carrying a ``location``.
+
+
+async def _copper_finch_with_its_regulars():
+    return await _graph_with([
+        ("mara-venn", "Mara Venn", {"description": "A sharp-eyed woman."}),
+        ("toran-vex", "Toran Vex", {"description": "A nervous clerk."}),
+    ])
+
+
+def _returned_via_delta(kg, ws, delta, previous_location="Ash Gate"):
+    from dnd_bot.game.knowledge.bridge import DeltaBridge
+
+    bridge = DeltaBridge("camp", location_resolver=kg.resolve_location_node)
+    return bridge.convert(
+        delta, ws,
+        existing_node_ids=set(kg._entities),
+        previous_location=previous_location,
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_npc_update_restating_where_someone_is_keeps_them_a_resident():
+    """The extractor's "Mara Venn is at the Copper Finch" must leave her a
+    resident of the Copper Finch — the relocate is a restatement, not an
+    eviction."""
+    from dnd_bot.game.world_state import NPCUpdate, StateDelta
+
+    kg = await _copper_finch_with_its_regulars()
+    ws = WorldState(current_location="Copper Finch")
+    delta = StateDelta(
+        location_change="Copper Finch",
+        npc_updates=[NPCUpdate(
+            name="Mara Venn",
+            location="Copper Finch",
+            description="Behind the bar, watching you.",
+        )],
+    )
+
+    assert not await kg.apply_operations(_returned_via_delta(kg, ws, delta))
+    restored = _orch(ws)._hydrate_scene_from_knowledge(ws, kg, "Ash Gate")
+
+    assert sorted(restored) == ["Mara Venn", "Toran Vex"]
+
+
+@pytest.mark.asyncio
+async def test_a_paraphrased_location_in_an_npc_update_keeps_them_a_resident():
+    """Same restatement, spelled the way narrators actually spell it.
+
+    "the Copper Finch" slugified to a node canon does not have, so the
+    residency edge moved to a phantom place and hydration — which resolves
+    the destination by equivalence — read the real one and found the NPC
+    gone."""
+    from dnd_bot.game.world_state import NPCUpdate, StateDelta
+
+    kg = await _copper_finch_with_its_regulars()
+    ws = WorldState(current_location="Copper Finch")
+    delta = StateDelta(
+        location_change="the Copper Finch",
+        npc_updates=[NPCUpdate(id="toran-vex", location="the Copper Finch")],
+    )
+
+    assert not await kg.apply_operations(_returned_via_delta(kg, ws, delta))
+    restored = _orch(ws)._hydrate_scene_from_knowledge(ws, kg, "Ash Gate")
+
+    assert sorted(restored) == ["Mara Venn", "Toran Vex"]
+    assert "the-copper-finch" not in kg._entities
+
+
+@pytest.mark.asyncio
+async def test_an_npc_genuinely_moved_elsewhere_stops_being_a_resident():
+    """The relocate still has to relocate: restating residency must not
+    become "residency is permanent", or an NPC who walked out would be
+    hydrated back into the room they left."""
+    from dnd_bot.game.world_state import NPCUpdate, StateDelta
+
+    kg = await _copper_finch_with_its_regulars()
+    ws = WorldState(current_location="Copper Finch")
+    delta = StateDelta(
+        npc_updates=[NPCUpdate(id="toran-vex", location="Ash Gate")],
+    )
+
+    assert not await kg.apply_operations(
+        _returned_via_delta(kg, ws, delta, previous_location="")
+    )
+    restored = _orch(ws)._hydrate_scene_from_knowledge(ws, kg, "Ash Gate")
+
+    assert restored == ["Mara Venn"]
+    assert [e.node_id for e in kg.residents_of("ash-gate")] == ["toran-vex"]
+
+
+@pytest.mark.asyncio
+async def test_someone_who_walks_out_of_the_room_stops_being_a_resident():
+    """``removed_npcs`` is the sanctioned "they left" channel and keeps
+    working — the fix scopes removals, it does not disarm them. The party is
+    still standing in the Copper Finch, so Toran walking out of it means he
+    is no longer one of its residents."""
+    from dnd_bot.game.world_state import StateDelta
+
+    kg = await _copper_finch_with_its_regulars()
+    ws = WorldState(current_location="Copper Finch")
+    delta = StateDelta(removed_npcs=["Toran Vex"])
+
+    assert not await kg.apply_operations(
+        _returned_via_delta(kg, ws, delta, previous_location="")
+    )
+    restored = _orch(ws)._hydrate_scene_from_knowledge(ws, kg, "Ash Gate")
+
+    assert restored == ["Mara Venn"]
+
+
+@pytest.mark.asyncio
+async def test_leaving_a_room_does_not_evict_the_regulars_who_live_there():
+    """The extractor reports the party walking out as the regulars being
+    "removed" — on the departure turn it listed BOTH Copper Finch regulars
+    (live lore_recall 20260726_015947). Read as NPC movement, that deleted
+    canon's record of where they live, and the return hydrated an empty room.
+
+    By the time the bridge runs, the delta's location change is already
+    applied, so the removal is scoped to the room the party walked INTO —
+    which is exactly the reading that makes returning work."""
+    from dnd_bot.game.world_state import StateDelta
+
+    kg = await _copper_finch_with_its_regulars()
+    ws = WorldState(current_location="Copper Finch")
+    departure = StateDelta(
+        location_change="the street",
+        removed_npcs=["Mara Venn", "Toran Vex"],
+    )
+    ws.apply_delta(departure)
+    assert ws.current_location == "the street"
+
+    assert not await kg.apply_operations(
+        _returned_via_delta(kg, ws, departure, previous_location="Copper Finch")
+    )
+
+    # ... and later the party walks back in.
+    ws.current_location = "Copper Finch"
+    restored = _orch(ws)._hydrate_scene_from_knowledge(ws, kg, "the street")
+
+    assert sorted(restored) == ["Mara Venn", "Toran Vex"]
+
+
+@pytest.mark.asyncio
+async def test_prose_about_an_absent_npc_cannot_erase_their_residency():
+    """Narrators mention people who are not here ("Mara stayed at the
+    tavern"), and the extractor turns that into a removal. Scoped to the
+    scene the party occupies, it cannot reach a residency recorded
+    elsewhere."""
+    from dnd_bot.game.world_state import StateDelta
+
+    kg = await _copper_finch_with_its_regulars()
+    ws = WorldState(current_location="Ash Gate")
+    delta = StateDelta(removed_npcs=["Mara Venn"])
+
+    assert not await kg.apply_operations(
+        _returned_via_delta(kg, ws, delta, previous_location="")
+    )
+    ws.current_location = "Copper Finch"
+    restored = _orch(ws)._hydrate_scene_from_knowledge(ws, kg, "Ash Gate")
+
+    assert sorted(restored) == ["Mara Venn", "Toran Vex"]
+
+
+@pytest.mark.asyncio
+async def test_the_narrators_remove_entity_is_scene_scoped_too():
+    """The narrator's explicit removal tool carries the same wildcard, so it
+    could delete a residency for a room it is not talking about."""
+    from dnd_bot.game.knowledge.bridge import DeltaBridge
+    from dnd_bot.llm.effects import EffectType, ProposedEffect
+
+    kg = await _copper_finch_with_its_regulars()
+    ws = WorldState(current_location="Ash Gate")
+    effect = ProposedEffect(
+        effect_type=EffectType.REMOVE_ENTITY, target="mara-venn",
+    )
+
+    bridge = DeltaBridge("camp", location_resolver=kg.resolve_location_node)
+    ops, _ = bridge.convert_effects([effect], ws)
+    assert not await kg.apply_operations(ops)
+
+    ws.current_location = "Copper Finch"
+    restored = _orch(ws)._hydrate_scene_from_knowledge(ws, kg, "Ash Gate")
+
+    assert sorted(restored) == ["Mara Venn", "Toran Vex"]

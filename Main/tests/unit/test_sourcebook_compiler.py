@@ -308,16 +308,31 @@ def test_quests_the_party_has_not_reached_are_not_projected_at_all():
                   giver_ids=["mara-venn"]),
         QuestSpec(id="endgame-quest", name="Close the Gate",
                   hook="The gate must be sealed forever.",
-                  summary="Only Bram's bones can seal it."),
+                  summary="Only Bram's bones can seal it.",
+                  giver_ids=["old-bram"],
+                  objectives=[QuestObjective(
+                      id="obj-seal", description="Seal the arch.",
+                      location_ids=["ash-gate"],
+                  )]),
     ], starting_state=StartingState(
         location_id="copper-finch", opening_situation="Rain.",
         active_quest_ids=["find-the-key"],
     ))
     compiled = compile_sourcebook(book, "camp")
+    edges = _edges(compiled)
 
     assert "find-the-key" in _nodes(compiled)
     assert "endgame-quest" not in _nodes(compiled)
     assert any("endgame-quest" in n for n in compiled.withheld_notes)
+    # Its giver and objective edges go too — they point at a node that was
+    # deliberately not projected.
+    assert ("old-bram", "endgame-quest", RelationType.QUEST_GIVER) not in edges
+    assert ("endgame-quest", "ash-gate", RelationType.OBJECTIVE_AT) not in edges
+    # And withholding it is NOT an authoring mistake. `warnings` is what an
+    # author reads to find real defects (genuine dangling refs, ids that are
+    # not slugify(name), same-named NPCs the graph would merge); a correctly
+    # authored book that keeps a quest inactive must not land in there.
+    assert not compiled.warnings
 
 
 def test_a_privately_described_relationship_becomes_no_edge():

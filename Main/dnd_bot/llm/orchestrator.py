@@ -1502,8 +1502,20 @@ class DMOrchestrator:
 
     # ==================== Post-Generation Validation ====================
 
+    def _graph_dead_npcs(self) -> list[Any]:
+        """Death facts the knowledge graph holds, or [] if it cannot answer."""
+        graph = getattr(self._current_session, "knowledge_graph", None)
+        reader = getattr(graph, "dead_npcs", None)
+        if not callable(reader):
+            return []
+        try:
+            return list(reader())
+        except Exception as exc:  # a degraded graph must not un-guard prose
+            logger.warning("graph_dead_npc_read_failed", error=str(exc))
+            return []
+
     def _known_dead_npcs(self) -> list[Any]:
-        """Return de-duplicated session and campaign death facts."""
+        """Return de-duplicated session, campaign and authored death facts."""
         known: list[Any] = []
         seen: set[str] = set()
         world_ids: set[str] = set()
@@ -1523,6 +1535,33 @@ class DMOrchestrator:
                 if npc.id not in seen and npc.id not in world_ids:
                     known.append(npc)
                     seen.add(npc.id)
+            # An AUTHORED death reaches neither roster above: a sourcebook NPC
+            # gets no DB row for `_load_campaign_npcs` to find, and hydration
+            # deliberately skips the dead, so `status: DEAD` in the book
+            # produced an EMPTY dead-list here — governance had no fact to
+            # match, `requires_buffering` stayed False, and the extractor was
+            # free to mint the corpse a fresh living UUID. The graph is where
+            # that fact durably lives (for authored AND played-in deaths
+            # alike), and the roster layer already trusts it.
+            graph_dead = self._graph_dead_npcs()
+            if graph_dead:
+                from ..game.world_state import NPCState
+            for entity in graph_dead:
+                node_id = str(getattr(entity, "node_id", "") or "")
+                if not node_id or node_id in seen or node_id in world_ids:
+                    continue
+                known.append(NPCState(
+                    id=node_id,
+                    name=str(getattr(entity, "name", "") or ""),
+                    aliases=list(getattr(entity, "aliases", []) or []),
+                    description=str(
+                        (getattr(entity, "properties", {}) or {}).get(
+                            "description", ""
+                        )
+                    ),
+                    alive=False,
+                ))
+                seen.add(node_id)
         return known
 
     def _get_narrative_governance(self) -> NarrativeGovernance:
@@ -2345,7 +2384,13 @@ class DMOrchestrator:
         if kg and delta and world_state:
             try:
                 from ..game.knowledge.bridge import DeltaBridge
-                bridge = DeltaBridge(context.campaign_id)
+                # The resolver collapses a narrator paraphrase ("the Copper
+                # Finch") onto the place canon already knows, so residency
+                # edges land on the node hydration will read.
+                bridge = DeltaBridge(
+                    context.campaign_id,
+                    location_resolver=kg.resolve_location_node,
+                )
                 existing_ids = set(kg._entities.keys()) if kg._entities else set()
                 graph_ops = bridge.convert(
                     delta, world_state,
@@ -2484,7 +2529,10 @@ class DMOrchestrator:
                 from ..game.knowledge.models import AddNode as _AddNode, UpdateNode as _UpdateNode
                 from ..memory import get_vector_store
 
-                bridge = DeltaBridge(context.campaign_id)
+                bridge = DeltaBridge(
+                    context.campaign_id,
+                    location_resolver=kg.resolve_location_node,
+                )
                 existing_ids = set(kg._entities.keys()) if kg._entities else set()
                 effect_ops, promotions = bridge.convert_effects(
                     self._last_executed_effects, world_state,
