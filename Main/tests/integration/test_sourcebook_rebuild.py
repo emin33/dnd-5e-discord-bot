@@ -19,10 +19,11 @@ import pytest
 
 from dnd_bot.data.repositories.sourcebook_repo import SourcebookRepository
 from dnd_bot.game.knowledge.graph import KnowledgeGraph
-from dnd_bot.game.knowledge.models import AddNode
+from dnd_bot.game.knowledge.models import AddEdge, AddNode, Entity, EntityType
 from dnd_bot.game.knowledge.repository import KnowledgeGraphRepository
 from dnd_bot.game.knowledge.sourcebook_compiler import (
-    compile_from_canon, compile_sourcebook, install_sourcebook, rebuild_indexes,
+    compile_from_canon, compile_sourcebook, install_sourcebook,
+    projection_fingerprint, rebuild_indexes,
 )
 from dnd_bot.game.world_state import WorldState
 from dnd_bot.game.world_store import WorldStateStore
@@ -37,8 +38,28 @@ SECRETS = (
     "paid to look away",               # private_history
     "Ink too new",                     # item present only as hidden inventory
     "the deed proves the motive",      # quest summary (hook is public, this is not)
-    "reports to them nightly",         # private-only relationship
+    "reports to them nightly",         # private-only tie, to a faction
+    "bought his silence",              # private-only tie between two NPCs
+    "under the floor",                 # note on a CONCEALED inventory entry
+    "cargo nobody signed for",         # hook of a quest that is not active
 )
+# Deliberately NOT a secret: the Warden's Ledger is placed at the Ash Gate, so
+# its description is public and SHOULD be indexed. What is concealed is that
+# Toran has one — an ownership EDGE, not text, which is why
+# test_concealment_and_private_ties_survive_the_canon_round_trip checks edges.
+
+
+def _assert_secrets_are_really_in_the_book(book) -> None:
+    """The positive control the leak assertions are worthless without.
+
+    Every string in SECRETS must exist in the fixture. Otherwise a reworded
+    fixture — or a typo here — turns every "not in" assertion below into a
+    tautology, and the suite goes on reporting that secrets are contained
+    while checking nothing at all.
+    """
+    corpus = book.model_dump_json()
+    missing = [secret for secret in SECRETS if secret not in corpus]
+    assert not missing, f"SECRETS no longer present in the book: {missing}"
 
 
 class _RecordingVectorStore:
@@ -48,40 +69,43 @@ class _RecordingVectorStore:
     implementation, because the assertion is about what was PASSED to it.
     """
 
-    def __init__(self) -> None:
-        self.documents: dict[str, str] = {}
+    def __init__(self, fail_on: set[str] | None = None) -> None:
+        # A LIST per node, not a dict slot: keying by node_id would let a
+        # clean upsert overwrite a transient leak, and the leak would vanish
+        # from `corpus` before any assertion saw it.
+        self.writes: list[tuple[str, str]] = []
+        self._fail_on = fail_on or set()
 
     def add_entity_description(
         self, *, campaign_id, node_id, entity_type, name, description,
         aliases=None,
     ) -> bool:
-        self.documents[node_id] = "\n".join(
+        self.writes.append((node_id, "\n".join(
             [f"{entity_type}: {name}", description, *(aliases or [])]
-        )
-        return True
+        )))
+        return node_id not in self._fail_on
+
+    @property
+    def node_ids(self) -> set[str]:
+        return {node_id for node_id, _ in self.writes}
 
     @property
     def corpus(self) -> str:
-        return "\n".join(self.documents.values())
+        return "\n".join(document for _, document in self.writes)
 
 
-def _shape(ops):
-    """Graph ops minus their wall-clock stamps.
+def _node_ids(compiled) -> set[str]:
+    return {
+        op.entity.node_id for op in compiled.graph_ops if isinstance(op, AddNode)
+    }
 
-    ``Entity``/``Relationship`` default ``created_at`` to ``utcnow()``, so two
-    identical projections built a millisecond apart never compare equal.
-    Everything else — ids, order, properties, aliases, relation types — is
-    left in, which is the part that has to match.
-    """
-    shapes = []
-    for op in ops:
-        data = op.model_dump(mode="json")
-        for holder in ("entity", "relationship"):
-            if isinstance(data.get(holder), dict):
-                data[holder].pop("created_at", None)
-                data[holder].pop("updated_at", None)
-        shapes.append(data)
-    return shapes
+
+def _edges(compiled) -> set[tuple[str, str, str]]:
+    return {
+        (op.relationship.source_id, op.relationship.target_id,
+         op.relationship.relation_type.value)
+        for op in compiled.graph_ops if isinstance(op, AddEdge)
+    }
 
 
 @pytest.fixture
@@ -123,17 +147,13 @@ async def test_the_projection_from_rows_is_the_projection_from_the_file(rig):
     from_file = compile_sourcebook(book, "camp")
     from_rows = await compile_from_canon(repo, receipt.sourcebook_key, "camp")
 
-    assert _shape(from_rows.graph_ops) == _shape(from_file.graph_ops)
-    assert from_rows.established_facts == from_file.established_facts
-    assert from_rows.withheld == from_file.withheld
-    assert from_rows.withheld_notes == from_file.withheld_notes
-    assert from_rows.warnings == from_file.warnings
-    assert from_rows.current_location == from_file.current_location
-    assert from_rows.location_description == from_file.location_description
-    assert from_rows.scene_items == from_file.scene_items
-    assert from_rows.opening_situation == from_file.opening_situation
-    # Not a vacuous comparison of two empty projections.
-    assert from_file.node_count and from_file.edge_count and from_file.withheld
+    assert projection_fingerprint(from_rows) == projection_fingerprint(from_file)
+    # Not a vacuous comparison of two empty projections: the fixture has to be
+    # projecting nodes, edges, facts AND withholding things for the equality
+    # above to mean anything.
+    assert from_file.node_count and from_file.edge_count
+    assert from_file.established_facts and from_file.withheld
+    assert from_file.withheld_notes
 
 
 @pytest.mark.asyncio
@@ -170,6 +190,8 @@ async def test_the_graph_can_be_destroyed_and_rebuilt_from_canon_alone(rig):
 
     assert (rebuilt_graph.node_count(), rebuilt_graph.edge_count()) == before
     assert receipt.graph_rejections == []
+    assert (receipt.nodes_added, receipt.edges_added) == before
+    assert receipt.preserved_nodes == []
     assert {
         e.name for e in
         rebuilt_graph.residents_of(rebuilt_graph.resolve_location_node("Copper Finch"))
@@ -223,6 +245,13 @@ async def test_installing_a_book_populates_canon_indexes_and_the_scene(rig):
     assert installed.imported.total_rows > 0
     assert installed.scene_seeded
     assert installed.rebuilt.graph_rejections == []
+    assert installed.rebuilt.nodes_added == installed.rebuilt.projected_nodes
+    # Against DISTINCT edges, not the op count: two objectives of the same
+    # quest sit in the Copper Finch, so the projection emits that OBJECTIVE_AT
+    # edge twice and the graph keeps one. Exactly the gap between "what canon
+    # asked for" and "what the graph took" that the receipt now measures.
+    assert installed.rebuilt.edges_added == len(_edges(installed.compiled))
+    assert installed.rebuilt.edges_added < installed.rebuilt.projected_edges
     # Canon
     assert await repo.sourcebook_keys_for_campaign("camp") == [
         installed.sourcebook_key
@@ -236,20 +265,29 @@ async def test_installing_a_book_populates_canon_indexes_and_the_scene(rig):
     )
     assert not finch.is_untouched
     # Index + scene
-    assert graph.node_count() == installed.rebuilt.nodes
+    assert graph.node_count() == installed.rebuilt.projected_nodes
     assert world.current_location == "Copper Finch"
     assert {n.name for n in world.npcs.values()} == {"Mara Venn", "Toran Vex"}
+    # The opening location is marked visited at turn 0 — otherwise "authored
+    # in a region the party has not touched" counts the starting tavern.
+    row = await _db.fetch_one(
+        """
+        SELECT first_visited_turn FROM campaign_location_state
+        WHERE campaign_id = 'camp' AND location_id = 'copper-finch'
+        """
+    )
+    assert row is not None and row[0] == 0
 
 
 @pytest.mark.asyncio
-async def test_the_install_reads_canon_back_rather_than_trusting_memory(rig):
-    """A lossy import must break the install, not survive as a healthy graph.
+async def test_a_lossy_round_trip_stops_the_install(rig):
+    """The install COMPARES the two projections; it does not merely hope.
 
-    Proven by making the round trip lie: if ``install_sourcebook`` compiled
-    the in-memory book, the graph would be fully populated regardless of what
-    canon actually holds.
+    Once the graph is built from canon rather than from the book, every
+    secret depends on canon's fidelity too — so "the rows reproduce the book"
+    has to be checked, not assumed.
     """
-    _db, repo, graph, store = rig
+    _db, repo, graph, _store = rig
     real_load = repo.load_book
 
     async def _amnesiac(key: str):
@@ -258,18 +296,184 @@ async def test_the_install_reads_canon_back_rather_than_trusting_memory(rig):
         return book
 
     repo.load_book = _amnesiac  # type: ignore[method-assign]
+
+    with pytest.raises(ValueError, match="do not reproduce the book"):
+        await _install(rig)
+
+    assert not graph.has_node("sable-quill")
+
+
+@pytest.mark.asyncio
+async def test_a_lossy_round_trip_that_would_publish_a_secret_stops_the_install(rig):
+    """The case that motivates the check.
+
+    Losing one bool — `InventoryEntry.hidden` — gives a concealed item an
+    ownership edge and its text to the vector index, with no warning, no
+    rejection and nothing in `withheld_notes` to show it happened.
+    """
+    _db, repo, graph, _store = rig
+    real_load = repo.load_book
+
+    async def _forgetful(key: str):
+        book = await real_load(key)
+        for npc in book.npcs:
+            for entry in npc.inventory:
+                entry.hidden = False
+        return book
+
+    repo.load_book = _forgetful  # type: ignore[method-assign]
+
+    with pytest.raises(ValueError, match="do not reproduce the book"):
+        await _install(rig)
+
+    assert not graph.has_node("forged-deed")
+
+
+@pytest.mark.asyncio
+async def test_a_faithful_round_trip_installs(rig):
+    """Positive control for the two above: the real round trip passes the
+    check, so those failures are the injected loss and not the check itself."""
+    _db, _repo, graph, store = rig
+
     installed = await _install(rig)
 
-    projected = {
-        op.entity.node_id for op in installed.compiled.graph_ops
-        if isinstance(op, AddNode)
-    }
-    assert "sable-quill" not in projected
-    assert not graph.has_node("sable-quill")
-    # Positive control: the rest of the book still installed, so the absence
-    # above is canon being read back, not the install having failed outright.
-    assert "mara-venn" in projected
-    assert graph.has_node("mara-venn")
+    assert installed.scene_seeded
+    assert graph.has_node("sable-quill")
+    assert store.state.current_location == "Copper Finch"
+
+
+# ── Rebuilding onto a campaign in play ──────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_a_rebuild_does_not_resurrect_the_dead(rig):
+    """The invariant that outranks index freshness.
+
+    The graph merges by node id with `properties.update()`, and canon always
+    says `alive: "true"` for a character the BOOK considers living. So a
+    rebuild that overwrote existing nodes would revert a death: the tool path
+    leaves `alive: true` beside `status: dead` — and the narrator is only ever
+    shown `alive` — while the delta path writes no `status` at all, clearing
+    both of `hydrate_residents`' gates and walking the corpse back on stage.
+    """
+    _db, repo, graph, store = rig
+    installed = await _install(rig)
+
+    # Play kills Toran, by each of the two paths that write a death.
+    toran = graph.get_entity("toran-vex")
+    toran.properties.update({"alive": "false", "status": "dead"})
+    mara = graph.get_entity("mara-venn")
+    mara.properties["alive"] = "false"          # delta path: no `status`
+    mara.properties["description"] = "Face down in the taproom."
+
+    receipt = await rebuild_indexes(
+        repository=repo, sourcebook_key=installed.sourcebook_key,
+        campaign_id="camp", knowledge_graph=graph,
+    )
+
+    assert graph.get_entity("toran-vex").properties["alive"] == "false"
+    assert graph.get_entity("mara-venn").properties["alive"] == "false"
+    assert graph.get_entity("mara-venn").properties["description"] == (
+        "Face down in the taproom."
+    )
+    assert {"toran-vex", "mara-venn"} <= set(receipt.preserved_nodes)
+    # And nobody is hydrated back onto the stage.
+    node = graph.resolve_location_node("Copper Finch")
+    assert store.hydrate_residents(graph.residents_of(node)) == []
+
+
+@pytest.mark.asyncio
+async def test_a_node_the_graph_silently_refused_is_not_indexed(rig):
+    """The graph can decline a node WITHOUT rejecting it.
+
+    A new NPC whose proper name a durable node already carries merges into
+    that node (one collision) or abstains (several) — and either way
+    ``apply_operations`` returns no rejection, so a receipt built from the
+    projection's own counts would claim a node that does not exist. Indexing
+    that entity would then leave an orphan document in the vector store
+    pointing at a node id nothing can resolve.
+    """
+    db, repo, graph, _store = rig
+    installed = await _install(rig)
+    kg_repo = KnowledgeGraphRepository(db=db)
+
+    # Play lost Mara's node and minted a differently-identified one under the
+    # same proper name — the exact shape the naming-promotion work guards.
+    await kg_repo.delete_node("camp", "mara-venn")
+    await kg_repo.upsert_node(Entity(
+        node_id="the-woman-in-grey", entity_type=EntityType.NPC,
+        name="Mara Venn", campaign_id="camp",
+        properties={"description": "Play wrote this one."},
+    ))
+    reloaded = KnowledgeGraph(campaign_id="camp", repository=kg_repo)
+    await reloaded.load()
+    assert not reloaded.has_node("mara-venn")
+    vector = _RecordingVectorStore()
+
+    receipt = await rebuild_indexes(
+        repository=repo, sourcebook_key=installed.sourcebook_key,
+        campaign_id="camp", knowledge_graph=reloaded, vector_store=vector,
+    )
+
+    # The graph merged rather than created, and said nothing about the NODE —
+    # only its orphaned edges complain, which names the wrong culprit.
+    assert not reloaded.has_node("mara-venn")
+    assert all(r.startswith("add_edge") for r in receipt.graph_rejections)
+    assert not any("add_node" in r for r in receipt.graph_rejections)
+    # Counting the projection would have reported a node that isn't there.
+    assert receipt.nodes_added < receipt.projected_nodes
+    # So the index must not carry a document for a node that isn't there.
+    assert "mara-venn" not in vector.node_ids
+    assert "the-woman-in-grey" not in vector.node_ids
+    # Positive control: everything the graph DID hold was indexed.
+    assert "toran-vex" in vector.node_ids
+    assert receipt.embedded == len(vector.node_ids)
+
+
+@pytest.mark.asyncio
+async def test_a_deliberate_reseed_can_overwrite(rig):
+    """`overwrite=True` is the escape hatch — and it must actually differ."""
+    _db, repo, graph, _store = rig
+    installed = await _install(rig)
+    graph.get_entity("toran-vex").properties["description"] = "Scratched out."
+
+    await rebuild_indexes(
+        repository=repo, sourcebook_key=installed.sourcebook_key,
+        campaign_id="camp", knowledge_graph=graph, overwrite=True,
+    )
+
+    assert graph.get_entity("toran-vex").properties["description"] == (
+        "A nervous clerk."
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_rebuild_restores_only_what_the_graph_lost(rig):
+    """The realistic damage: rows gone, not rows stale."""
+    db, repo, graph, _store = rig
+    installed = await _install(rig)
+    graph.get_entity("mara-venn").properties["description"] = "Play wrote this."
+
+    await db.execute("DELETE FROM kg_node WHERE node_id = 'toran-vex'")
+    await db.commit()
+    reloaded = KnowledgeGraph(
+        campaign_id="camp", repository=KnowledgeGraphRepository(db=db)
+    )
+    await reloaded.load()
+    reloaded.get_entity("mara-venn").properties["description"] = "Play wrote this."
+    assert not reloaded.has_node("toran-vex")
+
+    receipt = await rebuild_indexes(
+        repository=repo, sourcebook_key=installed.sourcebook_key,
+        campaign_id="camp", knowledge_graph=reloaded,
+    )
+
+    assert reloaded.has_node("toran-vex")
+    assert receipt.nodes_added == 1
+    assert "toran-vex" not in receipt.preserved_nodes
+    assert reloaded.get_entity("mara-venn").properties["description"] == (
+        "Play wrote this."
+    )
 
 
 @pytest.mark.asyncio
@@ -313,34 +517,131 @@ async def test_secrets_do_not_reach_the_rebuilt_vector_index(rig):
     nothing in the trace to explain where it came from.
     """
     _db, _repo, _graph, _store = rig
+    _assert_secrets_are_really_in_the_book(rich_book())
     vector = _RecordingVectorStore()
 
     installed = await _install(rig, vector_store=vector)
 
-    assert installed.rebuilt.embedded == installed.rebuilt.nodes
+    assert installed.rebuilt.embedded == installed.rebuilt.projected_nodes
     assert not installed.rebuilt.vector_skipped
+    assert installed.rebuilt.vector_complete
     for secret in SECRETS:
         assert secret not in vector.corpus, f"leaked to the vector index: {secret}"
-    # Positive control: the index is not simply empty.
+    # Positive controls: the index is not simply empty, and the channels the
+    # secrets would have travelled on are live. Aliases especially — with no
+    # aliased entity in the book, an alias-borne leak would be untestable.
     assert "A sharp-eyed woman" in vector.corpus
     assert "Someone is paying to keep the arch shut" in vector.corpus
-    assert "forged-deed" not in vector.documents
+    assert "the investigator" in vector.corpus
+    assert "the black gate" in vector.corpus
+    # An item whose only presence is a concealed one is not indexed at all,
+    # but one that is ALSO placed at a location is — minus the concealment.
+    assert "forged-deed" not in vector.node_ids
+    assert "warden-ledger" in vector.node_ids
+
+
+@pytest.mark.asyncio
+async def test_a_withheld_quest_reaches_neither_index(rig):
+    """`quest-salt-run` is not in `active_quest_ids`, so it does not exist yet
+    as far as play is concerned — including semantically."""
+    _db, _repo, graph, _store = rig
+    vector = _RecordingVectorStore()
+
+    installed = await _install(rig, vector_store=vector)
+
+    assert not graph.has_node("quest-salt-run")
+    assert "quest-salt-run" not in vector.node_ids
+    assert "cargo nobody signed for" not in vector.corpus
+    assert graph.has_node("quest-ash-gate")          # positive control
+    assert any("quest-salt-run" in note
+               for note in installed.compiled.withheld_notes)
+
+
+@pytest.mark.asyncio
+async def test_concealment_and_private_ties_survive_the_canon_round_trip(rig):
+    """Both guards, exercised where the guard is the ONLY thing stopping them.
+
+    `warden-ledger` earns a node on its own (it is placed at the Ash Gate), so
+    a broken `hidden` check publishes "Toran carries it" rather than merely
+    losing a node. `rel-secret-debt` runs between two NPCs that both have
+    nodes, so a broken visibility check publishes the tie rather than
+    reporting a dangling reference.
+    """
+    _db, repo, _graph, _store = rig
+    installed = await _install(rig)
+    edges = _edges(installed.compiled)
+
+    assert "warden-ledger" in _node_ids(installed.compiled)
+    assert ("toran-vex", "warden-ledger", "owns") not in edges
+    assert ("mara-venn", "toran-vex", "knows") not in edges
+    assert ("mara-venn", "toran-vex", "allied_with") not in edges
+    # Positive control: a NON-hidden inventory entry does produce ownership.
+    assert ("sable-quill", "warden-seal", "owns") in edges
+    notes = installed.compiled.withheld_notes
+    assert any("toran-vex->warden-ledger: hidden" in note for note in notes)
+    assert any("rel-secret-debt" in note for note in notes)
+
+
+@pytest.mark.asyncio
+async def test_a_vector_index_that_refused_every_write_is_not_success(rig):
+    """`add_entity_description` swallows its own errors and returns False, so
+    counting only successes would let a rebuild that indexed NOTHING pass."""
+    _db, repo, graph, _store = rig
+    installed = await _install(rig)
+    refusing = _RecordingVectorStore(fail_on=set(_node_ids(installed.compiled)))
+
+    receipt = await rebuild_indexes(
+        repository=repo, sourcebook_key=installed.sourcebook_key,
+        campaign_id="camp", knowledge_graph=graph, vector_store=refusing,
+    )
+
+    assert receipt.embedded == 0
+    assert receipt.embed_failures == receipt.projected_nodes
+    assert not receipt.vector_complete
+
+
+@pytest.mark.asyncio
+async def test_a_vector_store_that_raises_does_not_abort_the_install(rig):
+    """The most disposable layer must not strand the install with canon
+    written, the campaign bound and no scene seeded."""
+    _db, _repo, graph, store = rig
+
+    class _Exploding:
+        def add_entity_description(self, **_kwargs):
+            raise RuntimeError("chroma is on fire")
+
+    installed = await _install(rig, vector_store=_Exploding())
+
+    assert installed.scene_seeded
+    assert store.state.current_location == "Copper Finch"
+    assert graph.node_count() > 0
+    assert not installed.rebuilt.vector_complete
+    assert any("chroma is on fire" in w for w in installed.rebuilt.warnings)
 
 
 @pytest.mark.asyncio
 async def test_secrets_do_not_reach_the_seeded_world_state(rig):
     _db, _repo, _graph, store = rig
+    _assert_secrets_are_really_in_the_book(rich_book())
 
     installed = await _install(rig)
-    surface = store.state.to_yaml()
+    # `established_facts`, NOT to_yaml(): to_yaml emits only facts relevant to
+    # the CURRENT SCENE, so a fact about somewhere else is filtered out
+    # whether or not the compiler leaked it. Asserting against the rendered
+    # view made every check here unfalsifiable.
+    facts = "\n".join(store.state.established_facts)
 
     for secret in SECRETS:
-        assert secret not in surface
-    assert "everyone at the Copper Finch defers to" in surface
+        assert secret not in facts, f"leaked into established facts: {secret}"
+    assert "everyone at the Copper Finch defers to" in facts
     # A public claim that is not settled truth is withheld too: asserting a
-    # legend as fact is the same failure wearing a different hat.
-    assert "walks the quay" not in surface
+    # legend as fact is the same failure wearing a different hat. Old Bram is
+    # at the Ash Gate, so only the unfiltered list can see this.
+    assert "walks the quay" not in facts
+    assert "sealed by the flood" not in facts          # PUBLIC but DISPUTED
+    assert "flooded three winters running" in facts    # PLAYER_KNOWN, canon
     assert any("filed the lock" in c.text for c in installed.compiled.withheld)
+    assert "filed the lock" not in store.state.to_yaml()
 
 
 @pytest.mark.asyncio
@@ -351,3 +652,4 @@ async def test_the_vector_index_is_skipped_when_no_store_is_given(rig):
 
     assert installed.rebuilt.vector_skipped
     assert installed.rebuilt.embedded == 0
+    assert installed.rebuilt.vector_complete

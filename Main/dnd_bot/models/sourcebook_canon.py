@@ -30,6 +30,22 @@ class SourcebookHeader(BaseModel):
     imported_at: str = ""
 
 
+class BindReceipt(BaseModel):
+    """What binding a campaign to a book version actually moved.
+
+    ``superseded_keys`` is non-empty when the campaign was already playing a
+    different version of the SAME book — advancing to a new version is not a
+    silent operation, because it retires the old binding and carries the
+    party's overlay across.
+    """
+
+    campaign_id: str
+    sourcebook_key: str
+    superseded_keys: list[str] = Field(default_factory=list)
+    claims_carried: int = 0
+    visits_carried: int = 0
+
+
 class CampaignClaim(BaseModel):
     """Authored canon plus this campaign's overlay on it.
 
@@ -105,6 +121,10 @@ class RegionContents(BaseModel):
     ``location_ids`` includes the region itself and every descendant, so the
     other lists are "authored anywhere in here", not "authored at this exact
     node".
+
+    ``unvisited_location_ids`` is only populated when the query was given a
+    ``campaign_id`` — with no campaign there is no visit state, and the field
+    stays empty rather than pretending nothing has been visited.
     """
 
     region_id: str
@@ -142,13 +162,32 @@ class ImportReceipt(BaseModel):
 
 
 class RebuildReceipt(BaseModel):
-    """What a rebuild regenerated, and what it refused to."""
+    """What a rebuild regenerated, what it preserved, and what it refused to.
+
+    ``projected_*`` is what canon asked for; ``*_added`` is what the graph
+    actually took, MEASURED before and after. The two differ whenever the
+    graph merges or abstains on a proper-name collision — which it does
+    silently, returning no rejection — so reporting only the projection's own
+    counts would overstate the rebuild.
+    """
 
     sourcebook_key: str
     campaign_id: str
-    nodes: int = 0
-    edges: int = 0
+    projected_nodes: int = 0
+    projected_edges: int = 0
+    nodes_added: int = 0
+    edges_added: int = 0
+    # Node ids left untouched because the graph already had them. These carry
+    # play's version of an entity (a death, a renamed NPC, a description
+    # written during a scene), which canon must not revert.
+    preserved_nodes: list[str] = Field(default_factory=list)
     graph_rejections: list[str] = Field(default_factory=list)
     embedded: int = 0
+    embed_failures: int = 0
     vector_skipped: bool = True
     warnings: list[str] = Field(default_factory=list)
+
+    @property
+    def vector_complete(self) -> bool:
+        """False when the index was attempted and did not fully land."""
+        return self.vector_skipped or self.embed_failures == 0

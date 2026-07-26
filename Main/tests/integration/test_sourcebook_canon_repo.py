@@ -70,6 +70,7 @@ def rich_book() -> CampaignSourcebook:
                          access_rules=["closed at third bell"],
                          map_coordinates=(12.5, -3.25)),
             LocationSpec(id="ash-gate", name="Ash Gate",
+                         aliases=["the arch", "the black gate"],
                          location_kind=LocationKind.SITE,
                          parent_location_id="emberhold",
                          description="A cracked black arch."),
@@ -90,13 +91,15 @@ def rich_book() -> CampaignSourcebook:
         ],
         factions=[
             FactionSpec(id="kestrel-guild", name="Kestrel Guild",
+                        aliases=["the Guild", "kestrels"],
                         headquarters_id="emberhold",
                         territory_location_ids=["emberhold", "ash-gate"],
                         # mara-venn is ALSO a plain member via her own
                         # faction_ids: the two authoring routes must not
-                        # collapse into one another.
+                        # collapse into one another. Two notable members, so
+                        # list ORDER inside a membership role is exercised.
                         leader_ids=["mara-venn"],
-                        notable_member_ids=["toran-vex"],
+                        notable_member_ids=["toran-vex", "old-bram"],
                         ideology=["debts are sacred"],
                         goals=["own the gate"],
                         ranks=["fledgling", "kestrel"]),
@@ -115,15 +118,32 @@ def rich_book() -> CampaignSourcebook:
                      description="Warm, always.", charges=3,
                      default_location_id="copper-finch"),
             ItemSpec(id="warden-seal", name="Warden's Seal", category="badge",
+                     aliases=["the seal"],
                      description="A char-black disc.", attunement="none"),
+            # Not unique, so it can be BOTH placed at a location and carried.
+            # That combination is what makes the `hidden` guard testable: the
+            # item earns a graph node on its own, so the ONLY thing standing
+            # between play and "Toran has it" is the concealment check.
+            ItemSpec(id="warden-ledger", name="Warden's Ledger",
+                     category="document", unique=False,
+                     description="Columns of names, one of them scratched out.",
+                     default_location_id="ash-gate"),
         ],
         # Order deliberately not id order — sort_order must preserve THIS.
         npcs=[
             NPCSpec(id="toran-vex", name="Toran Vex",
+                    aliases=["the clerk"],
                     appearance="A nervous clerk.", role="ledger-keeper",
                     faction_ids=["kestrel-guild"],
-                    current_location_id="copper-finch"),
+                    current_location_id="copper-finch",
+                    # Concealed, and the item is placed at the Ash Gate on its
+                    # own — so a broken hidden-check publishes "Toran carries
+                    # the ledger" rather than merely losing a node.
+                    inventory=[InventoryEntry(item_id="warden-ledger",
+                                              hidden=True, quantity=2,
+                                              notes="under the floor")]),
             NPCSpec(id="mara-venn", name="Mara Venn",
+                    aliases=["the investigator", "Venn"],
                     appearance="A sharp-eyed woman in a charcoal coat.",
                     role="investigator", pronouns="she/her", ancestry="human",
                     age="forties",
@@ -148,7 +168,8 @@ def rich_book() -> CampaignSourcebook:
                     current_location_id="ash-gate"),
             NPCSpec(id="sable-quill", name="Sable Quill",
                     appearance="Ash on her cuffs.",
-                    faction_ids=["ash-wardens"],
+                    # Two factions: membership list ORDER has to survive.
+                    faction_ids=["ash-wardens", "kestrel-guild"],
                     current_location_id="ash-gate",
                     inventory=[InventoryEntry(item_id="warden-seal",
                                               equipped=True)]),
@@ -192,6 +213,14 @@ def rich_book() -> CampaignSourcebook:
                              target_id="ash-wardens",
                              kind=RelationshipKind.SERVES,
                              private_description="He reports to them nightly."),
+            # The same guard, but between two NPCs that BOTH have graph nodes.
+            # rel-secret-service targets a faction, which has no node at all,
+            # so it would be withheld even with the check removed — this one
+            # is the case where the visibility check is doing the work alone.
+            RelationshipSpec(id="rel-secret-debt", source_id="mara-venn",
+                             target_id="toran-vex", kind=RelationshipKind.OWES,
+                             private_description="She bought his silence for "
+                                                 "sixty crowns."),
             # Over and done with — must not answer "who is hostile now".
             RelationshipSpec(id="rel-old-grudge", source_id="old-bram",
                              target_id="mara-venn",
@@ -234,12 +263,10 @@ def rich_book() -> CampaignSourcebook:
                            contradiction_group="who-sealed-the-gate",
                            invalidated_by_event_id="event-bram-drowned"),
         ],
+        # Listed with the LATER event first, so authored list order and
+        # chronological sort_order disagree. The schema keeps both on purpose;
+        # storing only one would silently reorder somebody's timeline.
         timeline=[
-            HistoricalEvent(id="event-gate-sealed", title="The Sealing",
-                            date_label="Three winters back", sort_order=1,
-                            summary="The arch was shut in one night.",
-                            location_ids=["ash-gate"],
-                            visibility=Visibility.PUBLIC),
             HistoricalEvent(id="event-bram-drowned", title="Bram Goes Under",
                             date_label="That same winter", sort_order=2,
                             summary="The ferryman did not come back.",
@@ -247,6 +274,11 @@ def rich_book() -> CampaignSourcebook:
                             location_ids=["ash-gate"],
                             cause_event_ids=["event-gate-sealed"],
                             consequence_ids=["claim-secret-deed"]),
+            HistoricalEvent(id="event-gate-sealed", title="The Sealing",
+                            date_label="Three winters back", sort_order=1,
+                            summary="The arch was shut in one night.",
+                            location_ids=["ash-gate"],
+                            visibility=Visibility.PUBLIC),
         ],
         quests=[
             QuestSpec(id="quest-ash-gate", name="What the Gate Kept",
@@ -263,7 +295,8 @@ def rich_book() -> CampaignSourcebook:
                           QuestObjective(id="obj-open-gate",
                                          description="Open the arch.",
                                          prerequisite_objective_ids=["obj-find-key"],
-                                         location_ids=["ash-gate"]),
+                                         failure_conditions=["the gate is rewelded"],
+                                         location_ids=["ash-gate", "copper-finch"]),
                       ],
                       reveal_claim_ids=["claim-find-gate"],
                       reward_item_ids=["brass-key"],
@@ -398,7 +431,10 @@ async def test_both_authoring_routes_into_a_faction_are_kept_apart(rig):
 
     assert [str(f) for f in mara.faction_ids] == ["kestrel-guild"]
     assert [str(i) for i in guild.leader_ids] == ["mara-venn"]
-    assert [str(i) for i in guild.notable_member_ids] == ["toran-vex"]
+    assert [str(i) for i in guild.notable_member_ids] == ["toran-vex", "old-bram"]
+    # Order WITHIN a role, and an NPC in two factions, both survive.
+    sable = next(n for n in restored.npcs if n.id == "sable-quill")
+    assert [str(f) for f in sable.faction_ids] == ["ash-wardens", "kestrel-guild"]
 
 
 @pytest.mark.asyncio
@@ -434,6 +470,127 @@ async def test_an_edited_book_is_a_new_version_beside_the_old_one(rig):
     }
     still = await repo.load_book(first.sourcebook_key)
     assert still.claims[0].text == original.claims[0].text
+
+
+@pytest.mark.asyncio
+async def test_identity_covers_the_whole_book_including_where_it_starts(rig):
+    """Two books differing only in `starting_state` are DIFFERENT books.
+
+    If the hash skipped it, the second import would silently no-op and the
+    campaign would wake up in the wrong tavern knowing the wrong things.
+    """
+    _db, repo = rig
+    base = rich_book()
+    moved = rich_book()
+    moved.starting_state.location_id = "ash-gate"
+    reknown = rich_book()
+    reknown.starting_state.player_known_claim_ids = ["claim-public-mara"]
+
+    keys = {
+        (await repo.import_book(b)).sourcebook_key
+        for b in (base, moved, reknown)
+    }
+
+    assert len(keys) == 3
+
+
+@pytest.mark.asyncio
+async def test_books_that_compare_equal_get_the_same_key(rig):
+    """Identity must not fork on an encoding artefact.
+
+    `-0.0 == 0.0` is True in Python, so these two books ARE equal — but they
+    JSON-encode differently, and a naive hash would mint a second version of a
+    book a campaign is already playing.
+    """
+    _db, repo = rig
+    positive = rich_book()
+    negative = rich_book()
+    positive.locations[2].map_coordinates = (0.0, 12.0)
+    negative.locations[2].map_coordinates = (-0.0, 12.0)
+    assert positive == negative
+
+    first = await repo.import_book(positive)
+    second = await repo.import_book(negative)
+
+    assert second.sourcebook_key == first.sourcebook_key
+    assert second.already_imported
+    assert len(await repo.list_books()) == 1
+
+
+@pytest.mark.asyncio
+async def test_an_imported_book_reports_what_it_actually_wrote(rig):
+    """Per-table counts, not just a total: a table skipped entirely by the
+    importer would still leave `total_rows > 0` looking healthy."""
+    _db, repo = rig
+
+    counts = (await repo.import_book(rich_book())).row_counts
+
+    assert counts["sourcebook"] == 1
+    assert counts["sourcebook_location"] == 6
+    assert counts["sourcebook_route"] == 2
+    assert counts["sourcebook_npc"] == 5
+    assert counts["sourcebook_item"] == 4
+    assert counts["sourcebook_faction"] == 2
+    assert counts["sourcebook_claim"] == 8
+    assert counts["sourcebook_event"] == 2
+    assert counts["sourcebook_relationship"] == 6
+    assert counts["sourcebook_quest"] == 2
+    assert counts["sourcebook_quest_objective"] == 3
+    assert counts["sourcebook_quest_objective_location"] == 4
+    assert counts["sourcebook_npc_inventory"] == 3
+    assert counts["sourcebook_faction_territory"] == 3
+    # 4 from npc.faction_ids (Sable names two) + 2 leaders + 2 notables
+    assert counts["sourcebook_npc_faction"] == 8
+    # creatures + lore domains + story arcs + encounters
+    assert counts["sourcebook_aux_record"] == 4
+
+
+@pytest.mark.asyncio
+async def test_a_header_describes_the_version_it_names(rig):
+    _db, repo = rig
+    key = await _imported(repo)
+
+    header = await repo.get_header(key)
+
+    assert header.sourcebook_key == key
+    assert header.sourcebook_id == "ash-gate"
+    assert header.title == "The Ash Gate"
+    assert header.pitch.startswith("Something was sealed")
+    assert header.ruleset == "dnd5e"
+
+
+@pytest.mark.asyncio
+async def test_a_timeline_keeps_authored_order_and_chronology_apart(rig):
+    """The fixture lists the later event first. Both facts are data."""
+    _db, repo = rig
+    key = await _imported(repo)
+
+    restored = await repo.load_book(key)
+
+    assert [str(e.id) for e in restored.timeline] == [
+        "event-bram-drowned", "event-gate-sealed",
+    ]
+    assert [e.sort_order for e in restored.timeline] == [2, 1]
+
+
+@pytest.mark.asyncio
+async def test_replacing_an_unbound_version_rewrites_its_rows(rig):
+    """The happy path of `replace`, which the refusal test cannot reach."""
+    db, repo = rig
+    key = await _imported(repo)
+    await db.execute(
+        "UPDATE sourcebook_npc SET name = 'Tampered' WHERE id = 'mara-venn'"
+    )
+    await db.commit()
+
+    receipt = await repo.import_book(rich_book(), replace=True)
+
+    assert receipt.sourcebook_key == key
+    assert not receipt.already_imported
+    restored = await repo.load_book(key)
+    assert next(n for n in restored.npcs if n.id == "mara-venn").name == "Mara Venn"
+    row = await db.fetch_one("SELECT COUNT(*) FROM sourcebook_npc")
+    assert row[0] == 5
 
 
 @pytest.mark.asyncio
@@ -508,6 +665,149 @@ async def test_replacing_a_version_a_campaign_is_playing_is_refused(rig):
 
     log = await repo.discovery_log("camp")
     assert [c.claim_id for c in log] == ["claim-find-key"]
+
+
+# ── Binding: one version of a book per campaign ─────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_fixing_a_typo_does_not_leave_a_campaign_playing_two_versions(rig):
+    """The defect this section exists for.
+
+    The key is a content hash, so editing one line of prose mints a NEW key.
+    Binding it beside the old one made every overlay query answer for two
+    versions at once — the pre-edit and post-edit text of the same claim id
+    both returned as settled canon, and since results order by a sha256, which
+    one a caller saw when collapsing by claim id was effectively random.
+    """
+    _db, repo = rig
+    first = await _bound(repo)
+    await repo.record_discovery("camp", first, "claim-find-key", turn=7, via="dug")
+
+    edited = rich_book()
+    edited.claims[0].text = "Mara Venn is barely tolerated at the Copper Finch."
+    second = (await repo.import_book(edited)).sourcebook_key
+    receipt = await repo.bind_campaign("camp", second)
+
+    assert second != first
+    assert await repo.sourcebook_keys_for_campaign("camp") == [second]
+    assert receipt.superseded_keys == [first]
+    # One row per claim id, not two.
+    effective = await repo.effective_claims("camp")
+    ids = [c.claim_id for c in effective]
+    assert len(ids) == len(set(ids)) == 8
+    assert {c.text for c in effective if c.claim_id == "claim-public-mara"} == {
+        "Mara Venn is barely tolerated at the Copper Finch."
+    }
+
+
+@pytest.mark.asyncio
+async def test_advancing_a_version_carries_the_party_s_discoveries_across(rig):
+    """A prose fix must not un-earn what the party earned.
+
+    Discovery is keyed on the sourcebook_key, so without carry-forward every
+    claim reads back undiscovered under the new key and gets re-offered.
+    """
+    _db, repo = rig
+    first = await _bound(repo)
+    await repo.record_discovery("camp", first, "claim-find-key", turn=7, via="dug")
+    await repo.supersede_claim("camp", first, "claim-old-story", "claim-find-gate",
+                               canon_status=CanonStatus.FALSE, note="disproved")
+    await repo.record_visit("camp", first, "ash-gate", turn=4)
+
+    edited = rich_book()
+    edited.metadata.pitch = "A gate, and a ledger nobody signed."
+    second = (await repo.import_book(edited)).sourcebook_key
+    receipt = await repo.bind_campaign("camp", second)
+
+    log = await repo.discovery_log("camp")
+    assert [(c.claim_id, c.discovered_at_turn, c.discovered_via) for c in log] == [
+        ("claim-find-key", 7, "dug"),
+    ]
+    assert receipt.claims_carried >= 2 and receipt.visits_carried == 1
+    overturned = next(
+        c for c in await repo.effective_claims("camp")
+        if c.claim_id == "claim-old-story"
+    )
+    assert overturned.superseded_by_claim_id == "claim-find-gate"
+    assert overturned.effective_canon_status is CanonStatus.FALSE
+    assert overturned.note == "disproved"
+    gate = await repo.region_contents(key := second, "ash-gate", campaign_id="camp")
+    assert gate.unvisited_location_ids == [] and key
+    assert "claim-find-key" not in {
+        c.claim_id for c in await repo.undiscovered_claims("camp")
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_claim_the_new_version_dropped_is_left_behind(rig):
+    """Carry-forward is by stable id, not a blind copy: a claim the author
+    deleted must not be resurrected as a dangling overlay row."""
+    _db, repo = rig
+    first = await _bound(repo)
+    await repo.record_discovery("camp", first, "claim-find-warden", turn=3, via="x")
+    await repo.record_discovery("camp", first, "claim-find-key", turn=4, via="y")
+
+    trimmed = rich_book()
+    trimmed.claims = [c for c in trimmed.claims if c.id != "claim-find-warden"]
+    trimmed.quests[0].reveal_claim_ids = ["claim-find-gate"]
+    second = (await repo.import_book(trimmed)).sourcebook_key
+    await repo.bind_campaign("camp", second)
+
+    assert [c.claim_id for c in await repo.discovery_log("camp")] == [
+        "claim-find-key"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_supplement_binds_beside_a_base_module(rig):
+    """Only versions of the SAME sourcebook_id collide. A different book is a
+    different book, and campaigns are meant to be able to play both."""
+    _db, repo = rig
+    base = await _bound(repo)
+    supplement = rich_book()
+    supplement.metadata.sourcebook_id = "salt-quay-supplement"
+    other = (await repo.import_book(supplement)).sourcebook_key
+
+    receipt = await repo.bind_campaign("camp", other)
+
+    assert receipt.superseded_keys == []
+    assert sorted(await repo.sourcebook_keys_for_campaign("camp")) == sorted(
+        [base, other]
+    )
+
+
+@pytest.mark.asyncio
+async def test_binding_an_unimported_key_fails_loudly(rig):
+    _db, repo = rig
+    with pytest.raises(LookupError, match="deadbeef"):
+        await repo.bind_campaign("camp", "deadbeef")
+
+
+@pytest.mark.asyncio
+async def test_unbinding_hides_a_book_without_destroying_the_overlay(rig):
+    _db, repo = rig
+    key = await _bound(repo)
+    await repo.record_discovery("camp", key, "claim-find-key", turn=2, via="z")
+
+    assert await repo.unbind_campaign("camp", key)
+
+    assert await repo.sourcebook_keys_for_campaign("camp") == []
+    assert await repo.effective_claims("camp") == []
+    # Rebinding restores it — the rows were hidden, not dropped.
+    await repo.bind_campaign("camp", key)
+    assert [c.claim_id for c in await repo.discovery_log("camp")] == [
+        "claim-find-key"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_one_campaign_s_binding_is_not_anothers(rig):
+    _db, repo = rig
+    key = await _bound(repo, "camp")
+
+    assert await repo.sourcebook_keys_for_campaign("other") == []
+    assert await repo.sourcebook_keys_for_campaign("camp") == [key]
 
 
 # ── Claims: the queries this layer exists for ───────────────────────────────
@@ -643,6 +943,142 @@ async def test_play_supersedes_canon_without_editing_the_book(rig):
 
 
 @pytest.mark.asyncio
+async def test_a_typo_in_a_superseding_id_is_refused(rig):
+    """There is no foreign key here, and the failure would be silent AND total.
+
+    A superseded claim drops out of `include_superseded=False`, so a bad id
+    deletes a fact from retrieval with nothing put in its place.
+    """
+    _db, repo = rig
+    key = await _bound(repo)
+
+    with pytest.raises(ValueError, match="claim-typo-does-not-exist"):
+        await repo.supersede_claim(
+            "camp", key, "claim-public-mara", "claim-typo-does-not-exist"
+        )
+    with pytest.raises(ValueError, match="itself"):
+        await repo.supersede_claim(
+            "camp", key, "claim-public-mara", "claim-public-mara"
+        )
+    with pytest.raises(ValueError, match="no-such-claim"):
+        await repo.supersede_claim("camp", key, "no-such-claim", "claim-find-key")
+
+    standing = {c.claim_id for c in
+                await repo.effective_claims("camp", include_superseded=False)}
+    assert "claim-public-mara" in standing
+
+
+@pytest.mark.asyncio
+async def test_why_canon_was_overturned_survives_a_later_correction(rig):
+    """`note` is preserved on omission, exactly like canon_status. The reason
+    is the part most worth keeping."""
+    _db, repo = rig
+    key = await _bound(repo)
+    await repo.supersede_claim("camp", key, "claim-old-story", "claim-find-gate",
+                               canon_status=CanonStatus.FALSE,
+                               note="the party proved it was shut from inside")
+
+    await repo.supersede_claim("camp", key, "claim-old-story", "claim-find-key")
+
+    overturned = next(c for c in await repo.effective_claims("camp")
+                      if c.claim_id == "claim-old-story")
+    assert overturned.superseded_by_claim_id == "claim-find-key"
+    assert overturned.effective_canon_status is CanonStatus.FALSE
+    assert overturned.note == "the party proved it was shut from inside"
+
+
+@pytest.mark.asyncio
+async def test_an_unearned_claim_reports_the_campaign_s_verdict_not_the_book_s(rig):
+    """A party can disprove a claim before ever finding it.
+
+    Advertising that at the book's CANON confidence would hand retrieval a
+    fact this campaign has already ruled false.
+    """
+    _db, repo = rig
+    key = await _bound(repo)
+    await repo.supersede_claim("camp", key, "claim-find-warden", "claim-find-key",
+                               canon_status=CanonStatus.FALSE, note="a forgery")
+
+    pending = {c.claim_id: c for c in await repo.undiscovered_claims("camp")}
+
+    unearned = pending["claim-find-warden"]
+    assert unearned.effective_canon_status is CanonStatus.FALSE
+    assert unearned.superseded_by_claim_id == "claim-find-key"
+    assert unearned.is_superseded
+    assert unearned.note == "a forgery"
+    # Still unearned, though — that is a question about discovery, not truth.
+    assert not unearned.discovered
+    # And a claim play has NOT touched still reads as the book wrote it.
+    assert pending["claim-find-gate"].effective_canon_status is CanonStatus.CANON
+    assert not pending["claim-find-gate"].is_superseded
+
+
+@pytest.mark.asyncio
+async def test_discovering_a_claim_play_had_already_overturned(rig):
+    """supersede_claim creates the row first, with discovered = 0. The later
+    discovery has to flip it without the overlay row's existence hiding it."""
+    _db, repo = rig
+    key = await _bound(repo)
+    await repo.supersede_claim("camp", key, "claim-find-key", "claim-find-gate")
+
+    assert "claim-find-key" in {
+        c.claim_id for c in await repo.undiscovered_claims("camp")
+    }
+    assert await repo.record_discovery("camp", key, "claim-find-key",
+                                       turn=6, via="found it anyway")
+
+    log = {c.claim_id: c for c in await repo.discovery_log("camp")}
+    assert log["claim-find-key"].discovered_at_turn == 6
+    assert log["claim-find-key"].discovered_via == "found it anyway"
+    assert "claim-find-key" not in {
+        c.claim_id for c in await repo.undiscovered_claims("camp")
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_discovery_reports_whether_it_actually_granted_anything(rig):
+    """An UPSERT's rowcount is 1 either way, so returning it would report
+    grants that never happened — and seed_starting_knowledge sums these."""
+    _db, repo = rig
+    key = await _bound(repo)
+
+    assert await repo.record_discovery("camp", key, "claim-find-key", turn=1, via="a")
+    assert not await repo.record_discovery("camp", key, "claim-find-key", turn=2, via="b")
+    assert await repo.seed_starting_knowledge("camp", key) == 1
+    assert await repo.seed_starting_knowledge("camp", key) == 0
+
+
+@pytest.mark.asyncio
+async def test_a_claim_query_can_be_narrowed_to_one_subject(rig):
+    _db, repo = rig
+    await _bound(repo)
+
+    about_gate = await repo.undiscovered_claims("camp", subject_id="ash-gate")
+
+    assert [c.claim_id for c in about_gate] == ["claim-find-gate"]
+    assert [c.claim_id for c in
+            await repo.undiscovered_claims("camp", subject_id="no-one")] == []
+
+
+@pytest.mark.asyncio
+async def test_asking_for_nothing_returns_nothing(rig):
+    """The empty-iterable short circuits: an empty IN () is a SQL error, and
+    'no filter' must never silently mean 'no filtering'."""
+    _db, repo = rig
+    key = await _bound(repo)
+
+    assert await repo.effective_claims("camp", visibilities=[]) == []
+    assert await repo.ties_to(key, "mara-venn", kinds=[]) == []
+    # A generator is consumed exactly once, and still filters.
+    generated = await repo.effective_claims(
+        "camp", visibilities=(v for v in [Visibility.PUBLIC])
+    )
+    assert {c.claim_id for c in generated} == {
+        "claim-public-mara", "claim-rumor-bram", "claim-old-story",
+    }
+
+
+@pytest.mark.asyncio
 async def test_superseded_claims_can_be_filtered_out_of_retrieval(rig):
     _db, repo = rig
     key = await _bound(repo)
@@ -674,6 +1110,7 @@ async def test_effective_claims_can_be_narrowed_to_what_play_may_see(rig):
 
 @pytest.mark.asyncio
 async def test_a_faction_roster_is_one_query(rig):
+    """Default is a row per AUTHORING ROUTE — both facts about Mara are real."""
     _db, repo = rig
     key = await _imported(repo)
 
@@ -684,8 +1121,33 @@ async def test_a_faction_roster_is_one_query(rig):
         ("mara-venn", ROLE_MEMBER),
         ("toran-vex", ROLE_MEMBER),
         ("toran-vex", ROLE_NOTABLE),
+        ("old-bram", ROLE_NOTABLE),
+        ("sable-quill", ROLE_MEMBER),
     }
-    assert {m.npc_name for m in roster} == {"Mara Venn", "Toran Vex"}
+    # Names come from the NPC join, not from the membership row.
+    assert dict((m.npc_id, m.npc_name) for m in roster)["old-bram"] == "Old Bram"
+    # And status, so a roster can tell you a notable member is dead.
+    assert {m.status for m in roster if m.npc_id == "old-bram"} == {"dead"}
+
+
+@pytest.mark.asyncio
+async def test_a_roster_can_be_asked_for_people_instead_of_routes(rig):
+    """`distinct` collapses to one row per NPC, keeping the strongest role.
+
+    Without it, anything that counts or narrates the roster doubles anyone
+    the book named twice.
+    """
+    _db, repo = rig
+    key = await _imported(repo)
+
+    people = await repo.faction_members(key, "kestrel-guild", distinct=True)
+
+    assert [(m.npc_id, m.membership_role) for m in people] == [
+        ("mara-venn", ROLE_LEADER),
+        ("old-bram", ROLE_NOTABLE),
+        ("toran-vex", ROLE_NOTABLE),
+        ("sable-quill", ROLE_MEMBER),
+    ]
 
 
 @pytest.mark.asyncio
@@ -749,21 +1211,52 @@ async def test_a_tie_the_author_kept_private_is_still_in_canon(rig):
 
 @pytest.mark.asyncio
 async def test_everything_authored_in_a_region_is_recursive(rig):
-    """Asking about a region answers for every room beneath it."""
+    """Asking about a region answers for every room beneath it.
+
+    Compared as LISTS, not sets. quest-ash-gate has two objectives inside this
+    subtree, so a dropped DISTINCT returns it twice — and a set() would have
+    swallowed the duplicate silently.
+    """
     _db, repo = rig
     key = await _imported(repo)
 
     region = await repo.region_contents(key, "ashvale")
 
-    assert set(region.location_ids) == {
-        "ashvale", "emberhold", "copper-finch", "ash-gate",
-    }
-    assert set(region.npc_ids) == {
-        "mara-venn", "toran-vex", "old-bram", "sable-quill",
-    }
-    assert set(region.item_ids) == {"brass-key"}
-    assert set(region.quest_ids) == {"quest-ash-gate"}
-    assert set(region.faction_ids) == {"kestrel-guild", "ash-wardens"}
+    assert region.location_ids == [
+        "ash-gate", "ashvale", "copper-finch", "emberhold",
+    ]
+    assert region.npc_ids == [
+        "mara-venn", "old-bram", "sable-quill", "toran-vex",
+    ]
+    assert region.item_ids == ["brass-key", "warden-ledger"]
+    assert region.quest_ids == ["quest-ash-gate"]
+    assert region.faction_ids == ["ash-wardens", "kestrel-guild"]
+
+
+@pytest.mark.asyncio
+async def test_a_faction_is_found_by_territory_and_by_headquarters(rig):
+    """Two independent arms of one query; neither may carry the other."""
+    _db, repo = rig
+    key = await _imported(repo)
+
+    # copper-finch: no faction is headquartered here and none claims it as
+    # territory, so neither arm fires.
+    assert (await repo.region_contents(key, "copper-finch")).faction_ids == []
+    # emberhold: Kestrel HQ *and* Kestrel territory.
+    assert (await repo.region_contents(key, "emberhold")).faction_ids == [
+        "ash-wardens", "kestrel-guild",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_an_npc_is_authored_into_a_region_by_home_as_well_as_by_presence(rig):
+    """Wren is MISSING and stands nowhere — only `home_location_id` finds her."""
+    _db, repo = rig
+    key = await _imported(repo)
+
+    far = await repo.region_contents(key, "far-shore")
+
+    assert far.npc_ids == ["wren-ashlow"]
 
 
 @pytest.mark.asyncio
@@ -794,7 +1287,26 @@ async def test_an_unknown_region_is_empty_not_untouched(rig):
                                          campaign_id="camp")
 
     assert nowhere.location_ids == []
+    assert nowhere.npc_ids == [] and nowhere.item_ids == []
+    assert nowhere.quest_ids == [] and nowhere.faction_ids == []
     assert not nowhere.is_untouched
+
+
+@pytest.mark.asyncio
+async def test_a_region_is_never_called_untouched_without_checking(rig):
+    """Omitting `campaign_id` asks a different question, and the answer must
+    not be "untouched" — that is the direction that dumps unearned lore."""
+    _db, repo = rig
+    key = await _bound(repo)
+    await repo.record_visit("camp", key, "salt-quay", turn=3)
+
+    unasked = await repo.region_contents(key, "far-shore")
+    asked = await repo.region_contents(key, "far-shore", campaign_id="camp")
+
+    assert unasked.location_ids == asked.location_ids
+    assert unasked.unvisited_location_ids == []
+    assert not unasked.is_untouched
+    assert asked.unvisited_location_ids == ["far-shore"]
 
 
 @pytest.mark.asyncio

@@ -354,8 +354,11 @@ CREATE TABLE IF NOT EXISTS sourcebook_event (
     PRIMARY KEY (sourcebook_key, id)
 );
 
+-- On list_order, not sort_order: `_load_timeline` reads the book back in
+-- AUTHORED order, and indexing the other column left a temp B-tree sort on
+-- every load while serving no query that exists.
 CREATE INDEX IF NOT EXISTS idx_sb_event_order
-    ON sourcebook_event(sourcebook_key, sort_order);
+    ON sourcebook_event(sourcebook_key, list_order);
 
 -- ============================================
 -- CLAIMS — the reason this layer exists
@@ -416,8 +419,8 @@ CREATE TABLE IF NOT EXISTS sourcebook_aux_record (
     PRIMARY KEY (sourcebook_key, record_kind, id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_sb_aux_kind
-    ON sourcebook_aux_record(sourcebook_key, record_kind);
+-- No index on (sourcebook_key, record_kind): that is an exact leftmost prefix
+-- of this table's PK, so the PK's own index already serves it.
 
 -- ============================================
 -- CAMPAIGN OVERLAY
@@ -432,8 +435,17 @@ CREATE TABLE IF NOT EXISTS campaign_sourcebook (
     PRIMARY KEY (campaign_id, sourcebook_key)
 );
 
-CREATE INDEX IF NOT EXISTS idx_campaign_sourcebook_campaign
-    ON campaign_sourcebook(campaign_id);
+-- Leading with sourcebook_key, which the PK does NOT cover. Deleting a book
+-- cascades into these overlay tables through their FKs, and SQLite resolves a
+-- cascade by looking the child up on the PARENT key columns. Without this the
+-- planner does a full SCAN of the whole overlay -- every campaign's rows, not
+-- just this book's -- once per deleted parent row: measured 624-883ms against
+-- 38ms on a 28,800-row overlay, and it degrades with rows that have nothing to
+-- do with the book being dropped. Every sourcebook_* join table already got
+-- exactly this treatment; these three were the ones whose PK led with the
+-- wrong column.
+CREATE INDEX IF NOT EXISTS idx_campaign_sourcebook_book
+    ON campaign_sourcebook(sourcebook_key);
 
 -- Sparse by design: a row exists only for a claim this campaign has TOUCHED.
 -- "Which discoverable claims has this party not yet earned" is therefore a
@@ -459,6 +471,9 @@ CREATE TABLE IF NOT EXISTS campaign_claim_state (
 
 CREATE INDEX IF NOT EXISTS idx_campaign_claim_discovered
     ON campaign_claim_state(campaign_id, discovered, discovered_at_turn);
+-- The FK's own lookup key (see the note on idx_campaign_sourcebook_book).
+CREATE INDEX IF NOT EXISTS idx_campaign_claim_book
+    ON campaign_claim_state(sourcebook_key, claim_id);
 
 -- The other half of "authored in a region the party has not touched".
 -- Sparse for the same reason: an unvisited world costs nothing.
@@ -477,5 +492,7 @@ CREATE TABLE IF NOT EXISTS campaign_location_state (
 
 CREATE INDEX IF NOT EXISTS idx_campaign_location_visited
     ON campaign_location_state(campaign_id, visited);
+CREATE INDEX IF NOT EXISTS idx_campaign_location_book
+    ON campaign_location_state(sourcebook_key, location_id);
 
 INSERT INTO schema_migrations (version) VALUES (7);

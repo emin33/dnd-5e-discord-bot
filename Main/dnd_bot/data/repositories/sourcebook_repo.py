@@ -43,6 +43,7 @@ from ...models.sourcebook import (
 )
 from ...models.sourcebook_canon import (
     AuthoredTie,
+    BindReceipt,
     CampaignClaim,
     FactionMember,
     ImportReceipt,
@@ -109,7 +110,40 @@ def _load_list(raw: object) -> list[Any]:
 
 
 def _dump(value: object) -> str:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"))
+    """Compact JSON for a storage column.
+
+    Deliberately NOT sorted: an author's key order in ``escalation_clocks``
+    or a stat block's abilities is data, and storage is where it has to
+    survive. Determinism is the hash's problem, not this one's.
+    """
+    return json.dumps(value, separators=(",", ":"))
+
+
+def _collapse_negative_zero(value: Any) -> Any:
+    """-0.0 -> 0.0, recursively. See :func:`_canonical_dump`."""
+    if isinstance(value, float) and value == 0.0:
+        return 0.0
+    if isinstance(value, dict):
+        return {k: _collapse_negative_zero(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_collapse_negative_zero(item) for item in value]
+    return value
+
+
+def _canonical_dump(value: object) -> str:
+    """Deterministic JSON, for hashing only.
+
+    Keys are sorted so a version's identity never depends on dict iteration
+    order, and ``-0.0`` collapses to ``0.0`` so two books that compare EQUAL
+    cannot hash differently — otherwise re-importing an equal book forks the
+    version a campaign is bound to, which is the one thing content-addressed
+    identity exists to prevent. ``map_coordinates`` is the only float in the
+    entire authoring contract, so that normalisation reaches exactly one
+    field.
+    """
+    return json.dumps(
+        _collapse_negative_zero(value), sort_keys=True, separators=(",", ":")
+    )
 
 
 def _named_fields(spec: Any) -> dict[str, Any]:
@@ -161,8 +195,18 @@ class SourcebookRepository:
         sha256 over canonical JSON, so re-importing the same bytes is a
         detectable no-op and an edited book is a NEW version rather than a
         silent overwrite of the one a campaign is already playing.
+
+        Covers the WHOLE book, ``starting_state`` included — two books that
+        differ only in where the party wakes up or what they start knowing
+        are different books, and colliding them would make the second import
+        a silent no-op.
+
+        One documented degenerate case: a non-finite ``map_coordinates``
+        value. ``NaN`` round-trips through storage intact but makes the
+        reloaded book compare unequal to the original, because IEEE says
+        ``nan != nan``. That is float semantics, not a storage defect.
         """
-        payload = _dump(book.model_dump(mode="json"))
+        payload = _canonical_dump(book.model_dump(mode="json"))
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
     # ==================== Import ====================
@@ -1067,18 +1111,182 @@ class SourcebookRepository:
 
     # ==================== Campaign binding ====================
 
-    async def bind_campaign(self, campaign_id: str, sourcebook_key: str) -> None:
-        """Point a campaign's overlay at a book version."""
+    async def bind_campaign(
+        self, campaign_id: str, sourcebook_key: str, *, supersede: bool = True
+    ) -> BindReceipt:
+        """Point a campaign's overlay at a book version.
+
+        A campaign plays exactly ONE version of any given ``sourcebook_id``.
+        That is not fussiness — the key is a content hash, so fixing a typo in
+        one line of prose produces a *different* key, and binding it alongside
+        the old one makes every overlay query answer for two versions at once:
+        the pre-edit and post-edit text of the same claim id both come back as
+        settled canon, and since results order by a sha256, which one a caller
+        sees when it collapses by claim id is effectively random.
+
+        Worse, discovery is keyed on ``(campaign_id, sourcebook_key, claim_id)``,
+        so under the new key every claim reads back undiscovered — a fact the
+        party earned at turn 12 silently becomes unearned and gets re-offered.
+
+        So ``supersede`` (the default) retires the campaign's other versions of
+        the same book and CARRIES THE OVERLAY FORWARD by stable id. Carrying
+        forward is safe because the authoring protocol emits patches against
+        stable ids; a claim the new version dropped is left behind rather than
+        resurrected, and a supersession pointing at a claim the new version no
+        longer has is cleared rather than left dangling.
+
+        Binding a genuinely DIFFERENT book (a supplement beside a base module)
+        is untouched — only same-``sourcebook_id`` versions collide.
+        """
         db = await self._get_db()
-        await db.execute(
-            """
-            INSERT INTO campaign_sourcebook (campaign_id, sourcebook_key)
-            VALUES (?, ?)
-            ON CONFLICT(campaign_id, sourcebook_key) DO NOTHING
-            """,
-            (campaign_id, sourcebook_key),
+        header = await db.fetch_one(
+            "SELECT sourcebook_id FROM sourcebook WHERE sourcebook_key = ?",
+            (sourcebook_key,),
         )
-        await db.commit()
+        if header is None:
+            raise LookupError(
+                f"cannot bind campaign {campaign_id!r} to unimported "
+                f"sourcebook {sourcebook_key!r}"
+            )
+        receipt = BindReceipt(
+            campaign_id=campaign_id, sourcebook_key=sourcebook_key
+        )
+
+        async with await db.transaction():
+            await db.execute(
+                """
+                INSERT INTO campaign_sourcebook (campaign_id, sourcebook_key)
+                VALUES (?, ?)
+                ON CONFLICT(campaign_id, sourcebook_key) DO NOTHING
+                """,
+                (campaign_id, sourcebook_key),
+            )
+            if supersede:
+                stale = await db.fetch_all(
+                    """
+                    SELECT cs.sourcebook_key
+                    FROM campaign_sourcebook cs
+                    JOIN sourcebook s ON s.sourcebook_key = cs.sourcebook_key
+                    WHERE cs.campaign_id = ?
+                      AND s.sourcebook_id = ?
+                      AND cs.sourcebook_key <> ?
+                    """,
+                    (campaign_id, _text(header[0]), sourcebook_key),
+                )
+                for row in stale:
+                    old_key = _text(row[0])
+                    receipt.claims_carried += await self._carry_claims(
+                        campaign_id, old_key, sourcebook_key
+                    )
+                    receipt.visits_carried += await self._carry_visits(
+                        campaign_id, old_key, sourcebook_key
+                    )
+                    await db.execute(
+                        """
+                        DELETE FROM campaign_sourcebook
+                        WHERE campaign_id = ? AND sourcebook_key = ?
+                        """,
+                        (campaign_id, old_key),
+                    )
+                    receipt.superseded_keys.append(old_key)
+
+        if receipt.superseded_keys:
+            logger.info(
+                "campaign_sourcebook_version_advanced",
+                campaign=campaign_id,
+                to_key=sourcebook_key[:12],
+                retired=[k[:12] for k in receipt.superseded_keys],
+                claims_carried=receipt.claims_carried,
+                visits_carried=receipt.visits_carried,
+            )
+        return receipt
+
+    async def _carry_claims(
+        self, campaign_id: str, old_key: str, new_key: str
+    ) -> int:
+        """Move a campaign's claim overlay onto a newer version of the book.
+
+        The JOIN is the filter: only claims the new version still HAS are
+        carried, so a claim the author deleted stays deleted. Existing rows
+        under the new key win on every field a party could already have
+        earned, so re-running this can never un-discover anything.
+        """
+        db = await self._get_db()
+        cursor = await db.execute(
+            """
+            INSERT INTO campaign_claim_state
+                (campaign_id, sourcebook_key, claim_id, discovered,
+                 discovered_at_turn, discovered_via, superseded_by_claim_id,
+                 canon_status, note)
+            SELECT old.campaign_id, ?, old.claim_id, old.discovered,
+                   old.discovered_at_turn, old.discovered_via,
+                   CASE WHEN EXISTS (
+                       SELECT 1 FROM sourcebook_claim x
+                       WHERE x.sourcebook_key = ? AND x.id = old.superseded_by_claim_id
+                   ) THEN old.superseded_by_claim_id ELSE NULL END,
+                   old.canon_status, old.note
+            FROM campaign_claim_state old
+            JOIN sourcebook_claim c
+              ON c.sourcebook_key = ? AND c.id = old.claim_id
+            WHERE old.campaign_id = ? AND old.sourcebook_key = ?
+            ON CONFLICT(campaign_id, sourcebook_key, claim_id) DO UPDATE SET
+                discovered = MAX(campaign_claim_state.discovered, excluded.discovered),
+                discovered_at_turn = COALESCE(
+                    campaign_claim_state.discovered_at_turn,
+                    excluded.discovered_at_turn
+                ),
+                discovered_via = CASE
+                    WHEN campaign_claim_state.discovered = 1
+                        THEN campaign_claim_state.discovered_via
+                    ELSE excluded.discovered_via
+                END,
+                superseded_by_claim_id = COALESCE(
+                    campaign_claim_state.superseded_by_claim_id,
+                    excluded.superseded_by_claim_id
+                ),
+                canon_status = COALESCE(
+                    campaign_claim_state.canon_status, excluded.canon_status
+                ),
+                note = COALESCE(
+                    NULLIF(campaign_claim_state.note, ''), excluded.note
+                ),
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (new_key, new_key, new_key, campaign_id, old_key),
+        )
+        return int(getattr(cursor, "rowcount", 0) or 0)
+
+    async def _carry_visits(
+        self, campaign_id: str, old_key: str, new_key: str
+    ) -> int:
+        """Same, for where the party has been. First arrival still wins."""
+        db = await self._get_db()
+        cursor = await db.execute(
+            """
+            INSERT INTO campaign_location_state
+                (campaign_id, sourcebook_key, location_id, visited,
+                 first_visited_turn, last_visited_turn)
+            SELECT old.campaign_id, ?, old.location_id, old.visited,
+                   old.first_visited_turn, old.last_visited_turn
+            FROM campaign_location_state old
+            JOIN sourcebook_location l
+              ON l.sourcebook_key = ? AND l.id = old.location_id
+            WHERE old.campaign_id = ? AND old.sourcebook_key = ?
+            ON CONFLICT(campaign_id, sourcebook_key, location_id) DO UPDATE SET
+                visited = MAX(campaign_location_state.visited, excluded.visited),
+                first_visited_turn = COALESCE(
+                    campaign_location_state.first_visited_turn,
+                    excluded.first_visited_turn
+                ),
+                last_visited_turn = MAX(
+                    COALESCE(campaign_location_state.last_visited_turn, -1),
+                    COALESCE(excluded.last_visited_turn, -1)
+                ),
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (new_key, new_key, campaign_id, old_key),
+        )
+        return int(getattr(cursor, "rowcount", 0) or 0)
 
     async def unbind_campaign(self, campaign_id: str, sourcebook_key: str) -> bool:
         db = await self._get_db()
@@ -1118,9 +1326,22 @@ class SourcebookRepository:
 
         First discovery wins: ``discovered_at_turn`` answers "when did they
         learn it", so a later re-discovery must not rewrite the answer.
+
+        Returns True only when this call actually EARNED the claim. An
+        UPSERT's ``rowcount`` is 1 whether it inserted or updated, so
+        returning that would report grants that never happened — and
+        ``seed_starting_knowledge`` sums these into a receipt.
         """
         db = await self._get_db()
-        cursor = await db.execute(
+        prior = await db.fetch_one(
+            """
+            SELECT discovered FROM campaign_claim_state
+            WHERE campaign_id = ? AND sourcebook_key = ? AND claim_id = ?
+            """,
+            (campaign_id, sourcebook_key, claim_id),
+        )
+        already_known = bool(prior and prior[0])
+        await db.execute(
             """
             INSERT INTO campaign_claim_state
                 (campaign_id, sourcebook_key, claim_id, discovered,
@@ -1141,7 +1362,7 @@ class SourcebookRepository:
             (campaign_id, sourcebook_key, claim_id, turn, via),
         )
         await db.commit()
-        return bool(getattr(cursor, "rowcount", 0))
+        return not already_known
 
     async def seed_starting_knowledge(
         self, campaign_id: str, sourcebook_key: str
@@ -1180,8 +1401,33 @@ class SourcebookRepository:
         campaign carries the correction. ``canon_status`` optionally demotes
         the old claim (typically to ``FALSE`` or ``DISPUTED``) so retrieval
         stops asserting it as settled truth.
+
+        Both ids are checked against the book, and self-supersession is
+        refused. There is no foreign key to lean on here — the column is a
+        bare claim id — and the failure is silent and total: a superseded
+        claim drops out of ``effective_claims(include_superseded=False)``, so
+        a typo in the superseding id deletes a fact from retrieval with
+        nothing replacing it.
         """
+        if superseded_by_claim_id == claim_id:
+            raise ValueError(
+                f"claim {claim_id!r} cannot supersede itself — that would "
+                "remove it from retrieval and leave nothing in its place"
+            )
         db = await self._get_db()
+        known = await db.fetch_all(
+            "SELECT id FROM sourcebook_claim "
+            "WHERE sourcebook_key = ? AND id IN (?, ?)",
+            (sourcebook_key, claim_id, superseded_by_claim_id),
+        )
+        missing = {claim_id, superseded_by_claim_id} - {
+            _text(row[0]) for row in known
+        }
+        if missing:
+            raise ValueError(
+                f"supersede_claim: {sorted(missing)} not in sourcebook "
+                f"{sourcebook_key[:12]}"
+            )
         cursor = await db.execute(
             """
             INSERT INTO campaign_claim_state
@@ -1193,7 +1439,11 @@ class SourcebookRepository:
                 canon_status = COALESCE(
                     excluded.canon_status, campaign_claim_state.canon_status
                 ),
-                note = excluded.note,
+                -- Preserved on an omitted note, exactly like canon_status.
+                -- WHY canon was overturned is the part most worth keeping.
+                note = COALESCE(
+                    NULLIF(excluded.note, ''), campaign_claim_state.note
+                ),
                 updated_at = CURRENT_TIMESTAMP
             """,
             (
@@ -1243,6 +1493,31 @@ class SourcebookRepository:
         c.evidence_json, c.provenance_json
     """
 
+    # Appended AFTER _CLAIM_COLUMNS by every overlay-aware query, so the
+    # campaign's answer and the book's answer are read by one mapper.
+    _OVERLAY_COLUMNS = """
+        COALESCE(s.discovered, 0),
+        s.discovered_at_turn,
+        COALESCE(s.discovered_via, ''),
+        COALESCE(s.superseded_by_claim_id, c.superseded_by_claim_id),
+        COALESCE(s.canon_status, c.canon_status),
+        COALESCE(s.note, '')
+    """
+
+    def _row_to_campaign_claim(self, row: Sequence[Any]) -> CampaignClaim:
+        """A ``_CLAIM_COLUMNS`` + ``_OVERLAY_COLUMNS`` row, overlay over book."""
+        (discovered, at_turn, via, superseded, canon_status, note) = tuple(row)[13:19]
+        return CampaignClaim(
+            sourcebook_key=_text(row[0]),
+            claim=self._row_to_claim(row),
+            discovered=_flag(discovered),
+            discovered_at_turn=_opt_int(at_turn),
+            discovered_via=_text(via),
+            superseded_by_claim_id=_opt_text(superseded),
+            effective_canon_status=CanonStatus(_text(canon_status)),
+            note=_text(note),
+        )
+
     def _row_to_claim(self, row: Sequence[Any]) -> KnowledgeClaim:
         """Map the ``_CLAIM_COLUMNS`` run, which every claim query selects first.
 
@@ -1291,6 +1566,14 @@ class SourcebookRepository:
         cannot answer without loading and scanning the whole book every turn.
         Defaults to DISCOVERABLE — PUBLIC claims are not "earned", they are
         simply true out loud, and DM_ONLY ones are not on offer at all.
+
+        Every returned claim carries the SAME overlay resolution
+        :meth:`effective_claims` performs. A claim can be undiscovered and
+        already superseded — the party disproved it before ever finding it —
+        and advertising that at the book's CANON confidence would hand
+        retrieval a fact this campaign has already ruled false. Filtering on
+        ``is_superseded`` is left to the caller, because "not yet earned" is
+        a question about discovery, not about truth.
         """
         db = await self._get_db()
         params: list[Any] = [campaign_id, visibility.value]
@@ -1300,7 +1583,7 @@ class SourcebookRepository:
             params.append(subject_id)
         rows = await db.fetch_all(
             f"""
-            SELECT {self._CLAIM_COLUMNS}
+            SELECT {self._CLAIM_COLUMNS}, {self._OVERLAY_COLUMNS}
             FROM sourcebook_claim c
             JOIN campaign_sourcebook cs
               ON cs.sourcebook_key = c.sourcebook_key
@@ -1316,14 +1599,7 @@ class SourcebookRepository:
             """,
             tuple(params),
         )
-        return [
-            CampaignClaim(
-                sourcebook_key=_text(row[0]),
-                claim=self._row_to_claim(row),
-                effective_canon_status=CanonStatus(_text(row[4])),
-            )
-            for row in rows
-        ]
+        return [self._row_to_campaign_claim(row) for row in rows]
 
     async def effective_claims(
         self,
@@ -1359,13 +1635,7 @@ class SourcebookRepository:
             )
         rows = await db.fetch_all(
             f"""
-            SELECT {self._CLAIM_COLUMNS},
-                   COALESCE(s.discovered, 0),
-                   s.discovered_at_turn,
-                   COALESCE(s.discovered_via, ''),
-                   COALESCE(s.superseded_by_claim_id, c.superseded_by_claim_id),
-                   COALESCE(s.canon_status, c.canon_status),
-                   COALESCE(s.note, '')
+            SELECT {self._CLAIM_COLUMNS}, {self._OVERLAY_COLUMNS}
             FROM sourcebook_claim c
             JOIN campaign_sourcebook cs
               ON cs.sourcebook_key = c.sourcebook_key
@@ -1379,19 +1649,7 @@ class SourcebookRepository:
             """,
             tuple(params),
         )
-        return [
-            CampaignClaim(
-                sourcebook_key=_text(row[0]),
-                claim=self._row_to_claim(row),
-                discovered=_flag(row[13]),
-                discovered_at_turn=_opt_int(row[14]),
-                discovered_via=_text(row[15]),
-                superseded_by_claim_id=_opt_text(row[16]),
-                effective_canon_status=CanonStatus(_text(row[17])),
-                note=_text(row[18]),
-            )
-            for row in rows
-        ]
+        return [self._row_to_campaign_claim(row) for row in rows]
 
     async def discovery_log(self, campaign_id: str) -> list[CampaignClaim]:
         """What did the party learn, and when — canon joined to the overlay."""
@@ -1409,9 +1667,19 @@ class SourcebookRepository:
     # ==================== Entity queries ====================
 
     async def faction_members(
-        self, sourcebook_key: str, faction_id: str
+        self, sourcebook_key: str, faction_id: str, *, distinct: bool = False
     ) -> list[FactionMember]:
-        """Every NPC the book places in a faction, however it said so."""
+        """Every NPC the book places in a faction, however it said so.
+
+        By default this is one row per AUTHORING ROUTE, not per person: the
+        book can name someone through their own ``faction_ids`` and again in
+        the faction's ``leader_ids``, and both facts are real. So a leader who
+        is also a listed member appears twice, and anything that counts or
+        narrates the result straight will double them.
+
+        Pass ``distinct=True`` for one row per NPC, keeping the strongest role
+        (leader > notable > member).
+        """
         db = await self._get_db()
         rows = await db.fetch_all(
             """
@@ -1424,7 +1692,7 @@ class SourcebookRepository:
             """,
             (sourcebook_key, faction_id),
         )
-        return [
+        members = [
             FactionMember(
                 faction_id=_text(row[0]),
                 npc_id=_text(row[1]),
@@ -1434,6 +1702,20 @@ class SourcebookRepository:
             )
             for row in rows
         ]
+        if not distinct:
+            return members
+        rank = {ROLE_LEADER: 0, ROLE_NOTABLE: 1, ROLE_MEMBER: 2}
+        strongest: dict[str, FactionMember] = {}
+        for member in members:
+            held = strongest.get(member.npc_id)
+            if held is None or rank.get(member.membership_role, 9) < rank.get(
+                held.membership_role, 9
+            ):
+                strongest[member.npc_id] = member
+        return sorted(
+            strongest.values(),
+            key=lambda m: (rank.get(m.membership_role, 9), m.npc_id),
+        )
 
     async def ties_to(
         self,
@@ -1449,6 +1731,11 @@ class SourcebookRepository:
         saying "these two are mutually X". Missing that would silently halve
         the answer to "who is hostile to me", which is exactly the kind of
         absence no assertion about the result's contents would catch.
+
+        ``source_id``/``target_id`` come back exactly AS AUTHORED and are not
+        normalised toward the entity you asked about, so for an undirected tie
+        the queried entity may appear on either side. Read the far end as
+        "whichever of the two is not ``entity_id``".
         """
         db = await self._get_db()
         params: list[Any] = [sourcebook_key, entity_id, entity_id]
@@ -1581,7 +1868,13 @@ class SourcebookRepository:
             """
         )
 
-        unvisited = list(location_ids)
+        # Empty, NOT "everything", when no campaign was given: this method
+        # would otherwise report a region the party has walked through as
+        # untouched purely because the caller omitted a kwarg. With no
+        # campaign there is no visit state to speak of, and `is_untouched`
+        # then answers False — the conservative direction, since the cost of
+        # a wrong True is dumping a region's worth of unearned lore.
+        unvisited: list[str] = []
         if campaign_id:
             visited_rows = await db.fetch_all(
                 """
