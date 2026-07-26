@@ -560,6 +560,48 @@ class WorldStateStore:
     # forbidden for them), so residency alone cannot mean "still here".
     _OFFSTAGE_STATUSES = frozenset({"dead", "fled", "captured", "missing"})
 
+    def seed_opening_scene(
+        self,
+        *,
+        location: str,
+        description: str = "",
+        scene_items: dict[str, str] | None = None,
+        force: bool = False,
+    ) -> bool:
+        """Establish the opening scene from authored canon.
+
+        Refuses to overwrite a campaign already in progress: seeding a book
+        onto a session mid-play would silently relocate the party and wipe
+        the room they are standing in. ``force`` is for deliberate re-seeds
+        (a fresh campaign reusing a session shell).
+
+        Returns True when the seed was applied.
+        """
+        if not location:
+            return False
+        already_playing = self._state.turn > 0 or bool(self._state.npcs)
+        if already_playing and not force:
+            logger.warning(
+                "opening_scene_seed_refused",
+                reason="campaign already in progress",
+                turn=self._state.turn,
+                npcs=len(self._state.npcs),
+            )
+            return False
+
+        self._state.current_location = location
+        if description:
+            self._state.location_description = description
+        self._state.scene_items.clear()
+        for name, item_description in (scene_items or {}).items():
+            self._state.spawn_item(name, item_description)
+        logger.info(
+            "opening_scene_seeded",
+            location=location,
+            scene_items=len(scene_items or {}),
+        )
+        return True
+
     def hydrate_residents(
         self,
         residents: list,

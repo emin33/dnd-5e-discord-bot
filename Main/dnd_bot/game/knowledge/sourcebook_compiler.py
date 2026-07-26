@@ -41,8 +41,10 @@ of failure gets caught at all.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import structlog
+import yaml
 
 from ...models.sourcebook import (
     CampaignSourcebook,
@@ -361,6 +363,94 @@ def compile_sourcebook(
         else:
             out.established_facts.append(claim.text)
 
+    _log_compiled(book, out)
+    return out
+
+
+def load_sourcebook(path: Path | str) -> CampaignSourcebook:
+    """Read an authored book from YAML or JSON.
+
+    Validation is the schema's job — CampaignSourcebook rejects dangling
+    references, containment cycles and malformed ids on construction, so a
+    bad book fails here rather than half-compiling into a live campaign.
+    """
+    import json
+
+    file_path = Path(path)
+    text = file_path.read_text(encoding="utf-8")
+    if file_path.suffix.lower() in (".yaml", ".yml"):
+        data = yaml.safe_load(text)
+    else:
+        data = json.loads(text)
+    return CampaignSourcebook.model_validate(data)
+
+
+async def apply_sourcebook(
+    book: CampaignSourcebook,
+    *,
+    campaign_id: str,
+    knowledge_graph,
+    world_store,
+    force: bool = False,
+) -> CompiledSourcebook:
+    """Compile a book and install it into a campaign's live stores.
+
+    Graph first, then the opening scene, then its residents — the order
+    matters because hydration reads the residency edges the graph leg just
+    wrote. World-state writes go through the store, never around it.
+
+    Collaborators are passed explicitly rather than reaching through a
+    session so this is testable against a real graph and a real store
+    without standing up a session.
+    """
+    compiled = compile_sourcebook(book, campaign_id)
+
+    rejections = await knowledge_graph.apply_operations(compiled.graph_ops)
+    if rejections:
+        # The graph rejects rather than raises; surface them as warnings so a
+        # partially-installed book is visible instead of quietly incomplete.
+        compiled.warnings.extend(f"graph rejected: {r}" for r in rejections)
+        logger.warning(
+            "sourcebook_graph_rejections",
+            sourcebook=book.metadata.sourcebook_id,
+            count=len(rejections),
+        )
+
+    seeded = world_store.seed_opening_scene(
+        location=compiled.current_location,
+        description=compiled.location_description,
+        scene_items=compiled.scene_items,
+        force=force,
+    )
+    if not seeded:
+        logger.warning(
+            "sourcebook_scene_not_seeded",
+            sourcebook=book.metadata.sourcebook_id,
+            location=compiled.current_location,
+        )
+        return compiled
+
+    for fact in compiled.established_facts:
+        world_store.add_established_fact(fact)
+
+    location_node = knowledge_graph.resolve_location_node(
+        compiled.current_location
+    )
+    if location_node:
+        world_store.hydrate_residents(
+            knowledge_graph.residents_of(location_node)
+        )
+
+    logger.info(
+        "sourcebook_applied",
+        sourcebook=book.metadata.sourcebook_id,
+        location=compiled.current_location,
+        npcs_on_stage=len(world_store.state.npcs),
+    )
+    return compiled
+
+
+def _log_compiled(book: CampaignSourcebook, out: CompiledSourcebook) -> None:
     logger.info(
         "sourcebook_compiled",
         sourcebook=book.metadata.sourcebook_id,
@@ -371,4 +461,3 @@ def compile_sourcebook(
         withheld_other=len(out.withheld_notes),
         warnings=len(out.warnings),
     )
-    return out
