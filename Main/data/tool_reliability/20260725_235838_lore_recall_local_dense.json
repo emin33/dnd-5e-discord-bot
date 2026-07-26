@@ -1,0 +1,257 @@
+{
+  "profile": "local_dense",
+  "scenario": "lore_recall",
+  "session_id": "ce6267d2-6462-4ef0-9a09-dc6d449eee56",
+  "turns": 7,
+  "elapsed_seconds": 769.01,
+  "usage": {
+    "calls": 11,
+    "prompt_tokens": 29147,
+    "completion_tokens": 2454,
+    "cache_read_tokens": 0,
+    "cost_usd": 0.0,
+    "cost_complete": true
+  },
+  "proposed_total": 0,
+  "executed_total": 0,
+  "rejected_total": 0,
+  "effect_reliability": 0.0,
+  "effect_type_counts": {},
+  "expected_turns_passed": 0,
+  "expected_turns_total": 2,
+  "tool_followup_turns": [],
+  "tool_repair_turns": [],
+  "structural_error_turns": [],
+  "unmet_obligation_turns": [],
+  "resolved_outcome_failed_closed_turns": [],
+  "continuity_repair_turns": [],
+  "continuity_failures": [],
+  "dead_state_reintroductions": [],
+  "errors": [
+    {
+      "turn": 1,
+      "error": "no response"
+    },
+    {
+      "turn": 2,
+      "error": "no response"
+    },
+    {
+      "turn": 3,
+      "error": "no response"
+    },
+    {
+      "turn": 4,
+      "error": "no response"
+    },
+    {
+      "turn": 5,
+      "error": "no response"
+    },
+    {
+      "turn": 7,
+      "error": "no response"
+    }
+  ],
+  "player_state_initial": {},
+  "player_state_final": {},
+  "player_state_agreement": {},
+  "lore_fidelity": {
+    "no_withheld_canon_leaked": {
+      "passed": true,
+      "detail": "canaries clean: ['Marrow Cist', 'Vesk Harrow']"
+    },
+    "book_public_canon_recalled": {
+      "passed": false,
+      "detail": "recalled={'brams_boat': False, 'torans_guild': False}"
+    },
+    "authored_residents_on_stage_after_return": {
+      "passed": true,
+      "detail": "expected=['mara venn', 'toran vex'] present=['mara venn', 'toran vex']"
+    },
+    "authored_dead_never_on_stage": {
+      "passed": true,
+      "detail": "roster=['mara venn', 'toran vex']"
+    }
+  },
+  "withheld_canon": [
+    "Vesk Harrow sold passage through the Ash Gate and filed the lock to hide it.",
+    "The gate's key is buried in the Marrow Cist beneath the arch."
+  ],
+  "gates": {
+    "all_turns_returned": false,
+    "effect_reliability_at_least_95pct": false,
+    "effect_accounting_balanced": true,
+    "at_least_six_effect_families": true,
+    "expected_turn_coverage_at_least_80pct": false,
+    "no_unmet_runtime_effect_obligations": true,
+    "no_resolved_outcome_failed_closed": true,
+    "no_final_dead_npc_contradiction": true,
+    "no_dead_npc_state_reintroduction": true,
+    "no_harness_errors": false,
+    "ended_at_expected_location": true,
+    "no_withheld_canon_leaked": true,
+    "book_public_canon_recalled": false,
+    "authored_residents_on_stage_after_return": true,
+    "authored_dead_never_on_stage": true
+  },
+  "turn_rows": [
+    {
+      "turn": 1,
+      "action": "I ask Mara Venn what she knows about the Ash Gate and why it is closed.",
+      "elapsed_seconds": 136.09,
+      "triage_action_type": "",
+      "triage_currency_spent": {},
+      "triage_resources_consumed": [],
+      "executed_types": [],
+      "proposed": [],
+      "executed": [],
+      "rejected": [],
+      "expected": [],
+      "expected_ok": true,
+      "narration_diagnostics": {},
+      "narrative": ""
+    },
+    {
+      "turn": 2,
+      "action": "I ask Mara Venn who maintained the gate's lock before it was filed.",
+      "elapsed_seconds": 127.446,
+      "triage_action_type": "",
+      "triage_currency_spent": {},
+      "triage_resources_consumed": [],
+      "executed_types": [],
+      "proposed": [],
+      "executed": [],
+      "rejected": [],
+      "expected": [],
+      "expected_ok": true,
+      "narration_diagnostics": {},
+      "narrative": ""
+    },
+    {
+      "turn": 3,
+      "action": "I press Mara Venn: who actually sold passage through the gate, by name?",
+      "elapsed_seconds": 127.737,
+      "triage_action_type": "",
+      "triage_currency_spent": {},
+      "triage_resources_consumed": [],
+      "executed_types": [],
+      "proposed": [],
+      "executed": [],
+      "rejected": [],
+      "expected": [],
+      "expected_ok": true,
+      "narration_diagnostics": {},
+      "narrative": ""
+    },
+    {
+      "turn": 4,
+      "action": "I leave the Copper Finch and travel to the Ash Gate.",
+      "elapsed_seconds": 126.379,
+      "triage_action_type": "",
+      "triage_currency_spent": {},
+      "triage_resources_consumed": [],
+      "executed_types": [],
+      "proposed": [],
+      "executed": [],
+      "rejected": [],
+      "expected": [
+        "change_location"
+      ],
+      "expected_ok": false,
+      "narration_diagnostics": {},
+      "narrative": ""
+    },
+    {
+      "turn": 5,
+      "action": "At the Ash Gate I call out for Old Bram and listen for an answer.",
+      "elapsed_seconds": 125.463,
+      "triage_action_type": "",
+      "triage_currency_spent": {},
+      "triage_resources_consumed": [],
+      "executed_types": [],
+      "proposed": [],
+      "executed": [],
+      "rejected": [],
+      "expected": [],
+      "expected_ok": true,
+      "narration_diagnostics": {},
+      "narrative": ""
+    },
+    {
+      "turn": 6,
+      "action": "I search the ground beneath the arch and ask what is hidden here.",
+      "elapsed_seconds": 77.204,
+      "triage_action_type": "skill_check",
+      "triage_currency_spent": {},
+      "triage_resources_consumed": [],
+      "executed_types": [],
+      "proposed": [],
+      "executed": [],
+      "rejected": [],
+      "expected": [],
+      "expected_ok": true,
+      "narration_diagnostics": {
+        "streaming_buffered": false,
+        "continuity_violations": 0,
+        "continuity_repair_attempted": false,
+        "continuity_repair_succeeded": false,
+        "continuity_failed_closed": false,
+        "primary_effects": 0,
+        "primary_structural_errors": 0,
+        "primary_structural_error_details": [],
+        "tool_followup_attempted": false,
+        "tool_followup_for_mutation": false,
+        "tool_followup_skipped_memory_only": false,
+        "tool_repair_attempted": false,
+        "tool_followup_structural_errors": 0,
+        "tool_followup_structural_error_details": [],
+        "tool_repair_structural_errors": 0,
+        "tool_repair_structural_error_details": [],
+        "tool_invalid_effects_dropped": 0,
+        "tool_policy_suppressed_effects": 0,
+        "tool_unknown_roster_refs_dropped": 0,
+        "tool_ref_alias_mismatches_removed": 0,
+        "tool_repair_failed_closed": false,
+        "tool_ref_deterministic_recoveries": [],
+        "tool_followup_refs_superseded": 0,
+        "tool_duplicate_creations_collapsed": 0,
+        "tool_followup_effects": 0,
+        "effect_obligations": [],
+        "effect_obligation_reasons": [],
+        "effect_obligation_missing_initial": [],
+        "effect_obligation_missing_final": [],
+        "effect_obligation_repair_attempted": false,
+        "effect_obligation_repair_succeeded": false,
+        "effect_obligation_terminal_repair_attempted": false,
+        "effect_obligation_terminal_repair_succeeded": false,
+        "effect_obligation_terminal_structural_errors": 0,
+        "resolved_outcome_contradictions": [],
+        "resolved_outcome_repair_attempted": false,
+        "resolved_outcome_repair_succeeded": false,
+        "resolved_outcome_failed_closed": false,
+        "repair_meta_preamble_stripped": false,
+        "final_effects": 0
+      },
+      "narrative": "*Kael Windrunner attempts to i search the ground beneath the arch and ask what is hidden here....*"
+    },
+    {
+      "turn": 7,
+      "action": "I walk back to the Copper Finch and take a seat at my old table.",
+      "elapsed_seconds": 48.692,
+      "triage_action_type": "",
+      "triage_currency_spent": {},
+      "triage_resources_consumed": [],
+      "executed_types": [],
+      "proposed": [],
+      "executed": [],
+      "rejected": [],
+      "expected": [
+        "change_location"
+      ],
+      "expected_ok": false,
+      "narration_diagnostics": {},
+      "narrative": ""
+    }
+  ]
+}

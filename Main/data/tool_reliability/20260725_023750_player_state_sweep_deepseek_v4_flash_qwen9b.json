@@ -1,0 +1,25 @@
+{
+  "profile": "deepseek_v4_flash_qwen9b",
+  "scenario": "player_state_sweep",
+  "session_id": "3a0827fe-4375-413b-ad8d-a18d9cf9d7f6",
+  "turns": 13,
+  "usage": {
+    "calls": 87,
+    "prompt_tokens": 333166,
+    "completion_tokens": 11311,
+    "cache_read_tokens": 40448,
+    "cost_usd": 0.029216,
+    "cost_complete": true
+  },
+  "errors": [
+    {
+      "stage": "report",
+      "error": "NameError: name 'TurnLogReader' is not defined",
+      "traceback": "Traceback (most recent call last):\n  File \"C:\\Projects\\Discord Bots\\D&D 5e\\.claude\\worktrees\\sleepy-wilbur-f3bcf7\\Main\\test_tool_reliability.py\", line 712, in run\n    report = _build_report(\n  File \"C:\\Projects\\Discord Bots\\D&D 5e\\.claude\\worktrees\\sleepy-wilbur-f3bcf7\\Main\\test_tool_reliability.py\", line 773, in _build_report\n    log = TurnLogReader.load(session_id)\nNameError: name 'TurnLogReader' is not defined\n"
+    }
+  ],
+  "gates": {
+    "run_completed": false
+  },
+  "turn_rows": []
+}
