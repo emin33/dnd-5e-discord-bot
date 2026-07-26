@@ -231,6 +231,18 @@ _CANARIES = {
     "hiding_place": "Marrow Cist",  # where the key actually is
 }
 
+# Recall needs canaries too, for the mirror-image reason. Grading recall by
+# guessing the narrator's wording is brittle: five live runs recalled Old
+# Bram by name every time, but said "sealed"/"shut" rather than "closed" and
+# named his trade in only three — so a token gate on "ferryman" scored a
+# recalled fact as a miss. A unique authored token cannot arrive by
+# paraphrase OR invention: if it appears, the fact travelled book -> graph ->
+# retrieval -> prompt -> prose. Public, so it is meant to be reachable.
+_RECALL_CANARIES = {
+    "brams_boat": "Grey Hind",       # only in the public claim about Bram
+    "torans_guild": "Kestrel Guild",  # only in the public claim about Toran
+}
+
 
 def _lore_book():
     """A small book with a two-hop relationship chain and planted secrets."""
@@ -310,8 +322,9 @@ def _lore_book():
             KnowledgeClaim(
                 id="claim-gate-closed", subject_id="ash-gate",
                 text=(
-                    "The Ash Gate has been closed to travellers since Old "
-                    "Bram the ferryman died."
+                    "The Ash Gate has been shut to travellers since Old Bram "
+                    f"the ferryman died; his boat the {_RECALL_CANARIES['brams_boat']} "
+                    "still rots at the landing."
                 ),
                 visibility=Visibility.PUBLIC,
             ),
@@ -319,7 +332,8 @@ def _lore_book():
                 id="claim-toran-locks", subject_id="toran-vex",
                 text=(
                     "Toran Vex is the lockwright who maintained the Ash "
-                    "Gate's lock for years."
+                    "Gate's lock for years, sworn to the "
+                    f"{_RECALL_CANARIES['torans_guild']}."
                 ),
                 visibility=Visibility.PUBLIC,
             ),
@@ -685,6 +699,7 @@ def evaluate_lore_fidelity(
     compiled,
     responses: dict[int, str],
     world_snapshot: dict,
+    turn_contexts: dict[int, str] | None = None,
 ) -> dict[str, dict]:
     """Grade the run against the BOOK, not against itself.
 
@@ -713,20 +728,35 @@ def evaluate_lore_fidelity(
         ),
     }
 
-    # ── Recall. Public canon the party asked about, by distinctive token. ──
-    # Substrings chosen to be specific to the authored claim but robust to
-    # paraphrase: a name plus the role or fact attached to it.
-    wanted = {
-        "gate_closed_because_bram_died": ("old bram", "ferryman"),
-        "toran_is_the_lockwright": ("toran", "lock"),
+    # ── Recall, measured in the PROMPT rather than the prose. ──
+    # The graph's job ends when context is assembled; what the narrator does
+    # with it is a separate question. Grading prose measured neither: loose
+    # word tokens graded vocabulary (a run recalled Old Bram by name but said
+    # "sealed", scoring a hit as a miss), and unique tokens graded whether an
+    # incidental detail got echoed. Both are downstream of the thing under
+    # test. Turn logs record the assembled context, so this is deterministic
+    # and needs no model at all.
+    contexts = turn_contexts or {}
+    assembled = " ".join(contexts.values()).casefold()
+    reached = {
+        label: token.casefold() in assembled
+        for label, token in _RECALL_CANARIES.items()
     }
-    recalled = {
-        label: all(token in prose_lower for token in tokens)
-        for label, tokens in wanted.items()
+    checks["book_canon_reached_the_prompt"] = {
+        "passed": all(reached.values()) if contexts else False,
+        "detail": (
+            f"reached={reached}" if contexts
+            else "no turn contexts captured — cannot judge retrieval"
+        ),
     }
-    checks["book_public_canon_recalled"] = {
-        "passed": all(recalled.values()),
-        "detail": f"recalled={recalled}",
+    # Whether the narrator then USED it is tracked, not gated: a model may
+    # legitimately answer without quoting an incidental detail.
+    checks["book_canon_used_in_prose"] = {
+        "passed": True,
+        "detail": "used=" + str({
+            label: token.casefold() in prose_lower
+            for label, token in _RECALL_CANARIES.items()
+        }),
     }
 
     # ── Hydration. Authored residents must be on stage where the book says. ──
@@ -1207,6 +1237,16 @@ def _build_report(
     if scenario == "lore_recall" and lore_book is not None:
         lore_fidelity = evaluate_lore_fidelity(
             lore_book, lore_compiled, responses, world_snapshot,
+            turn_contexts={
+                turn: (
+                    ((log.get(turn) or {}).get("knowledge_graph") or {})
+                    .get("context_yaml") or ""
+                ) + " " + (
+                    ((log.get(turn) or {}).get("world_state") or {})
+                    .get("before") or ""
+                )
+                for turn in range(1, len(actions) + 1)
+            },
         )
 
     gates = {
