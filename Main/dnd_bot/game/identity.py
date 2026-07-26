@@ -115,6 +115,49 @@ def _normalized_words(value: str) -> list[str]:
     return re.findall(r"[a-z0-9]+", (value or "").casefold())
 
 
+def normalized_identity_text(value: str) -> str:
+    """Lowercase alphanumeric tokens, single-spaced. The matching surface."""
+    return " ".join(_normalized_words(value))
+
+
+def padded_identity_text(value: str) -> str:
+    """:func:`normalized_identity_text` fenced by sentinel spaces.
+
+    Lets ``f" {anchor} " in padded`` stand in for a word-boundary match.
+    Normalize once, test many anchors against the result.
+    """
+    return f" {normalized_identity_text(value)} "
+
+
+def entity_named_in_text(text: str, names: Iterable[str]) -> list[str]:
+    """An entity's identity-bearing names, IF *text* names it outright.
+
+    One rule for "did the player raise this subject, and under which names
+    can prose about it be recognized?" — so callers that resolve entities
+    differently still agree on the answer.
+
+    Two conditions, both load-bearing. The name must land on token
+    boundaries: substring matching turns "brambles" into Bram and "I pry
+    the grate" into Ron. And the name that lands must be identity-bearing:
+    a placeholder promoted to an alias ("the innkeeper") recurs in most
+    tavern turns, so anchoring on it would make one off-screen NPC salient
+    forever. Aliases still come back on a distinctive hit — the text says
+    "the black arch", the ledger says "Ash Gate".
+    """
+    distinctive = [
+        name for name in names
+        if name and normalized_identity_text(name)
+        and not is_generic_npc_label(name)
+    ]
+    padded = padded_identity_text(text)
+    if any(
+        f" {normalized_identity_text(name)} " in padded
+        for name in distinctive
+    ):
+        return distinctive
+    return []
+
+
 def identity_keys(value: str) -> frozenset[str]:
     """Return conservative exact keys for one display name or alias."""
     words = _normalized_words(value)

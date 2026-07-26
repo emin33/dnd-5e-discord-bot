@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 import structlog
 
+from ..identity import entity_named_in_text
 from .models import slugify
 
 if TYPE_CHECKING:
@@ -184,3 +185,41 @@ class EntityNameMatcher:
     def rebuild_index(self) -> None:
         """Force rebuild of the lookup index after graph mutations."""
         self._index = None
+
+
+def action_entity_names(graph: "KnowledgeGraph | None", text: str) -> list[str]:
+    """Every name borne by the entities the player's text names outright.
+
+    Tier-1 candidates come from the same :meth:`match` that seeds graph
+    context, then :func:`entity_named_in_text` decides. That second gate is
+    not redundant: ``match`` is deliberately loose — bare substring, any
+    name over two characters — because a speculative graph seed only costs
+    an entity card in the prompt. Anchoring durable campaign facts is a
+    stronger claim than that evidence supports, so it re-tests on token
+    boundaries and ignores placeholder names. "I push through the brambles"
+    seeds Bram's card; it must not open Bram's file.
+
+    Names, not node ids: callers anchor prose against these. The player's
+    own wording is NOT the anchor — resolving "the black arch" to Ash Gate
+    is the whole point.
+
+    Never raises. This runs on the turn's hot path purely to widen
+    retrieval; a graph problem must degrade to the scene-only projection,
+    not cost the player their turn.
+    """
+    if graph is None or not text:
+        return []
+    try:
+        matcher = EntityNameMatcher(graph)
+        names: list[str] = []
+        for node_id in matcher.match(text):
+            entity = graph.get_entity(node_id)
+            if entity is None:
+                continue
+            names.extend(
+                entity_named_in_text(text, [entity.name, *entity.aliases])
+            )
+        return names
+    except Exception as e:
+        logger.warning("action_entity_names_failed", error=str(e), exc_info=True)
+        return []

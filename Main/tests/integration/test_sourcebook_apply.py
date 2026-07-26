@@ -19,11 +19,13 @@ import pytest
 import yaml
 
 from dnd_bot.game.knowledge.graph import KnowledgeGraph
+from dnd_bot.game.knowledge.matcher import action_entity_names
 from dnd_bot.game.knowledge.sourcebook_compiler import (
     apply_sourcebook, load_sourcebook,
 )
 from dnd_bot.game.world_state import NPCState, WorldState
 from dnd_bot.game.world_store import WorldStateStore
+from dnd_bot.models.sourcebook import KnowledgeClaim, Visibility
 
 from tests.integration.test_sourcebook_to_live_graph import _book
 from tests.unit.test_scene_hydration import _MemoryRepo
@@ -141,6 +143,130 @@ async def test_graph_rejections_surface_as_warnings_not_silence():
     assert any("graph rejected" in w for w in compiled.warnings)
     # The rest of the install still happened.
     assert store.state.current_location == "Copper Finch"
+
+
+# ── Reaching authored canon that is not in the room ─────────────────────────
+
+
+def _book_with_offstage_canon():
+    """The seeded book plus a public claim about a place elsewhere.
+
+    The shared fixture anchors both its claims to an on-stage NPC, so it
+    cannot express the case that matters here: canon whose subject the
+    party can ask after but is not standing in front of.
+    """
+    book = _book()
+    book.claims.append(KnowledgeClaim(
+        id="claim-gate-closed", subject_id="ash-gate",
+        text=(
+            "The Ash Gate has been shut to travellers since Old Bram the "
+            "ferryman died; his boat the Grey Hind still rots at the landing."
+        ),
+        visibility=Visibility.PUBLIC,
+    ))
+    return book
+
+
+@pytest.mark.asyncio
+async def test_asking_after_an_offstage_subject_reaches_its_authored_canon():
+    """The whole seam: graph resolution -> fact anchor -> narrator prompt.
+
+    Seeded lore read as amnesiac because facts were anchored to where the
+    party STOOD while graph entities were seeded from what the player SAID.
+    A question that names the Ash Gate by name could not reach the Ash
+    Gate's canon from the tavern, however directly it was asked.
+    """
+    kg, store = await _fresh()
+    await apply_sourcebook(
+        _book_with_offstage_canon(), campaign_id="camp",
+        knowledge_graph=kg, world_store=store,
+    )
+    action = (
+        "I ask Mara Venn what she knows about the Ash Gate "
+        "and why it is closed."
+    )
+
+    projected = store.state.to_yaml(
+        action_text=action, action_entities=action_entity_names(kg, action),
+    )
+
+    assert "Grey Hind" in projected
+    # ... and the on-stage NPC's own canon is still there beside it.
+    assert "everyone at the Copper Finch defers to" in projected
+
+
+@pytest.mark.asyncio
+async def test_offstage_canon_stays_out_when_nobody_raised_it():
+    """The anchor is what the player raised, not everything that exists."""
+    kg, store = await _fresh()
+    await apply_sourcebook(
+        _book_with_offstage_canon(), campaign_id="camp",
+        knowledge_graph=kg, world_store=store,
+    )
+    action = "I order a bowl of stew and warm my hands by the fire."
+
+    projected = store.state.to_yaml(
+        action_text=action, action_entities=action_entity_names(kg, action),
+    )
+
+    assert "Grey Hind" not in projected
+    assert "everyone at the Copper Finch defers to" in projected
+
+
+@pytest.mark.asyncio
+async def test_reaching_offstage_canon_never_reaches_a_secret():
+    """Widening retrieval must not widen the visibility boundary."""
+    kg, store = await _fresh()
+    await apply_sourcebook(
+        _book_with_offstage_canon(), campaign_id="camp",
+        knowledge_graph=kg, world_store=store,
+    )
+    action = "I ask about the Ash Gate, Old Bram, and who filed the lock."
+
+    projected = store.state.to_yaml(
+        action_text=action, action_entities=action_entity_names(kg, action),
+    )
+
+    assert "filed the lock" not in projected
+
+
+@pytest.mark.asyncio
+async def test_a_word_that_merely_contains_a_name_reaches_no_canon():
+    """The shipped path, not just the WorldState-local half.
+
+    Graph tier-1 resolution is bare substring — it answers "Ash Gate" to
+    "Ash Gateway" — and its output is what `session._build_context` feeds
+    the fact projection. This is the assertion that would have caught it.
+    """
+    kg, store = await _fresh()
+    await apply_sourcebook(
+        _book_with_offstage_canon(), campaign_id="camp",
+        knowledge_graph=kg, world_store=store,
+    )
+    action = "I study the Ash Gateway Ledger, a bound volume of tariffs."
+
+    projected = store.state.to_yaml(
+        action_text=action, action_entities=action_entity_names(kg, action),
+    )
+
+    assert "Grey Hind" not in projected
+
+
+@pytest.mark.asyncio
+async def test_asking_after_the_dead_does_not_put_them_on_stage():
+    """Fact anchoring widens facts only — the roster stays scene-scoped."""
+    kg, store = await _fresh()
+    await apply_sourcebook(
+        _book_with_offstage_canon(), campaign_id="camp",
+        knowledge_graph=kg, world_store=store,
+    )
+    action = "I call out for Old Bram and listen for an answer."
+
+    data = yaml.safe_load(store.state.to_yaml(
+        action_text=action, action_entities=action_entity_names(kg, action),
+    ))
+
+    assert {n["name"] for n in data["npcs_here"]} == {"Mara Venn", "Toran Vex"}
 
 
 # ── Loading from disk ───────────────────────────────────────────────────────

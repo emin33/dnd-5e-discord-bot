@@ -10,15 +10,20 @@ hostility math, SRD matching, and combat triggers. WorldState provides the
 narrator's view of reality as a compact YAML snapshot.
 """
 
-from typing import Optional
-import re
+from typing import Iterable, Optional
 import uuid
 import structlog
 import yaml
 
 from pydantic import BaseModel, Field
 
-from .identity import locations_equivalent
+from .identity import (
+    entity_named_in_text,
+    is_generic_npc_label,
+    locations_equivalent,
+    normalized_identity_text,
+    padded_identity_text,
+)
 
 logger = structlog.get_logger()
 
@@ -639,46 +644,145 @@ class WorldState(BaseModel):
 
     @staticmethod
     def _normalized_fact_text(value: str) -> str:
-        return " ".join(re.findall(r"[a-z0-9]+", (value or "").casefold()))
+        return normalized_identity_text(value)
 
-    def get_scene_relevant_facts(self, max_facts: int = 20) -> list[str]:
-        """Project durable facts whose canonical subject is in this scene.
+    @classmethod
+    def _normalized_anchor_set(cls, values: Iterable[str]) -> set[str]:
+        """Normalized, non-generic anchor tokens from raw name strings."""
+        normalized = (cls._normalized_fact_text(value) for value in values)
+        return {
+            anchor for anchor in normalized
+            if anchor and anchor not in _GENERIC_FACT_ANCHORS
+        }
 
-        ``established_facts`` remains the complete campaign ledger. The
-        narrator sees only facts anchored to the current location, a living
-        on-stage NPC (name or alias), or a current scene-item ID. This keeps
-        immediate prerequisites authoritative without making old off-screen
-        characters globally salient forever.
-        """
+    @classmethod
+    def _padded_fact_text(cls, value: str) -> str:
+        """Normalized text with sentinel spaces, ready for anchor testing."""
+        return padded_identity_text(value)
+
+    @staticmethod
+    def _anchor_hits(padded_text: str, anchors: Iterable[str]) -> bool:
+        """True when pre-padded text names an anchor on token boundaries."""
+        return any(f" {anchor} " in padded_text for anchor in anchors)
+
+    def _scene_fact_anchors(self) -> set[str]:
+        """Names that put a fact in the room the party is standing in."""
         anchors = [self.current_location]
         for npc in self.get_npcs_at_location():
             anchors.extend([npc.name, *npc.aliases])
         anchors.extend(self.scene_items.keys())
-        normalized_anchors = {
-            self._normalized_fact_text(anchor)
-            for anchor in anchors
-            if self._normalized_fact_text(anchor)
-            and self._normalized_fact_text(anchor) not in _GENERIC_FACT_ANCHORS
-        }
-        if not normalized_anchors:
+        return self._normalized_anchor_set(anchors)
+
+    def _action_fact_anchors(
+        self,
+        action_text: str,
+        action_entities: Iterable[str] = (),
+    ) -> set[str]:
+        """Names the player's own action named outright.
+
+        ``action_entities`` is the caller's entity resolution — in
+        production, the knowledge-graph match that also seeds graph
+        context, gated by :func:`entity_named_in_text`. The
+        WorldState-local vocabulary (every NPC it knows, on stage or not,
+        plus the map connections it has recorded) is matched here through
+        that SAME rule, so a caller without a graph gets the same
+        anchoring rather than a lookalike one.
+
+        The dead are deliberately in that vocabulary: asking what became of
+        a drowned ferryman should reach his canon. Keeping him OUT of the
+        room is the roster's job, and the roster is built elsewhere.
+        """
+        # A caller's resolution is trusted for WHICH entity, never for
+        # whether a placeholder counts as naming it.
+        anchors = self._normalized_anchor_set(
+            name for name in (action_entities or ())
+            if not is_generic_npc_label(name)
+        )
+        if not action_text:
+            return anchors
+        # Resolve to the ENTITY, then anchor on every name it answers to:
+        # the player asks after "the quartermaster", the ledger records
+        # "Sera Vellian". Naming one name is naming the subject.
+        known: list[list[str]] = [
+            [npc.name, *npc.aliases] for npc in self.npcs.values()
+        ]
+        known.extend([location] for location in self.connected_locations)
+        for names in known:
+            anchors |= self._normalized_anchor_set(
+                entity_named_in_text(action_text, names)
+            )
+        return anchors
+
+    def get_scene_relevant_facts(
+        self,
+        max_facts: int = 20,
+        *,
+        action_text: str = "",
+        action_entities: Iterable[str] = (),
+        max_action_facts: int = 6,
+    ) -> list[str]:
+        """Project durable facts anchored to this scene or to this action.
+
+        ``established_facts`` remains the complete campaign ledger. The
+        narrator sees facts anchored to the current location, a living
+        on-stage NPC (name or alias), or a current scene-item ID — plus
+        facts about an entity the player's action named outright, which is
+        how the knowledge graph already chooses its seeds. This keeps
+        immediate prerequisites authoritative, and lets a direct question
+        reach canon about someone off stage, without making old off-screen
+        characters globally salient forever: the second anchor answers what
+        the player RAISED, never merely what exists.
+
+        The two anchors carry separate budgets. Scene facts are the standing
+        prompt cost; action facts are the answer to this one question, so a
+        long ledger of them cannot crowd the room out of the narrator's view.
+        """
+        scene_anchors = self._scene_fact_anchors()
+        action_anchors = self._action_fact_anchors(action_text, action_entities)
+        if not scene_anchors and not action_anchors:
             return []
 
-        relevant = []
-        for fact in self.established_facts:
-            normalized_fact = f" {self._normalized_fact_text(fact)} "
-            if any(
-                f" {anchor} " in normalized_fact
-                for anchor in normalized_anchors
-            ):
-                relevant.append(fact)
-        return relevant[-max_facts:]
+        padded = [
+            self._padded_fact_text(fact) for fact in self.established_facts
+        ]
+        scene_matches = [
+            index for index, fact in enumerate(padded)
+            if scene_anchors and self._anchor_hits(fact, scene_anchors)
+        ]
+        scene_indices = scene_matches[-max_facts:] if max_facts > 0 else []
+        scene_reachable = set(scene_matches)
 
-    def to_yaml(self) -> str:
+        # An action fact is one the SCENE ANCHORS could never have reached —
+        # measured against every scene match, not just the ones that fit the
+        # budget. Otherwise naming someone standing in the room quietly buys
+        # six more facts about that room: a wider window on the same subject,
+        # billed to the budget meant for answering the question asked.
+        action_indices = [
+            index for index, fact in enumerate(padded)
+            if index not in scene_reachable
+            and action_anchors
+            and self._anchor_hits(fact, action_anchors)
+        ][-max_action_facts:] if max_action_facts > 0 else []
+
+        selected = sorted(set(scene_indices) | set(action_indices))
+        return [self.established_facts[index] for index in selected]
+
+    def to_yaml(
+        self,
+        *,
+        action_text: str = "",
+        action_entities: Iterable[str] = (),
+    ) -> str:
         """Serialize to compact YAML for narrator injection.
 
         This is a current-scene prompt projection, not a dump of the durable
         campaign catalog. Off-screen NPCs and historical map connections stay
         in WorldState for explicit retrieval but are intentionally absent here.
+
+        ``action_text``/``action_entities`` describe what the player just
+        raised; they widen the FACT projection only (see
+        :meth:`get_scene_relevant_facts`). The roster stays scene-scoped —
+        asking after someone does not put them in the room.
         """
         data: dict = {
             "turn": self.turn,
@@ -766,9 +870,13 @@ class WorldState(BaseModel):
             data["recent_events"] = self.recent_events
 
         # ``established_facts`` is a durable campaign ledger, not ambient
-        # scene membership. Broadcast only facts canonically anchored to the
-        # current scene; historical/off-screen facts return through retrieval.
-        scene_facts = self.get_scene_relevant_facts()
+        # scene membership. Broadcast only facts anchored to the current
+        # scene or to an entity this action named; the rest stay in the
+        # ledger until something reaches for them.
+        scene_facts = self.get_scene_relevant_facts(
+            action_text=action_text,
+            action_entities=action_entities,
+        )
         if scene_facts:
             data["facts"] = scene_facts
 

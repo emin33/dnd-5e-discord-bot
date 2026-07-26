@@ -21,7 +21,7 @@ from dnd_bot.game.knowledge.models import (
 )
 from dnd_bot.game.knowledge.graph import KnowledgeGraph
 from dnd_bot.game.knowledge.bridge import DeltaBridge, NamePromotion, _is_proper_name
-from dnd_bot.game.knowledge.matcher import EntityNameMatcher
+from dnd_bot.game.knowledge.matcher import EntityNameMatcher, action_entity_names
 from dnd_bot.game.world_state import StateDelta, NPCState, NPCUpdate, QuestState, WorldState
 
 
@@ -891,6 +891,81 @@ class TestEntityNameMatcher:
         await matcher_kg.apply_operations([AddNode(entity=other)])
 
         assert matcher_kg.resolve_entity_reference("the-dwarf") is None
+
+    async def test_action_entity_names_returns_every_name_of_each_match(
+        self, matcher_kg
+    ):
+        # "the dwarf" is a placeholder, not an identity — see the
+        # placeholder test below for why it must not come back.
+        assert sorted(action_entity_names(
+            matcher_kg, "I talk to Grimjaw at the Ironforge Tavern"
+        )) == ["Grimjaw", "Ironforge Tavern", "old grim"]
+
+    async def test_action_entity_names_resolves_an_alias_to_its_name(
+        self, matcher_kg
+    ):
+        """The anchor is the entity, not the wording that found it."""
+        assert sorted(action_entity_names(matcher_kg, "old grim owes me")) == [
+            "Grimjaw", "old grim",
+        ]
+
+    async def test_action_entity_names_ignores_entities_nobody_named(
+        self, matcher_kg
+    ):
+        assert action_entity_names(matcher_kg, "I sharpen my sword") == []
+
+    async def test_action_entity_names_requires_a_token_boundary(
+        self, matcher_kg
+    ):
+        """`match` is bare substring; anchoring facts needs more than that.
+
+        A speculative graph seed costs an entity card. Anchoring durable
+        campaign facts is a stronger claim, so it re-tests the hit.
+        """
+        assert "grimjaw" in matcher_kg.get_all_names()
+        assert EntityNameMatcher(matcher_kg).match(
+            "I study the Ironforge Tavernkeeper's ledger"
+        ) == ["ironforge-tavern"]
+
+        assert action_entity_names(
+            matcher_kg, "I study the Ironforge Tavernkeeper's ledger"
+        ) == []
+
+    async def test_a_placeholder_name_does_not_count_as_naming_an_entity(
+        self, matcher_kg
+    ):
+        """"the dwarf" recurs forever; it must not open Grimjaw's file."""
+        assert action_entity_names(matcher_kg, "I ask the dwarf for ale") == []
+
+    async def test_a_placeholder_alias_never_escorts_a_real_name_in(
+        self, matcher_kg
+    ):
+        """The filter is per NAME, not per entity.
+
+        An entity found only through its placeholder would otherwise hand
+        back its canonical name as an anchor — the generic gate bypassed by
+        going the long way round.
+        """
+        hidden = _make_entity("sera-vellian", name="the woman")
+        hidden.aliases = ["Sera Vellian"]
+        await matcher_kg.apply_operations([AddNode(entity=hidden)])
+
+        assert action_entity_names(
+            matcher_kg, "I watch the woman by the door"
+        ) == []
+
+    async def test_action_entity_names_is_empty_without_a_graph(self):
+        assert action_entity_names(None, "I talk to Grimjaw") == []
+
+    async def test_action_entity_names_is_empty_without_text(self, matcher_kg):
+        assert action_entity_names(matcher_kg, "") == []
+
+    async def test_action_entity_names_degrades_instead_of_raising(self):
+        """Retrieval widening must never cost the player their turn."""
+        broken = MagicMock()
+        broken.get_all_names.side_effect = RuntimeError("graph is unreadable")
+
+        assert action_entity_names(broken, "I talk to Grimjaw") == []
 
 
 # ======================================================================

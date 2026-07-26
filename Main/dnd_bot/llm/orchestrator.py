@@ -1704,7 +1704,26 @@ class DMOrchestrator:
         _turn_record.set("action", action)
         _turn_record.set("player", player_name)
         _turn_record.set("phase", world_state.phase if world_state else "unknown")
-        ws_before = world_state.to_yaml() if world_state else ""
+        # The turn log's world-state bookends are read as evidence about the
+        # PROMPT, so they resolve action entities through the same seam
+        # session context assembly uses. On the one-action-at-a-time path
+        # that makes ``before`` identical to what the narrator was handed:
+        # same action string, same graph, and nothing mutates world state in
+        # between. It is a reconstruction, not a capture — two players
+        # narrating concurrently would each have built context before the
+        # other's turn landed, and the reconstruction would show the later
+        # state. ``after`` deliberately reuses the PRE-turn entity set so the
+        # bookends differ only by what the turn changed.
+        from ..game.knowledge.matcher import action_entity_names
+
+        _ws_action_entities = action_entity_names(
+            getattr(self._current_session, 'knowledge_graph', None)
+            if self._current_session else None,
+            action,
+        )
+        ws_before = world_state.to_yaml(
+            action_text=action, action_entities=_ws_action_entities,
+        ) if world_state else ""
         # Where the party stood before this turn — scene hydration only runs
         # on an actual arrival, not on every turn spent in the same room.
         ws_location_before = world_state.current_location if world_state else ""
@@ -2559,7 +2578,9 @@ class DMOrchestrator:
         self._update_scratchpad(triage, resolution, proposed_effects, combat_triggered, player_name)
 
         # ── Turn Logger: finalize and flush ──
-        ws_after = world_state.to_yaml() if world_state else ""
+        ws_after = world_state.to_yaml(
+            action_text=action, action_entities=_ws_action_entities,
+        ) if world_state else ""
         _turn_record.record_world_state(ws_before, ws_after)
         _turn_record.set("combat_triggered", combat_triggered)
         _turn_record.set("effects_count", len(self._last_effect_executions))

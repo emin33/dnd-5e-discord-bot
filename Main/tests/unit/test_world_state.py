@@ -553,6 +553,307 @@ class TestWorldStateYAML:
         assert "door_locked" not in data["flags"]  # False flags omitted
 
 
+class TestActionAnchoredFacts:
+    """Facts about what the player just RAISED, not only where they stand.
+
+    Scene anchoring alone made canon unreachable by asking for it: a fact
+    whose subject was not in the room could not enter the prompt however
+    directly the player named its subject, while knowledge-graph entity
+    retrieval was already seeded from the action text. These pin the two
+    retrieval paths to the same notion of relevance — and pin the limit
+    that keeps it from becoming "everything, forever".
+    """
+
+    @staticmethod
+    def _tavern() -> WorldState:
+        """Copper Finch, Mara on stage, the Ash Gate a place elsewhere."""
+        ws = WorldState(
+            current_location="Copper Finch",
+            connected_locations=["Ash Gate"],
+        )
+        mara = NPCState(name="Mara Venn", location="Copper Finch")
+        ws.npcs[mara.id] = mara
+        ws.established_facts = [
+            "Mara Venn keeps the Copper Finch's ledger.",
+            "The Ash Gate has been shut since Old Bram the ferryman died; "
+            "his boat the Grey Hind still rots at the landing.",
+        ]
+        return ws
+
+    def test_action_naming_offstage_subject_reaches_its_facts(self):
+        ws = self._tavern()
+
+        facts = ws.get_scene_relevant_facts(
+            action_text=(
+                "I ask Mara Venn what she knows about the Ash Gate "
+                "and why it is closed."
+            ),
+        )
+
+        assert "Grey Hind" in " ".join(facts)
+        # The scene anchor still holds alongside it.
+        assert ws.established_facts[0] in facts
+
+    def test_unraised_offstage_facts_stay_out_of_the_prompt(self):
+        ws = self._tavern()
+
+        facts = ws.get_scene_relevant_facts(
+            action_text="I order a bowl of stew and warm my hands.",
+        )
+
+        assert facts == [ws.established_facts[0]]
+
+    def test_caller_supplied_entity_names_anchor_an_aliased_reference(self):
+        """A graph match on an alias anchors the entity's CANONICAL name.
+
+        The player says "the black arch"; the knowledge graph resolves that
+        to Ash Gate and hands the name back. Fact text uses canonical names,
+        so anchoring on the resolution — not on the player's wording — is
+        what makes an aliased question reach canon.
+        """
+        ws = self._tavern()
+
+        facts = ws.get_scene_relevant_facts(
+            action_text="I ask about the black arch on the road north.",
+            action_entities=["Ash Gate"],
+        )
+
+        assert "Grey Hind" in " ".join(facts)
+
+    def test_offstage_npc_named_in_the_action_anchors_without_a_graph(self):
+        ws = self._tavern()
+        sera = NPCState(
+            name="Sera Vellian",
+            aliases=["the quartermaster"],
+            location="Tallow Market",
+        )
+        ws.npcs[sera.id] = sera
+        ws.established_facts.append("Sera Vellian still holds the old letter.")
+
+        by_name = ws.get_scene_relevant_facts(
+            action_text="I ask around after Sera Vellian.",
+        )
+        by_alias = ws.get_scene_relevant_facts(
+            action_text="I ask around after the quartermaster.",
+        )
+
+        assert "Sera Vellian still holds the old letter." in by_name
+        assert "Sera Vellian still holds the old letter." in by_alias
+
+    def test_anchors_match_on_token_boundaries_not_substrings(self):
+        """The WorldState-local half of the rule.
+
+        The graph-resolved half is pinned against a real graph in
+        `test_knowledge_graph.py` and end to end in `test_sourcebook_apply`.
+        Asserting it here with `action_text` alone would vouch for a
+        guarantee the shipped path does not get from this code.
+        """
+        ws = self._tavern()
+
+        facts = ws.get_scene_relevant_facts(
+            action_text="I study the Ash Gateway Ledger, a bound volume.",
+        )
+
+        assert "Grey Hind" not in " ".join(facts)
+
+    def test_a_placeholder_alias_never_anchors_its_entity(self):
+        """The "not globally salient forever" clause, defended.
+
+        Name promotion moves a descriptive placeholder into `aliases`, and
+        "innkeeper" recurs in most tavern turns. Anchoring on it would make
+        one off-screen NPC's whole file permanent furniture in the prompt.
+        """
+        ws = WorldState(current_location="Gilded Hart")
+        bettan = NPCState(
+            name="Bettan Roor",
+            aliases=["the innkeeper"],
+            location="Copper Finch",
+        )
+        ws.npcs[bettan.id] = bettan
+        ws.established_facts = ["Bettan Roor owes the brewer eleven gold."]
+
+        by_placeholder = ws.get_scene_relevant_facts(
+            action_text="I ask the innkeeper for a room.",
+        )
+        by_name = ws.get_scene_relevant_facts(
+            action_text="I ask Bettan Roor for a room.",
+        )
+
+        assert by_placeholder == []
+        assert by_name == ws.established_facts
+
+    def test_a_word_that_merely_contains_a_name_anchors_nothing(self):
+        """The graph seeds on bare substring; anchoring must not."""
+        ws = WorldState(current_location="Copper Finch")
+        bram = NPCState(name="Bram", location="Tallow Market")
+        ws.npcs[bram.id] = bram
+        ws.established_facts = ["Bram owes the tax collector nine gold."]
+
+        facts = ws.get_scene_relevant_facts(
+            action_text="I push through the brambles toward the river.",
+        )
+
+        assert facts == []
+
+    def test_generic_entity_names_never_become_action_anchors(self):
+        ws = self._tavern()
+        ws.established_facts.append("The woman in the charcoal coat lied.")
+
+        facts = ws.get_scene_relevant_facts(
+            action_text="I watch the woman by the door.",
+            action_entities=["the woman"],
+        )
+
+        assert "The woman in the charcoal coat lied." not in facts
+
+    def test_action_facts_carry_their_own_budget(self):
+        """Scene facts are the standing prompt cost; recall must not evict it.
+
+        One budget for both would let a well-documented subject push the
+        room the party is standing in out of the narrator's view.
+        """
+        ws = WorldState(current_location="Copper Finch")
+        ws.established_facts = [
+            f"The Ash Gate detail number {n}." for n in range(20)
+        ] + ["The Copper Finch keeps a copper lamp burning."]
+
+        facts = ws.get_scene_relevant_facts(
+            action_text="I ask what is known about the Ash Gate.",
+            action_entities=["Ash Gate"],
+            max_action_facts=3,
+        )
+
+        assert "The Copper Finch keeps a copper lamp burning." in facts
+        assert len([f for f in facts if "Ash Gate detail" in f]) == 3
+        # Most recent wins, matching the scene projection's recency rule.
+        assert "The Ash Gate detail number 19." in facts
+
+    def test_scene_budget_is_not_spent_on_action_facts(self):
+        ws = WorldState(current_location="Copper Finch")
+        ws.established_facts = [
+            f"The Copper Finch detail number {n}." for n in range(4)
+        ] + ["The Ash Gate is shut."]
+
+        facts = ws.get_scene_relevant_facts(
+            max_facts=4,
+            action_text="I ask what is known about the Ash Gate.",
+            action_entities=["Ash Gate"],
+        )
+
+        assert len(facts) == 5
+        assert "The Ash Gate is shut." in facts
+
+    def test_naming_someone_in_the_room_does_not_widen_the_scene_window(self):
+        """The action budget answers a question; it does not buy more room.
+
+        Scene facts evicted by the scene budget are scene-REACHABLE, so they
+        must not compete in the action budget. Otherwise the most ordinary
+        action there is — naming the NPC you are talking to — silently
+        raises the standing fact block from 20 to 26 without introducing a
+        single new subject.
+        """
+        ws = WorldState(current_location="Copper Finch")
+        mara = NPCState(name="Mara Venn", location="Copper Finch")
+        ws.npcs[mara.id] = mara
+        ws.established_facts = [f"Mara Venn fact {n}." for n in range(40)]
+
+        scene_only = ws.get_scene_relevant_facts()
+        naming_her = ws.get_scene_relevant_facts(
+            action_text="I ask Mara Venn a question.",
+        )
+
+        assert len(scene_only) == 20
+        assert naming_her == scene_only
+
+    def test_the_distinctive_offscene_fact_beats_a_scene_fact_for_the_budget(
+        self,
+    ):
+        """Recency decides within an anchor, never across them."""
+        ws = WorldState(
+            current_location="Copper Finch", connected_locations=["Ash Gate"],
+        )
+        ws.established_facts = [
+            "The Ash Gate's keystone bears the seal of the drowned king.",
+            "The Ash Gate road runs past the Copper Finch.",
+            "The Ash Gate caravan stops at the Copper Finch.",
+            "Copper Finch A.",
+            "Copper Finch B.",
+        ]
+
+        facts = ws.get_scene_relevant_facts(
+            max_facts=2,
+            max_action_facts=1,
+            action_text="What is known about the Ash Gate?",
+        )
+
+        # Index 0 is the only fact scene anchoring could never reach.
+        assert facts[0] == ws.established_facts[0]
+        assert facts == [
+            ws.established_facts[0],
+            ws.established_facts[3],
+            ws.established_facts[4],
+        ]
+
+    def test_facts_are_projected_in_ledger_order(self):
+        ws = self._tavern()
+
+        facts = ws.get_scene_relevant_facts(
+            action_text="I ask Mara Venn about the Ash Gate.",
+        )
+
+        assert facts == ws.established_facts
+
+    def test_asking_after_someone_does_not_put_them_on_stage(self):
+        """Anchoring widens FACTS only — never scene membership."""
+        ws = self._tavern()
+        sera = NPCState(name="Sera Vellian", location="Tallow Market")
+        ws.npcs[sera.id] = sera
+
+        data = yaml.safe_load(
+            ws.to_yaml(action_text="I ask around after Sera Vellian.")
+        )
+
+        assert [n["name"] for n in data["npcs_here"]] == ["Mara Venn"]
+
+    def test_no_action_text_projects_exactly_the_scene(self):
+        ws = self._tavern()
+
+        assert ws.get_scene_relevant_facts() == [ws.established_facts[0]]
+
+    def test_action_anchoring_alone_projects_facts_in_an_empty_scene(self):
+        """A scene with no anchors is not a reason to withhold the answer."""
+        ws = WorldState()
+        ws.established_facts = ["The Ash Gate has been shut for years."]
+
+        facts = ws.get_scene_relevant_facts(
+            action_text="I ask what is known about the Ash Gate.",
+            action_entities=["Ash Gate"],
+        )
+
+        assert facts == ws.established_facts
+
+    def test_action_facts_can_be_disabled_by_budget(self):
+        ws = self._tavern()
+
+        facts = ws.get_scene_relevant_facts(
+            action_text="I ask Mara Venn about the Ash Gate.",
+            action_entities=["Ash Gate"],
+            max_action_facts=0,
+        )
+
+        assert facts == [ws.established_facts[0]]
+
+    def test_action_entities_naming_nothing_in_the_ledger_add_no_facts(self):
+        ws = self._tavern()
+
+        facts = ws.get_scene_relevant_facts(
+            action_text="I ask Toran Vex about the weather.",
+            action_entities=["Toran Vex"],
+        )
+
+        assert facts == [ws.established_facts[0]]
+
+
 class TestPhaseStateMachine:
     """Test phase FSM transitions."""
 
