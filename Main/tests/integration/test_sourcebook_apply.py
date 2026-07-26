@@ -301,3 +301,97 @@ def test_a_malformed_book_fails_at_load_not_half_way_through_install(tmp_path):
         load_sourcebook(path)
 
     assert "no-such-place" in str(excinfo.value)
+
+
+# ── The shipping seam ───────────────────────────────────────────────────────
+#
+# Everything above composes `to_yaml(action_text=..., action_entities=...)` by
+# hand. That is the arrangement the feature NEEDS, not proof that production
+# makes it: `GameSessionManager._build_context` is the only path that feeds
+# the narrator, and a mutation test showed the whole feature could be deleted
+# from it with all 1557 tests still green. These two pin the caller.
+
+
+async def _seeded_session():
+    """A real applied book behind a real GameSession, ready for _build_context."""
+    from unittest.mock import MagicMock
+
+    from dnd_bot.game.session import GameSession, GameSessionManager
+
+    kg, store = await _fresh()
+    await apply_sourcebook(
+        _book_with_offstage_canon(), campaign_id="camp",
+        knowledge_graph=kg, world_store=store,
+    )
+    session = GameSession(id="s", channel_id=1, guild_id=1, campaign_id="camp")
+    session.world_state = store.state
+    session.knowledge_graph = kg
+    manager = GameSessionManager.__new__(GameSessionManager)
+    return manager, session, MagicMock()
+
+
+@pytest.mark.asyncio
+async def test_the_narrator_context_reaches_offstage_canon_the_player_asked_for():
+    """End to end through the ONLY path that builds the narrator's context.
+
+    The Ash Gate is not the room the party is standing in and Old Bram is not
+    on stage, so nothing about the scene can reach this fact — the action text
+    is the only thing that can, and `_build_context` is what has to pass it.
+    """
+    manager, session, memory = await _seeded_session()
+
+    context = await manager._build_context(
+        session, memory, "I ask Mara Venn what she knows about the Ash Gate.",
+    )
+
+    assert "Grey Hind" in context.world_state_yaml
+    # Positive control: the scene projection still happens at all.
+    assert "Copper Finch" in context.world_state_yaml
+
+
+@pytest.mark.asyncio
+async def test_the_narrator_context_needs_the_graph_to_reach_that_canon():
+    """The graph half is load-bearing, not decoration.
+
+    After a book is applied the party's WorldState knows two on-stage NPCs and
+    no connected locations, so its LOCAL vocabulary cannot resolve "Ash Gate"
+    at all. If `_build_context` stopped passing `action_entities`, the feature
+    would silently degrade to scene-only on exactly the seeded campaigns it
+    was built for.
+    """
+    manager, session, memory = await _seeded_session()
+    action = "I ask Mara Venn what she knows about the Ash Gate."
+
+    with_graph = await manager._build_context(session, memory, action)
+    session.knowledge_graph = None
+    without_graph = await manager._build_context(session, memory, action)
+
+    assert "Grey Hind" in with_graph.world_state_yaml
+    assert "Grey Hind" not in without_graph.world_state_yaml
+
+
+@pytest.mark.asyncio
+async def test_naming_one_npc_does_not_reach_a_different_npcs_canon():
+    """Token boundaries are not entity boundaries.
+
+    A one-word name is a token of every longer name containing it, so asking
+    after Mara Venn used to anchor an unrelated NPC called Mara — and put her
+    canon in the prompt. This codebase makes that ordinary rather than exotic:
+    naming-promotion leaves bare first names in aliases.
+    """
+    manager, session, memory = await _seeded_session()
+    session.world_state.npcs["mara-of-thornwood"] = NPCState(
+        id="mara-of-thornwood", name="Mara", location="Thornwood",
+    )
+    session.world_state.established_facts.append(
+        "Mara of Thornwood poisoned the well and fled north."
+    )
+
+    context = await manager._build_context(
+        session, memory, "I ask Mara Venn what she saw at the gate.",
+    )
+
+    assert "poisoned the well" not in context.world_state_yaml
+    # Positive control: naming her outright DOES reach her canon.
+    named = await manager._build_context(session, memory, "I ask Mara about the well.")
+    assert "poisoned the well" in named.world_state_yaml

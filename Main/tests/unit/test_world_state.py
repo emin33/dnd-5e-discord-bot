@@ -696,15 +696,41 @@ class TestActionAnchoredFacts:
         assert facts == []
 
     def test_generic_entity_names_never_become_action_anchors(self):
+        """The guard on CALLER-supplied entities, not the pre-existing blocklist.
+
+        This used to pass with `"the woman"`, which is a literal member of
+        `_GENERIC_FACT_ANCHORS` — so `_normalized_anchor_set` dropped it either
+        way and the assertion could not fail. These labels are dropped only by
+        `is_generic_npc_label`, and they are shapes this project's own turn
+        logs actually produce.
+        """
+        for label, fact in (
+            ("the innkeeper", "The innkeeper of the Gilded Hart hid the body."),
+            ("the barkeep", "The barkeep waters the ale."),
+            ("serving girl", "The serving girl reports to the Guild."),
+            ("the guards", "The guards were paid to look away."),
+        ):
+            ws = self._tavern()
+            ws.established_facts.append(fact)
+
+            facts = ws.get_scene_relevant_facts(
+                action_text=f"I speak with {label}.", action_entities=[label],
+            )
+
+            assert fact not in facts, f"{label!r} anchored as if it were a name"
+
+    def test_a_real_name_supplied_by_a_caller_still_anchors(self):
+        """Positive control for the guard above: it refuses placeholders, not
+        every caller-supplied entity."""
         ws = self._tavern()
-        ws.established_facts.append("The woman in the charcoal coat lied.")
+        ws.established_facts.append("Sera Vellian keeps the second ledger.")
 
         facts = ws.get_scene_relevant_facts(
-            action_text="I watch the woman by the door.",
-            action_entities=["the woman"],
+            action_text="I ask after Sera Vellian.",
+            action_entities=["Sera Vellian"],
         )
 
-        assert "The woman in the charcoal coat lied." not in facts
+        assert "Sera Vellian keeps the second ledger." in facts
 
     def test_action_facts_carry_their_own_budget(self):
         """Scene facts are the standing prompt cost; recall must not evict it.

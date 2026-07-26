@@ -18,8 +18,8 @@ import yaml
 from pydantic import BaseModel, Field
 
 from .identity import (
-    entity_named_in_text,
     is_generic_npc_label,
+    names_addressed_in_text,
     locations_equivalent,
     normalized_identity_text,
     padded_identity_text,
@@ -707,10 +707,11 @@ class WorldState(BaseModel):
             [npc.name, *npc.aliases] for npc in self.npcs.values()
         ]
         known.extend([location] for location in self.connected_locations)
-        for names in known:
-            anchors |= self._normalized_anchor_set(
-                entity_named_in_text(action_text, names)
-            )
+        # Resolved TOGETHER, not one at a time: a shorter name is a token of
+        # any longer name containing it, so per-entity resolution let naming
+        # one subject anchor a different one whose name sits inside theirs.
+        for matched in names_addressed_in_text(action_text, known):
+            anchors |= self._normalized_anchor_set(matched)
         return anchors
 
     def get_scene_relevant_facts(

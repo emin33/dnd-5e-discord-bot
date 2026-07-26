@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 
 import structlog
 
-from ..identity import entity_named_in_text
+from ..identity import names_addressed_in_text
 from .models import slugify
 
 if TYPE_CHECKING:
@@ -211,14 +211,19 @@ def action_entity_names(graph: "KnowledgeGraph | None", text: str) -> list[str]:
         return []
     try:
         matcher = EntityNameMatcher(graph)
+        entities = [
+            entity for entity in (
+                graph.get_entity(node_id) for node_id in matcher.match(text)
+            ) if entity is not None
+        ]
+        # One resolution across all candidates, so the longest name claims its
+        # tokens. Per-entity calls made "I ask Mara Venn ..." also name an
+        # unrelated Mara, and put her canon in the prompt.
         names: list[str] = []
-        for node_id in matcher.match(text):
-            entity = graph.get_entity(node_id)
-            if entity is None:
-                continue
-            names.extend(
-                entity_named_in_text(text, [entity.name, *entity.aliases])
-            )
+        for matched in names_addressed_in_text(
+            text, [[entity.name, *entity.aliases] for entity in entities]
+        ):
+            names.extend(matched)
         return names
     except Exception as e:
         logger.warning("action_entity_names_failed", error=str(e), exc_info=True)
