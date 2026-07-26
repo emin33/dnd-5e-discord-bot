@@ -15,12 +15,17 @@ those files (pytest never collects them). Tests may mutate WorldState
 directly to arrange fixtures. Reads are unrestricted — the read-only view
 is later-step work; this guard is about WRITES.
 
-Heuristic: production receivers for the state are always named or
+Heuristic: production receivers for the state are named or
 attribute-accessed as ``world_state`` (``world_state`` locals,
-``session.world_state``, ``self.world_state``). The store's own body
-aliases through ``self._state``, so it never matches; ambiguous method
+``session.world_state``, ``self.world_state``) OR reached through a store
+handle's read accessor (``world_store.state``, ``self._store.state``) —
+that second shape is a write around the apply methods just as completely
+as the first, and collaborators are normally passed as a ``world_store``
+parameter, so it is the cheap way to bypass the rule. Ambiguous method
 names on OTHER receivers (e.g. the inventory repo's ``remove_item``)
-don't either.
+still don't match. The store's own body aliases through ``self._state``,
+where ``self`` is not store-shaped — and ``world_store.py`` is ALLOWED
+regardless.
 """
 
 import ast
@@ -66,12 +71,46 @@ MUTATED_CONTAINERS = {
 }
 
 
+# How a store handle exposes the raw state. ``.state`` is the public read
+# accessor; ``._state`` is the private alias — both reach the same object.
+STATE_ACCESSORS = {"state", "_state"}
+
+
+def _is_world_store(node: ast.AST) -> bool:
+    """True when the expression is a ``WorldStateStore`` handle.
+
+    Suffix-matched rather than allowlisted: the store arrives under
+    several names already (``world_store`` locals and
+    ``session.world_store``, plain ``store`` in the session/effects
+    layers, ``self._store``), and an allowlist would silently stop
+    covering the next one someone introduces. A false positive needs an
+    unrelated ``*_store`` object that ALSO exposes ``.state`` with a
+    WorldState-shaped field being mutated on it — no such object exists.
+    """
+    if isinstance(node, ast.Name):
+        name = node.id
+    elif isinstance(node, ast.Attribute):
+        name = node.attr
+    else:
+        return False
+    return name == "store" or name.endswith("_store")
+
+
 def _is_world_state(node: ast.AST) -> bool:
-    """True when the expression is a ``world_state`` receiver."""
+    """True when the expression evaluates to the ``WorldState`` object.
+
+    Two shapes: the state by name (``world_state``, ``self.world_state``),
+    and the state reached through a store handle (``world_store.state``).
+    The second was a blind spot — every idiom below matched on the field
+    but bailed at the receiver, so ``world_store.state.npcs[k] = npc`` in
+    a production file scored ZERO violations.
+    """
     if isinstance(node, ast.Name):
         return node.id == "world_state"
     if isinstance(node, ast.Attribute):
-        return node.attr == "world_state"
+        if node.attr == "world_state":
+            return True
+        return node.attr in STATE_ACCESSORS and _is_world_store(node.value)
     return False
 
 
