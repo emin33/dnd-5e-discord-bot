@@ -28,10 +28,16 @@ class KnowledgeGraphRepository:
     # ------------------------------------------------------------------
 
     async def load_nodes(self, campaign_id: str) -> list[Entity]:
-        """Load all nodes for a campaign."""
+        """Load all nodes for a campaign, in a stable order.
+
+        Unordered, SQLite decides by whatever the scan happens to yield, so
+        two loads of identical rows could differ. ``get_all_names`` builds a
+        name→id dict where a later row overwrites an earlier one, which made
+        the loser of a duplicate-name pair a property of row order.
+        """
         db = await self._get_db()
         rows = await db.fetch_all(
-            "SELECT * FROM kg_node WHERE campaign_id = ?",
+            "SELECT * FROM kg_node WHERE campaign_id = ? ORDER BY node_id",
             (campaign_id,),
         )
         return [self._row_to_entity(row) for row in rows]
@@ -76,10 +82,20 @@ class KnowledgeGraphRepository:
     # ------------------------------------------------------------------
 
     async def load_edges(self, campaign_id: str) -> list[Relationship]:
-        """Load all edges for a campaign."""
+        """Load all edges for a campaign, in a stable order.
+
+        Ordered by the table's own primary key. This used to be the source
+        of a live nondeterminism rather than mere untidiness: the graph held
+        one edge per (source, target) pair, so whichever relation row loaded
+        LAST won and the same campaign could present a different social
+        graph on each restart. The graph is now keyed by relation type and
+        keeps both, but the load order still decides insertion order — and
+        insertion order is what a MultiDiGraph iterates.
+        """
         db = await self._get_db()
         rows = await db.fetch_all(
-            "SELECT * FROM kg_edge WHERE campaign_id = ?",
+            """SELECT * FROM kg_edge WHERE campaign_id = ?
+               ORDER BY source_id, target_id, relation_type""",
             (campaign_id,),
         )
         return [self._row_to_relationship(row) for row in rows]
