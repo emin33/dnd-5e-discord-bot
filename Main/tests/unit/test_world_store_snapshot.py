@@ -114,3 +114,63 @@ class TestSnapshotRoundTrip:
     def test_invalid_payload_raises(self):
         with pytest.raises(ValidationError):
             WorldStateStore.state_from_snapshot({"turn": "not-an-int"})
+
+
+def test_a_forced_reseed_leaves_no_trace_of_the_campaign_before_it():
+    """`force` documents itself as "a fresh campaign reusing a session shell".
+
+    Half a reset is incoherent rather than merely incomplete: the freshly
+    seeded tavern used to arrive already carrying the PREVIOUS campaign's
+    contradictory fact about it, at that campaign's turn count, with its
+    exits and flags still in place.
+    """
+    from dnd_bot.game.world_state import QuestState, WorldState
+    from dnd_bot.game.world_store import WorldStateStore
+
+    state = WorldState(current_location="Old Cellar")
+    store = WorldStateStore(state)
+    state.turn = 40
+    store.add_established_fact("Copper Finch burned to ashes.")
+    store.add_established_fact("The old book said so.", canon=True)
+    state.recent_events.append("The roof fell in.")
+    state.recent_transfers.append("player gave: torch")
+    state.active_effects.append("blessed")
+    state.connected_locations.append("Old Sewer")
+    state.quests["q"] = QuestState(id="q", name="Old Quest")
+    state.global_flags["cellar_flooded"] = True
+
+    assert store.seed_opening_scene(
+        location="Copper Finch", description="A rain-dark tavern.", force=True,
+    )
+
+    assert state.current_location == "Copper Finch"
+    assert state.turn == 0
+    assert state.established_facts == []
+    assert state.canon_facts == []
+    assert state.recent_events == []
+    assert state.recent_transfers == []
+    assert state.active_effects == []
+    assert state.connected_locations == []
+    assert state.quests == {}
+    assert state.global_flags == {}
+
+
+def test_an_unforced_seed_does_not_reset_anything():
+    """The reset is the FORCED path's job.
+
+    An unforced seed runs only on a campaign that has not started, and the
+    book's own facts are added after it returns — so it must not be reaching
+    into campaign state at all.
+    """
+    from dnd_bot.game.world_state import WorldState
+    from dnd_bot.game.world_store import WorldStateStore
+
+    state = WorldState(current_location="")
+    store = WorldStateStore(state)
+    store.add_established_fact("Seeded before the scene was set.")
+    state.global_flags["prologue_done"] = True
+
+    assert store.seed_opening_scene(location="Copper Finch")
+
+    assert state.established_facts == ["Seeded before the scene was set."]
+    assert state.global_flags == {"prologue_done": True}

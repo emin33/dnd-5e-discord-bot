@@ -586,6 +586,14 @@ class WorldStateStore:
         the room they are standing in. ``force`` is for deliberate re-seeds
         (a fresh campaign reusing a session shell).
 
+        ``force`` therefore RESETS the campaign, because half a reset is
+        incoherent rather than merely incomplete: a freshly seeded Copper
+        Finch used to arrive already carrying "Copper Finch burned to ashes"
+        from the campaign before it, at turn 40, with that campaign's exits
+        and flags. Facts, canon provenance, events, quests, connections,
+        transfers, effects, flags and the turn counter all go with the world
+        they described.
+
         Returns True when the seed was applied.
         """
         if not location:
@@ -611,6 +619,20 @@ class WorldStateStore:
         # is empty. Authored residents are restored afterwards by hydration.
         self._state.npcs.clear()
         self._state.scene_items.clear()
+        if force:
+            # Gated on `force` alone: on the unforced path the guard above
+            # has already proved turn == 0 and the roster empty, and the
+            # install adds this book's facts AFTER this returns, so there is
+            # nothing here worth keeping and nothing of the new book to lose.
+            self._state.turn = 0
+            self._state.established_facts.clear()
+            self._state.canon_facts.clear()
+            self._state.recent_events.clear()
+            self._state.recent_transfers.clear()
+            self._state.active_effects.clear()
+            self._state.connected_locations.clear()
+            self._state.quests.clear()
+            self._state.global_flags.clear()
         for name, item_description in (scene_items or {}).items():
             self._state.spawn_item(name, item_description)
         logger.info(

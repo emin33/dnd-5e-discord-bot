@@ -238,14 +238,17 @@ def names_addressed_in_text(
     claimed = [False] * len(tokens)
     named: set[int] = set()
     for _width, index, _name, spans in candidates:
-        free = next(
-            (span for span in spans if not any(claimed[span[0]:span[1]])), None
-        )
-        if free is None:
+        if not any(not any(claimed[start:end]) for start, end in spans):
             continue
-        for position in range(free[0], free[1]):
-            claimed[position] = True
         named.add(index)
+        # EVERY occurrence, not just the one that carried the match. Claiming
+        # only the first left the second "Mara Venn" in "Mara Venn, tell Mara
+        # Venn to wait" unclaimed, so a shorter name sitting inside it — an
+        # unrelated NPC called Mara — took that span and brought her canon
+        # along. A name owns all the ground it covers.
+        for start, end in spans:
+            for position in range(start, end):
+                claimed[position] = True
     return [
         names if index in named else []
         for index, names in enumerate(per_entity)

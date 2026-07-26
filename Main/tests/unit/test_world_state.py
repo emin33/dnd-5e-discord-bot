@@ -1144,3 +1144,28 @@ class TestStateDeltaSchema:
         assert delta.time_change is None
         assert delta.new_npcs == []
         assert delta.new_events == []
+
+
+class TestRepeatedNameClaims:
+    """A name owns ALL the ground it covers, not just its first occurrence."""
+
+    def test_repeating_a_longer_name_does_not_free_a_span_for_a_shorter_one(self):
+        from dnd_bot.game.identity import names_addressed_in_text
+
+        addressed, unrelated = names_addressed_in_text(
+            "Mara Venn, tell Mara Venn to wait.", [["Mara Venn"], ["Mara"]],
+        )
+
+        assert addressed == ["Mara Venn"]
+        assert unrelated == []
+
+    def test_naming_both_people_still_names_both(self):
+        """The control: shadowing must not swallow a genuine second subject."""
+        from dnd_bot.game.identity import names_addressed_in_text
+
+        addressed, other = names_addressed_in_text(
+            "I ask Mara Venn about Mara.", [["Mara Venn"], ["Mara"]],
+        )
+
+        assert addressed == ["Mara Venn"]
+        assert other == ["Mara"]
