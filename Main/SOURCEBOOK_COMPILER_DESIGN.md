@@ -92,19 +92,40 @@ The production compiler should be idempotent and transactional:
 
 If graph or vector projection fails, the import remains recoverable: rebuild projections from canonical SQLite records instead of asking a model to regenerate lore.
 
-## Production schema work still required
+## Production schema work
 
-The v1 authoring contract is ready; production import is intentionally not wired into the live database yet. The next implementation slice should add:
+The v1 authoring contract is ready. Items 1, 3 and 5 landed in migration 007
+(`sourcebook_repo.py`, `install_sourcebook` / `rebuild_indexes`); the rest is
+still open.
 
-1. Sourcebook/version, canonical entity, relationship, claim, event, and overlay-event migrations.
-2. Expanded graph entity/relation vocabularies and structured property values.
-3. An importer with dry-run validation, atomic commit, projection receipts, and rollback.
-4. Visibility- and time-aware graph/vector retrieval.
-5. A materializer that derives current state from sourcebook plus overlay events.
-6. Provider adapters that run the bounded authoring passes and emit schema-valid patches.
-7. A compact quality report covering lore density, connectedness, quest/reveal reachability, relationship depth, contradictions, and orphan content.
+1. ~~Sourcebook/version, canonical entity, relationship, claim, event, and overlay-event migrations.~~ **DONE** — migration 007. 18 tables. Normalized what the overlay joins, filters or traverses; JSON columns on the owner row for read-whole substructures, per the rule below.
+2. Expanded graph entity/relation vocabularies and structured property values. **Still open** — the graph is still 4 entity types, 9 relation types, `dict[str, str]`. It no longer matters as much, because canon holds the full 24-kind vocabulary and the graph is now genuinely a disposable index of it.
+3. ~~An importer with dry-run validation, atomic commit, projection receipts, and rollback.~~ **DONE** — `import_book` runs in one savepoint (a failed import leaves zero rows, swept across every `sourcebook*` table by test). Identity is the sha256 of the book's canonical JSON, so an edit is a new version rather than an overwrite of what a campaign is playing, and re-importing identical bytes is a detectable no-op. `ImportReceipt` carries per-table counts.
+4. Visibility- and time-aware graph/vector retrieval. **Still open.** Canon stores `visibility`, `canon_status`, `valid_from_event_id` and `invalidated_by_event_id`; *retrieval* does not yet read them. Today the boundary is enforced by the compiler dropping content at projection time.
+5. ~~A materializer that derives current state from sourcebook plus overlay events.~~ **PARTIAL** — the claim and location overlays are done (`campaign_claim_state`, `campaign_location_state`): discovery, supersession resolved overlay-over-book, and visits. NPC status, item ownership and clocks are not yet materialized from overlay events.
+6. Provider adapters that run the bounded authoring passes and emit schema-valid patches. **Still open.**
+7. A compact quality report covering lore density, connectedness, quest/reveal reachability, relationship depth, contradictions, and orphan content. **Still open** — now cheap to write, since every one of those is a query against the canonical tables.
 
 That sequencing lets the creative protocol become ambitious without making generated prose a privileged database writer.
+
+### What the canonical layer settled in practice
+
+Two things only became clear once it was built and reviewed:
+
+**A campaign plays ONE version of a given `sourcebook_id`.** Identity is a
+content hash, so fixing a typo mints a new key. Binding it beside the old one
+makes every overlay query answer for two versions at once — both texts of one
+claim id as settled canon, resolved in sha256 order — and re-keys discovery,
+so a fact earned at turn 12 reads as unearned. `bind_campaign` therefore
+supersedes prior versions of the same book and carries the overlay forward by
+stable id, which the authoring protocol's patch-against-stable-ids rule makes
+safe.
+
+**A rebuild must not overwrite what play wrote.** The graph merges by node id,
+and canon always asserts `alive: "true"` for a character the book considers
+living — so re-asserting canon over a live graph resurrects the dead. Rebuild
+leaves existing nodes alone by default. That still repairs the failure this
+design anticipated, which is an index that LOST rows, not one gone stale.
 
 ## Why canonical tables, and not a document blob
 
