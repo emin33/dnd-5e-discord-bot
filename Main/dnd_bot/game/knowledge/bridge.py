@@ -57,8 +57,38 @@ class DeltaBridge:
     graph mutations.
     """
 
-    def __init__(self, campaign_id: str):
+    def __init__(self, campaign_id: str, location_resolver=None):
         self._campaign_id = campaign_id
+        self._location_resolver = location_resolver
+
+    def _location_id(self, name: str) -> str:
+        """Graph node id for a place the narrator just named.
+
+        Narrators paraphrase places constantly, and a raw ``slugify`` is
+        exact: "the Copper Finch" minted ``the-copper-finch`` alongside the
+        canon ``copper-finch``. Harmless for a stray node, not harmless for
+        residency — an ``npc_updates[].location`` carrying the paraphrase
+        moved the NPC's LOCATED_AT edge onto the phantom, and hydration
+        (which resolves the destination by equivalence, then reads residents
+        of the node it resolved) could no longer see them. lore_recall
+        20260726_011459 lost Toran Vex exactly this way.
+
+        The resolver is the graph's own ``resolve_location_node`` — the same
+        equivalence-and-alias rule hydration uses. Falls back to ``slugify``
+        when it abstains, which is also the whole behaviour when no resolver
+        is supplied.
+        """
+        target = (name or "").strip()
+        if not target:
+            return ""
+        if self._location_resolver is not None:
+            try:
+                resolved = self._location_resolver(target)
+            except Exception:  # a resolver fault must not lose the write
+                resolved = None
+            if resolved:
+                return str(resolved)
+        return slugify(target)
 
     def convert(
         self,
@@ -138,7 +168,7 @@ class DeltaBridge:
         previous_location: str = "",
     ) -> list[GraphOperation]:
         ops: list[GraphOperation] = []
-        loc_id = slugify(delta.location_change)
+        loc_id = self._location_id(delta.location_change)
 
         # Create location node if not already known
         if loc_id not in known:
@@ -163,7 +193,7 @@ class DeltaBridge:
 
         # Create CONNECTED_TO edge from previous location (bidirectional)
         if previous_location:
-            prev_id = slugify(previous_location)
+            prev_id = self._location_id(previous_location)
             if prev_id and prev_id != loc_id:
                 # Ensure previous location node exists
                 if prev_id not in known:
@@ -206,10 +236,13 @@ class DeltaBridge:
         now: datetime,
     ) -> list[GraphOperation]:
         ops: list[GraphOperation] = []
-        current_loc_id = slugify(world_state.current_location) if world_state.current_location else None
+        current_loc_id = (
+            self._location_id(world_state.current_location)
+            if world_state.current_location else None
+        )
 
         for conn_name in delta.new_connections:
-            conn_id = slugify(conn_name)
+            conn_id = self._location_id(conn_name)
             if not conn_id:
                 continue
 
@@ -299,7 +332,7 @@ class DeltaBridge:
 
         # Add located_at edge if we have a location
         if npc_location:
-            loc_id = slugify(npc_location)
+            loc_id = self._location_id(npc_location)
             # Ensure location node exists
             if loc_id not in known:
                 ops.append(AddNode(entity=Entity(
@@ -371,7 +404,7 @@ class DeltaBridge:
             ))
 
             if update.location:  # Non-empty = moved somewhere
-                loc_id = slugify(update.location)
+                loc_id = self._location_id(update.location)
                 if loc_id not in known:
                     ops.append(AddNode(entity=Entity(
                         node_id=loc_id,
@@ -417,14 +450,50 @@ class DeltaBridge:
                 if not npc_id:
                     return ops
 
-        ops.append(UpdateNode(node_id=npc_id, properties={"location": ""}))
-        ops.append(RemoveEdge(
-            source_id=npc_id,
-            target_id="",
-            relation_type=RelationType.LOCATED_AT,
-        ))
+        return self._scene_scoped_departure(npc_id, world_state)
 
-        return ops
+    def _scene_scoped_departure(
+        self,
+        npc_id: str,
+        world_state: "WorldState" = None,
+    ) -> list[GraphOperation]:
+        """Ops for "this NPC is no longer in the room the party is standing in".
+
+        Removal is scene-scoped, so the residency it drops must be too: the
+        edge to the CURRENT location, not every residency the NPC has. The
+        wildcard version deleted the graph's whole record of where a person
+        lives, and the extractor fires ``removed_npcs`` for the regulars the
+        party walked away FROM — on the departure turn it listed both Copper
+        Finch regulars (live lore_recall 20260726_015947, and 20260725_234921
+        before it), which erased canon's residency for a tavern the book says
+        they live in. Returning then hydrated an empty room and the authored
+        resident was gone for good.
+
+        Scoping makes the two readings resolve themselves. When the party
+        moves, ``current_location`` is already the new place by the time the
+        bridge runs, so the removal targets a room the left-behind regulars
+        were never recorded in and no-ops. When the party stays put and
+        someone walks out, it targets the room they walked out of. Same for
+        an NPC named in prose from three scenes away.
+
+        The residual over-retention — an NPC who genuinely leaves on the same
+        turn the party does keeps a stale residency — is the cheap direction
+        of this trade: a resident re-hydrated once is visible and correctable,
+        a deleted residency edge is not recoverable from anywhere.
+        """
+        scene = getattr(world_state, "current_location", "") or ""
+        scene_id = self._location_id(scene)
+        if not scene_id:
+            return []
+        return [
+            # Denormalized copy of the edge; nothing reads it for residency.
+            UpdateNode(node_id=npc_id, properties={"location": ""}),
+            RemoveEdge(
+                source_id=npc_id,
+                target_id=scene_id,
+                relation_type=RelationType.LOCATED_AT,
+            ),
+        ]
 
     def _handle_new_quest(self, quest, world_state: "WorldState", known: set[str], now: datetime) -> list[GraphOperation]:
         """Create quest node + edges to giver NPC and objective location."""
@@ -467,7 +536,7 @@ class DeltaBridge:
 
         # Edge: quest → objective location (OBJECTIVE_AT)
         if quest.location:
-            loc_id = slugify(quest.location)
+            loc_id = self._location_id(quest.location)
             if loc_id not in known:
                 ops.append(AddNode(entity=Entity(
                     node_id=loc_id,
@@ -591,7 +660,7 @@ class DeltaBridge:
 
         # LOCATED_AT edge
         if npc_location:
-            loc_id = slugify(npc_location)
+            loc_id = self._location_id(npc_location)
             if loc_id not in known:
                 ops.append(AddNode(entity=Entity(
                     node_id=loc_id,
@@ -649,7 +718,7 @@ class DeltaBridge:
         known.add(obj_id)
 
         if location:
-            loc_id = slugify(location)
+            loc_id = self._location_id(location)
             if loc_id not in known:
                 ops.append(AddNode(entity=Entity(
                     node_id=loc_id,
@@ -791,10 +860,8 @@ class DeltaBridge:
             node_id = slugify(node_id)
 
         if node_id:
-            ops.append(UpdateNode(node_id=node_id, properties={"location": ""}))
-            ops.append(RemoveEdge(
-                source_id=node_id,
-                target_id="",
-                relation_type=RelationType.LOCATED_AT,
-            ))
+            # Scene-scoped, exactly as on the delta path — the narrator's
+            # "this is gone" is a statement about the room in front of the
+            # party, never a licence to delete where someone lives.
+            ops.extend(self._scene_scoped_departure(node_id, world_state))
         return ops
