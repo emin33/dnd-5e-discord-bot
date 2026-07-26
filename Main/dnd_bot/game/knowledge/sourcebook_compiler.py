@@ -40,6 +40,7 @@ of failure gets caught at all.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -54,6 +55,7 @@ from ...models.sourcebook import (
     RelationshipKind,
     Visibility,
 )
+from ...models.sourcebook_canon import ImportReceipt, RebuildReceipt
 from .models import (
     AddEdge,
     AddNode,
@@ -404,7 +406,20 @@ async def apply_sourcebook(
     without standing up a session.
     """
     compiled = compile_sourcebook(book, campaign_id)
+    label = str(book.metadata.sourcebook_id)
 
+    await _install_graph(compiled, campaign_id, knowledge_graph, label)
+    _seed_opening_scene(compiled, knowledge_graph, world_store, label, force)
+    return compiled
+
+
+async def _install_graph(
+    compiled: CompiledSourcebook,
+    campaign_id: str,
+    knowledge_graph,
+    label: str,
+) -> list[str]:
+    """Apply the projection's ops; report what the graph refused."""
     rejections = await knowledge_graph.apply_operations(compiled.graph_ops)
     if rejections:
         # The graph rejects rather than raises; surface them as warnings so a
@@ -412,10 +427,21 @@ async def apply_sourcebook(
         compiled.warnings.extend(f"graph rejected: {r}" for r in rejections)
         logger.warning(
             "sourcebook_graph_rejections",
-            sourcebook=book.metadata.sourcebook_id,
+            sourcebook=label,
+            campaign=campaign_id,
             count=len(rejections),
         )
+    return list(rejections)
 
+
+def _seed_opening_scene(
+    compiled: CompiledSourcebook,
+    knowledge_graph,
+    world_store,
+    label: str,
+    force: bool,
+) -> bool:
+    """The world-state leg. Every write goes through the store."""
     seeded = world_store.seed_opening_scene(
         location=compiled.current_location,
         description=compiled.location_description,
@@ -425,10 +451,10 @@ async def apply_sourcebook(
     if not seeded:
         logger.warning(
             "sourcebook_scene_not_seeded",
-            sourcebook=book.metadata.sourcebook_id,
+            sourcebook=label,
             location=compiled.current_location,
         )
-        return compiled
+        return False
 
     for fact in compiled.established_facts:
         world_store.add_established_fact(fact)
@@ -443,11 +469,186 @@ async def apply_sourcebook(
 
     logger.info(
         "sourcebook_applied",
-        sourcebook=book.metadata.sourcebook_id,
+        sourcebook=label,
         location=compiled.current_location,
         npcs_on_stage=len(world_store.state.npcs),
     )
-    return compiled
+    return True
+
+
+# ── Rebuilding the indexes from canonical rows ──────────────────────────────
+#
+# The design doc's contract: "If graph or vector projection fails, the import
+# remains recoverable: rebuild projections from canonical SQLite records
+# instead of asking a model to regenerate lore." Everything below is that
+# sentence made executable. `apply_sourcebook` needs the book OBJECT; these
+# need only a `sourcebook_key`, which is what makes the graph and the
+# embeddings genuinely disposable.
+
+
+@dataclass
+class InstalledSourcebook:
+    """What a production install wrote, across all four layers."""
+
+    imported: "ImportReceipt"
+    rebuilt: "RebuildReceipt"
+    compiled: CompiledSourcebook
+    scene_seeded: bool = False
+
+    @property
+    def sourcebook_key(self) -> str:
+        return self.imported.sourcebook_key
+
+
+async def compile_from_canon(
+    repository, sourcebook_key: str, campaign_id: str
+) -> CompiledSourcebook:
+    """Compile straight from canonical rows — no book file involved.
+
+    Equivalent to ``compile_sourcebook(load_sourcebook(path), campaign_id)``
+    for any book that was imported, which is the property the round-trip
+    gate pins: if canon lost anything, these two projections diverge.
+    """
+    book = await repository.load_book(sourcebook_key)
+    if book is None:
+        raise LookupError(f"no imported sourcebook with key {sourcebook_key!r}")
+    return compile_sourcebook(book, campaign_id)
+
+
+async def rebuild_indexes(
+    *,
+    repository,
+    sourcebook_key: str,
+    campaign_id: str,
+    knowledge_graph,
+    vector_store=None,
+) -> "RebuildReceipt":
+    """Regenerate the graph (and optionally the vector index) from canon.
+
+    Safe to run on a live campaign: the graph merges by node id, and
+    ``add_entity_description`` upserts, so this repairs a damaged index
+    rather than duplicating a healthy one.
+
+    Vector content is derived from the compiler's OWN node ops rather than
+    re-read from the canonical tables. That is deliberate: the visibility
+    boundary is enforced in exactly one place, and an embedding is the worst
+    possible second place to re-derive it — a leaked secret in the vector
+    index resurfaces on semantic similarity alone, with no scene, entity or
+    keyword to make the leak traceable.
+    """
+    compiled = await compile_from_canon(repository, sourcebook_key, campaign_id)
+    return await _rebuild_from_compiled(
+        compiled,
+        sourcebook_key=sourcebook_key,
+        campaign_id=campaign_id,
+        knowledge_graph=knowledge_graph,
+        vector_store=vector_store,
+    )
+
+
+async def _rebuild_from_compiled(
+    compiled: CompiledSourcebook,
+    *,
+    sourcebook_key: str,
+    campaign_id: str,
+    knowledge_graph,
+    vector_store=None,
+) -> "RebuildReceipt":
+    receipt = RebuildReceipt(
+        sourcebook_key=sourcebook_key,
+        campaign_id=campaign_id,
+        nodes=compiled.node_count,
+        edges=compiled.edge_count,
+        warnings=list(compiled.warnings),
+    )
+    receipt.graph_rejections = await _install_graph(
+        compiled, campaign_id, knowledge_graph, sourcebook_key[:12]
+    )
+
+    if vector_store is not None:
+        entities = [op.entity for op in compiled.graph_ops if isinstance(op, AddNode)]
+
+        def _embed() -> int:
+            embedded = 0
+            for entity in entities:
+                if vector_store.add_entity_description(
+                    campaign_id=campaign_id,
+                    node_id=entity.node_id,
+                    entity_type=entity.entity_type.value,
+                    name=entity.name,
+                    description=entity.properties.get("description", ""),
+                    aliases=entity.aliases,
+                ):
+                    embedded += 1
+            return embedded
+
+        # Chroma client init and per-entity embedding are blocking work; a
+        # whole-book rebuild would otherwise freeze the event loop (AQ-ASYNC-03).
+        receipt.embedded = await asyncio.to_thread(_embed)
+        receipt.vector_skipped = False
+
+    logger.info(
+        "sourcebook_indexes_rebuilt",
+        key=sourcebook_key[:12],
+        campaign=campaign_id,
+        nodes=receipt.nodes,
+        edges=receipt.edges,
+        embedded=receipt.embedded,
+        rejections=len(receipt.graph_rejections),
+    )
+    return receipt
+
+
+async def install_sourcebook(
+    book: CampaignSourcebook,
+    *,
+    campaign_id: str,
+    repository,
+    knowledge_graph,
+    world_store,
+    vector_store=None,
+    force: bool = False,
+) -> InstalledSourcebook:
+    """The production import path: canon first, indexes derived from it.
+
+    Order matters, and not only for correctness. The indexes are rebuilt by
+    reading the rows BACK rather than from the book still in memory, so a
+    lossy import fails here — loudly, at install time — instead of surviving
+    as a healthy-looking graph beside canonical tables that quietly cannot
+    reproduce it.
+    """
+    imported = await repository.import_book(book)
+    key = imported.sourcebook_key
+
+    await repository.bind_campaign(campaign_id, key)
+    await repository.seed_starting_knowledge(campaign_id, key)
+
+    # Read the rows back. This is the leg that would fail on a lossy import.
+    compiled = await compile_from_canon(repository, key, campaign_id)
+    rebuilt = await _rebuild_from_compiled(
+        compiled,
+        sourcebook_key=key,
+        campaign_id=campaign_id,
+        knowledge_graph=knowledge_graph,
+        vector_store=vector_store,
+    )
+
+    seeded = _seed_opening_scene(
+        compiled, knowledge_graph, world_store,
+        str(book.metadata.sourcebook_id), force,
+    )
+    if seeded:
+        # The party wakes up here, so the world has been touched here. Without
+        # this, "authored in a region the party has not touched" would count
+        # the opening tavern as untouched forever.
+        await repository.record_visit(
+            campaign_id, key, str(book.starting_state.location_id), turn=0,
+        )
+
+    return InstalledSourcebook(
+        imported=imported, rebuilt=rebuilt, compiled=compiled,
+        scene_seeded=seeded,
+    )
 
 
 def _log_compiled(book: CampaignSourcebook, out: CompiledSourcebook) -> None:
