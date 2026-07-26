@@ -474,8 +474,13 @@ def _seed_opening_scene(
         )
         return False
 
+    # Marked as canon, not merely added: every one of these came from an
+    # authored claim, and they all land at turn 0. Without the marking the
+    # prompt's recency-ranked fact budgets would evict the entire book ahead
+    # of anything play wrote, permanently — which is the whole point of
+    # seeding a campaign from a sourcebook.
     for fact in compiled.established_facts:
-        world_store.add_established_fact(fact)
+        world_store.add_established_fact(fact, canon=True)
 
     location_node = knowledge_graph.resolve_location_node(
         compiled.current_location

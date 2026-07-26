@@ -395,3 +395,51 @@ async def test_naming_one_npc_does_not_reach_a_different_npcs_canon():
     # Positive control: naming her outright DOES reach her canon.
     named = await manager._build_context(session, memory, "I ask Mara about the well.")
     assert "poisoned the well" in named.world_state_yaml
+
+
+@pytest.mark.asyncio
+async def test_applying_a_book_marks_its_facts_as_authored():
+    """The install is where provenance is recorded; nothing else knows it.
+
+    `get_scene_relevant_facts` ranks on this mark, so if the install stopped
+    setting it the ranking would silently revert to pure recency and every
+    long-campaign guarantee below would go with it.
+    """
+    kg, store = await _fresh()
+
+    compiled = await apply_sourcebook(
+        _book(), campaign_id="camp", knowledge_graph=kg, world_store=store,
+    )
+
+    assert compiled.established_facts
+    assert store.state.canon_facts == store.state.established_facts
+    # Withheld canon is not in the ledger, so it is not marked either.
+    assert not any("filed the lock" in f for f in store.state.canon_facts)
+
+
+@pytest.mark.asyncio
+async def test_seeded_canon_still_reaches_the_prompt_late_in_a_campaign():
+    """The generalisation the shipped evidence did not cover.
+
+    The 0-of-3 -> 3-of-3 result behind this feature was measured entirely at
+    turn 1 on a fresh ledger, where "most recently written" and "true" agree.
+    They stop agreeing at six play facts about the same subject. This drives
+    the real `_build_context` at a ledger depth a long campaign reaches, and
+    it fails on a build that ranks the action budget by recency alone.
+    """
+    manager, session, memory = await _seeded_session()
+    action = "I ask Mara Venn what she knows about the Ash Gate."
+
+    turn_one = await manager._build_context(session, memory, action)
+    # Forty turns of narrator chatter about the same subject.
+    for n in range(40):
+        session.world_state.established_facts.append(
+            f"Old Bram's name came up at the Ash Gate again, note {n}."
+        )
+    much_later = await manager._build_context(session, memory, action)
+
+    assert "Grey Hind" in turn_one.world_state_yaml
+    assert "Grey Hind" in much_later.world_state_yaml
+    # Positive control: the play facts crowding it are genuinely in scope —
+    # without this, an assertion above could pass on a ledger that never grew.
+    assert "note 39" in much_later.world_state_yaml

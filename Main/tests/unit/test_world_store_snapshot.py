@@ -55,6 +55,9 @@ def _populated_world() -> WorldState:
     ws.active_effects = ["bless (3 rounds)"]
     ws.recent_events = ["The party arrived at the tavern", "Fred mentioned the crypt"]
     ws.established_facts = ["The mayor is missing", "The crypt is sealed"]
+    # One authored, one written in play — so the round trip is exercised on a
+    # ledger where the two are actually distinguishable.
+    ws.canon_facts = ["The crypt is sealed"]
     ws.global_flags = {"crypt_unsealed": False, "met_fred": True}
     return ws
 
@@ -92,6 +95,14 @@ class TestSnapshotRoundTrip:
         store = WorldStateStore(restored)
         store.add_established_fact("A new fact")
         assert "A new fact" in restored.established_facts
+
+        # Fact provenance survives the restart. If it did not, every RESUMED
+        # campaign would silently fall back to ranking its facts by recency —
+        # the defect this marking exists to fix, reintroduced by the restore
+        # path and invisible until a long campaign lost its canon.
+        assert restored.canon_facts == ["The crypt is sealed"]
+        store.add_established_fact("A new fact", canon=True)
+        assert restored.canon_facts == ["The crypt is sealed", "A new fact"]
 
     def test_default_world_round_trips(self):
         original = WorldState()

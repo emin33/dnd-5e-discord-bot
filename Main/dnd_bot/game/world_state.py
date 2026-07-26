@@ -209,6 +209,15 @@ class WorldState(BaseModel):
     active_effects: list[str] = Field(default_factory=list)
     recent_events: list[str] = Field(default_factory=list)
     established_facts: list[str] = Field(default_factory=list)
+    # Which established facts came from an authored sourcebook rather than
+    # from play, by exact text. Provenance, not a second ledger: every entry
+    # that matters is also in ``established_facts``, and this only says where
+    # it came from. The fact budgets rank on it — see
+    # :meth:`get_scene_relevant_facts` — because canon is installed once, at
+    # turn 0, so a budget ordered by recency alone evicts the book first and
+    # permanently. Campaigns installed before this field existed simply have
+    # none, and rank exactly as they did.
+    canon_facts: list[str] = Field(default_factory=list)
     # Facts a later fact made untrue — retired from prompts, kept for
     # provenance. Entries: {"fact", "superseded_by", "turn"}.
     superseded_facts: list[dict] = Field(default_factory=list)
@@ -714,6 +723,56 @@ class WorldState(BaseModel):
             anchors |= self._normalized_anchor_set(matched)
         return anchors
 
+    def _split_by_provenance(
+        self, indices: list[int], canon_texts: set[str]
+    ) -> tuple[list[int], list[int]]:
+        """Partition ledger indices into (authored canon, play-written)."""
+        canon: list[int] = []
+        played: list[int] = []
+        for index in indices:
+            target = (
+                canon if self.established_facts[index] in canon_texts
+                else played
+            )
+            target.append(index)
+        return canon, played
+
+    @staticmethod
+    def _spend_fact_budget(
+        canon_indices: list[int],
+        played_indices: list[int],
+        budget: int,
+    ) -> list[int]:
+        """Fill one fact budget: canon keeps a floor, play keeps recency.
+
+        Ranking a budget purely by recency answers "what was written most
+        recently about this subject", which is not the same question as
+        "what is true about this subject". Authored canon enters the ledger
+        once, at install, so it holds the OLDEST positions forever: under a
+        pure recency rule the book is always the first thing evicted and can
+        never come back, and six later mentions of a subject were enough to
+        bury the book's own line about that subject for the rest of the
+        campaign.
+
+        So half the budget (rounded up) is reserved for canon. A FLOOR, not a
+        quota — whatever one side leaves unspent the other takes, so a book
+        with a hundred facts about the tavern still cannot crowd out what
+        just happened in it, and a scene with no canon behaves exactly as
+        before.
+
+        Canon is taken in AUTHORED order (the head of the list), which is
+        both the author's own ordering and stable turn to turn — a jittering
+        window over the same book would churn the prompt for nothing. Play
+        facts are taken newest-first, which is the right rule for events.
+        """
+        if budget <= 0:
+            return []
+        reserved = min(len(canon_indices), (budget + 1) // 2)
+        played = (
+            played_indices[-(budget - reserved):] if budget > reserved else []
+        )
+        return canon_indices[:budget - len(played)] + played
+
     def get_scene_relevant_facts(
         self,
         max_facts: int = 20,
@@ -737,12 +796,16 @@ class WorldState(BaseModel):
         The two anchors carry separate budgets. Scene facts are the standing
         prompt cost; action facts are the answer to this one question, so a
         long ledger of them cannot crowd the room out of the narrator's view.
+        Each budget is then spent canon-first (:meth:`_spend_fact_budget`),
+        which is what keeps a long campaign from burying the book it is
+        being played from.
         """
         scene_anchors = self._scene_fact_anchors()
         action_anchors = self._action_fact_anchors(action_text, action_entities)
         if not scene_anchors and not action_anchors:
             return []
 
+        canon_texts = set(self.canon_facts)
         padded = [
             self._padded_fact_text(fact) for fact in self.established_facts
         ]
@@ -750,7 +813,12 @@ class WorldState(BaseModel):
             index for index, fact in enumerate(padded)
             if scene_anchors and self._anchor_hits(fact, scene_anchors)
         ]
-        scene_indices = scene_matches[-max_facts:] if max_facts > 0 else []
+        scene_canon, scene_played = self._split_by_provenance(
+            scene_matches, canon_texts
+        )
+        scene_indices = self._spend_fact_budget(
+            scene_canon, scene_played, max_facts
+        )
         scene_reachable = set(scene_matches)
 
         # An action fact is one the SCENE ANCHORS could never have reached —
@@ -758,12 +826,29 @@ class WorldState(BaseModel):
         # budget. Otherwise naming someone standing in the room quietly buys
         # six more facts about that room: a wider window on the same subject,
         # billed to the budget meant for answering the question asked.
-        action_indices = [
+        #
+        # That exclusion used to make standing CLOSER to a subject hide its
+        # canon: at the Ash Gate, the gate's authored line is scene-matched,
+        # so twenty newer facts about the gate's warden evicted it from the
+        # scene budget and this rule then barred it from the action budget —
+        # reachable by nothing, while the same question asked from the tavern
+        # reached it. The repair is the canon floor INSIDE the scene budget,
+        # not a looser exclusion here: the fact never gets evicted in the
+        # first place, so closer is now strictly better rather than worse.
+        # Play-written chatter that ages out of the scene window still ages
+        # out, which is what the window is for.
+        action_matches = [
             index for index, fact in enumerate(padded)
             if index not in scene_reachable
             and action_anchors
             and self._anchor_hits(fact, action_anchors)
-        ][-max_action_facts:] if max_action_facts > 0 else []
+        ]
+        action_canon, action_played = self._split_by_provenance(
+            action_matches, canon_texts
+        )
+        action_indices = self._spend_fact_budget(
+            action_canon, action_played, max_action_facts
+        )
 
         selected = sorted(set(scene_indices) | set(action_indices))
         return [self.established_facts[index] for index in selected]
