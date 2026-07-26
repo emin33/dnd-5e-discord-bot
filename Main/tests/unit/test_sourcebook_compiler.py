@@ -67,6 +67,7 @@ def _book(**overrides) -> CampaignSourcebook:
             ),
             NPCSpec(
                 id="old-bram", name="Old Bram", status=CharacterStatus.DEAD,
+                appearance="A river-worn coat on a hook by the door.",
                 summary="The ferryman who warned people away.",
                 current_location_id="ash-gate",
             ),
@@ -146,6 +147,51 @@ def test_entities_project_with_their_types_and_descriptions():
     assert nodes["sealed-reliquary"].entity_type is EntityType.ITEM
     assert nodes["mara-venn"].properties["description"].startswith("A sharp-eyed")
     assert not compiled.warnings
+
+
+def test_an_npc_summary_is_dm_side_exactly_as_a_quests_is():
+    """One field, one meaning, across the whole compiler.
+
+    The quest channel already refuses `summary` and projects the player-facing
+    `hook`. NPCs used it as a description fallback, so a character with no
+    appearance and no role published the author's twist verbatim — with no
+    withheld record and no warning to show for it.
+    """
+    book = _book()
+    book.npcs.append(NPCSpec(
+        id="quiet-man", name="Quiet Man",
+        summary="He set the fire himself.",
+        current_location_id="copper-finch",
+    ))
+
+    compiled = compile_sourcebook(book, "camp")
+    node = _nodes(compiled)["quiet-man"]
+
+    assert node.properties.get("description", "") == ""
+    assert "set the fire" not in str(node.properties)
+    # Told, not silently dropped — the fix is an appearance, not a summary.
+    assert any("quiet-man" in w and "appearance nor role" in w
+               for w in compiled.warnings)
+    # Positive control: a described NPC in the same book is unaffected, so the
+    # absence above is the summary rule and not a broken projection.
+    assert _nodes(compiled)["mara-venn"].properties["description"].startswith(
+        "A sharp-eyed"
+    )
+
+
+def test_a_role_still_describes_an_npc_with_no_appearance():
+    """`role` is player-facing, so it remains a legitimate fallback."""
+    book = _book()
+    book.npcs.append(NPCSpec(
+        id="ferry-hand", name="Ferry Hand", role="dockhand",
+        summary="Secretly the arsonist's brother.",
+        current_location_id="copper-finch",
+    ))
+
+    node = _nodes(compile_sourcebook(book, "camp"))["ferry-hand"]
+
+    assert node.properties["description"] == "dockhand"
+    assert "arsonist" not in str(node.properties)
 
 
 def test_authored_death_projects_as_not_alive():

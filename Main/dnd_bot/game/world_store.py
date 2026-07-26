@@ -592,6 +592,13 @@ class WorldStateStore:
         self._state.current_location = location
         if description:
             self._state.location_description = description
+        # The roster goes with the scene. A forced reseed is "this is a
+        # different world now", and leaving the old cast in place kept an NPC
+        # on stage carrying the PREVIOUS location — visible to the narrator as
+        # someone standing in a room they are not in. Clearing is a no-op on
+        # the unforced path, where the guard above already proved the roster
+        # is empty. Authored residents are restored afterwards by hydration.
+        self._state.npcs.clear()
         self._state.scene_items.clear()
         for name, item_description in (scene_items or {}).items():
             self._state.spawn_item(name, item_description)

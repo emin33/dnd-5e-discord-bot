@@ -53,6 +53,7 @@ def _book() -> CampaignSourcebook:
                     appearance="A nervous clerk.",
                     current_location_id="copper-finch"),
             NPCSpec(id="old-bram", name="Old Bram", status=CharacterStatus.DEAD,
+                    appearance="A river-worn coat, still damp.",
                     summary="The dead ferryman.",
                     current_location_id="ash-gate"),
         ],
