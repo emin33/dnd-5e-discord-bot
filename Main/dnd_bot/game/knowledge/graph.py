@@ -373,6 +373,12 @@ class KnowledgeGraph:
                 continue
             if locations_equivalent(entity.name, name):
                 return node_id
+            # Aliases are how canon declares what a place may be CALLED.
+            # Narrators paraphrase constantly — a live run returned the party
+            # to "the tavern", which no spelling-variant rule can bridge to
+            # "Copper Finch", so the room came back empty.
+            if any(locations_equivalent(alias, name) for alias in entity.aliases):
+                return node_id
         return None
 
     def residents_of(

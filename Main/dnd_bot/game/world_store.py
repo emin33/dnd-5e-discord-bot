@@ -602,6 +602,31 @@ class WorldStateStore:
         )
         return True
 
+    def canonicalize_location(self, canonical: str) -> bool:
+        """Re-anchor the scene to a known place's canonical name.
+
+        The narrator names rooms loosely — a live run walked the party back
+        to "the tavern", and world state took that literally. Everything
+        downstream keys off ``current_location``: residents recorded at
+        "Copper Finch" no longer matched, so rescope evicted them and
+        hydration had nothing to restore. When an arrival resolves to a place
+        canon knows, the canonical name wins over the paraphrase.
+
+        Returns True when a rename happened.
+        """
+        target = (canonical or "").strip()
+        current = self._state.current_location or ""
+        if not target or target == current:
+            return False
+        self._state.current_location = target
+        for npc in self._state.npcs.values():
+            if npc.location and locations_equivalent(npc.location, current):
+                npc.location = target
+        logger.info(
+            "scene_location_canonicalized", was=current, now=target,
+        )
+        return True
+
     def hydrate_residents(
         self,
         residents: list,

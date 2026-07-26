@@ -3520,6 +3520,14 @@ class DMOrchestrator:
         location_node = knowledge_graph.resolve_location_node(destination)
         if not location_node:
             return []
+        # Anchor the scene to canon's name for this place before restoring
+        # anyone: residents are recorded under it, and a paraphrased
+        # current_location ("the tavern") makes every later comparison miss.
+        canonical = getattr(
+            knowledge_graph.get_entity(location_node), "name", ""
+        )
+        if canonical:
+            store.canonicalize_location(canonical)
         residents = knowledge_graph.residents_of(location_node)
         if not residents:
             return []
