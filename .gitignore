@@ -86,3 +86,7 @@ Main/data/long_horizon_run*.log
 Main/data/claude_play_*.log
 Main/_testout.txt
 Main/_mypyout.txt
+
+# Raw harness stdout/stderr from ad-hoc runs. The scored artifacts in
+# data/tool_reliability/ are the evidence worth keeping; these are working logs.
+Main/data/sweep_stability/
