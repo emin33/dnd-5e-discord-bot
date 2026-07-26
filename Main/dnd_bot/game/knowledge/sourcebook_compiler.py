@@ -30,7 +30,10 @@ first appears:
   schema's way of saying nobody knows it, so it becomes no edge;
 - inventory: ``hidden`` entries yield no ownership edge, and an item whose
   only presence in the book is a concealed one is not projected at all;
-- NPCs: ``private_history`` is never read, and a MISSING character is not
+- NPCs: ``private_history`` is never read, ``summary`` is never published as
+  a description (it is the same twist-shelf the quest channel already
+  refuses — an NPC with no ``appearance`` and no ``role`` gets a bare name
+  and a warning, not the author's notes), and a MISSING character is not
   placed anywhere.
 
 Everything excluded lands in ``withheld`` / ``withheld_notes`` — a bucket
@@ -138,10 +141,16 @@ class CompiledSourcebook:
 
 
 def _npc_properties(npc) -> dict[str, str]:
-    # Player-facing fields first. `summary` is the author's shelf for "what
-    # this character IS", twist included, so it is the last resort rather
-    # than the first choice. private_history is never read at all.
-    description = npc.appearance or npc.role or npc.summary
+    # Player-facing fields ONLY. `summary` is the author's shelf for "what
+    # this character IS", twist included — the same field this module already
+    # refuses to project for quests, where it takes the player-facing `hook`
+    # and never the summary. Treating it as DM-side for a quest and as a
+    # public description for an NPC was one field with two meanings inside one
+    # compiler, and the NPC reading is the one that leaks: a book that gives a
+    # character no appearance and no role published the twist verbatim, into
+    # the graph and (since the canonical layer) the vector index, with no
+    # withheld record and no warning. private_history is never read either.
+    description = npc.appearance or npc.role
     properties = {
         "description": description,
         "alive": "false" if npc.status in _NOT_ALIVE else "true",
@@ -209,6 +218,15 @@ def compile_sourcebook(
     seen_npc_names: dict[str, str] = {}
     for npc in book.npcs:
         _add_node(npc, EntityType.NPC, _npc_properties(npc))
+        if not (npc.appearance or npc.role):
+            # Not fatal, but the author should know: this NPC reaches play as
+            # a bare name. The fix is an `appearance` or a `role` — NOT a
+            # summary, which is where the twist lives.
+            out.warnings.append(
+                f"npc {npc.id!r} has neither appearance nor role, so it is "
+                "projected with no description at all; summary is DM-side and "
+                "is never published"
+            )
         key = npc.name.strip().casefold()
         if key in seen_npc_names:
             out.warnings.append(
@@ -778,21 +796,26 @@ async def install_sourcebook(
     text in the vector index — with no warning, no rejection, and nothing in
     ``withheld_notes`` to show it ever happened.
 
-    **Not atomic, but idempotent.** The stages commit independently, so a
-    failure part-way through leaves canon written and the campaign bound. Just
-    re-run it: the import no-ops on an identical key, binding is a no-op,
-    starting knowledge is first-wins, and the rebuild preserves nodes the
-    graph already has.
+    **Not atomic, but idempotent, and it fails before it commits the campaign
+    to anything.** The stages commit independently, so a failure part-way
+    through can leave canon written — harmless, since an unbound version is
+    inert and re-importing identical bytes is a no-op. Everything that points
+    a CAMPAIGN at that canon happens after the verification passes. Re-running
+    is always safe: the import no-ops, binding is a no-op, starting knowledge
+    is first-wins, and the rebuild preserves nodes the graph already has.
     """
     imported = await repository.import_book(book)
     key = imported.sourcebook_key
 
-    await repository.bind_campaign(campaign_id, key)
-    await repository.seed_starting_knowledge(campaign_id, key)
-
-    # Read the rows back, and prove they reproduce the book.
+    # Read the rows back and prove they reproduce the book BEFORE binding the
+    # campaign to them. Verifying afterwards left a rejected install with a
+    # live binding and seeded claim rows — a campaign pointed at canon this
+    # function had just refused, which is worse than not installing at all.
     compiled = await compile_from_canon(repository, key, campaign_id)
     _assert_canon_reproduces(compile_sourcebook(book, campaign_id), compiled, key)
+
+    await repository.bind_campaign(campaign_id, key)
+    await repository.seed_starting_knowledge(campaign_id, key)
 
     rebuilt = await _rebuild_from_compiled(
         compiled,

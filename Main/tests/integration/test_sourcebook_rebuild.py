@@ -25,8 +25,10 @@ from dnd_bot.game.knowledge.sourcebook_compiler import (
     compile_from_canon, compile_sourcebook, install_sourcebook,
     projection_fingerprint, rebuild_indexes,
 )
-from dnd_bot.game.world_state import WorldState
+from dnd_bot.game.world_state import NPCState, WorldState
 from dnd_bot.game.world_store import WorldStateStore
+
+from dnd_bot.models.sourcebook import NPCSpec
 
 from tests.integration.test_sourcebook_canon_repo import make_db, rich_book
 
@@ -330,6 +332,72 @@ async def test_a_lossy_round_trip_that_would_publish_a_secret_stops_the_install(
 
 
 @pytest.mark.asyncio
+async def test_a_refused_install_leaves_the_campaign_bound_to_nothing(rig):
+    """Verification runs BEFORE anything points a campaign at the canon.
+
+    Binding first meant a rejected install still left a live binding and
+    seeded claim rows — a campaign aimed at canon this function had just
+    refused, which is worse than not installing at all.
+    """
+    db, repo, _graph, _store = rig
+    real_load = repo.load_book
+
+    async def _amnesiac(key: str):
+        book = await real_load(key)
+        book.npcs = [n for n in book.npcs if n.id != "sable-quill"]
+        return book
+
+    repo.load_book = _amnesiac  # type: ignore[method-assign]
+
+    with pytest.raises(ValueError, match="do not reproduce the book"):
+        await _install(rig)
+
+    assert await repo.sourcebook_keys_for_campaign("camp") == []
+    assert await repo.effective_claims("camp") == []
+    for table in ("campaign_sourcebook", "campaign_claim_state",
+                  "campaign_location_state"):
+        row = await db.fetch_one(f"SELECT COUNT(*) FROM {table}")
+        assert row[0] == 0, f"{table} kept rows after a refused install"
+
+
+@pytest.mark.asyncio
+async def test_a_forced_reseed_does_not_keep_the_old_cast(rig):
+    """A forced reseed is "different world now".
+
+    The previous roster kept its OLD location field, so the narrator was
+    handed someone standing in a room they are not in.
+    """
+    _db, _repo, _graph, store = rig
+    store.state.current_location = "Old Cellar"
+    store.state.turn = 9
+    store.state.npcs["cellar-guard"] = NPCState(
+        id="cellar-guard", name="Cellar Guard", location="Old Cellar",
+    )
+
+    installed = await install_sourcebook(
+        rich_book(), campaign_id="camp", repository=_repo_of(rig),
+        knowledge_graph=_graph_of(rig), world_store=store, force=True,
+    )
+
+    assert installed.scene_seeded
+    assert store.state.current_location == "Copper Finch"
+    assert "cellar-guard" not in store.state.npcs
+    # The authored residents of the NEW scene are there instead.
+    assert {n.name for n in store.state.npcs.values()} == {
+        "Mara Venn", "Toran Vex"
+    }
+    assert all(n.location != "Old Cellar" for n in store.state.npcs.values())
+
+
+def _repo_of(rig):
+    return rig[1]
+
+
+def _graph_of(rig):
+    return rig[2]
+
+
+@pytest.mark.asyncio
 async def test_a_faithful_round_trip_installs(rig):
     """Positive control for the two above: the real round trip passes the
     check, so those failures are the injected loss and not the check itself."""
@@ -538,6 +606,40 @@ async def test_secrets_do_not_reach_the_rebuilt_vector_index(rig):
     # but one that is ALSO placed at a location is — minus the concealment.
     assert "forged-deed" not in vector.node_ids
     assert "warden-ledger" in vector.node_ids
+
+
+@pytest.mark.asyncio
+async def test_an_npc_summary_is_never_published_as_a_description(rig):
+    """`summary` is DM-side for NPCs, exactly as it already is for quests.
+
+    An NPC with no appearance and no role used to fall back to `summary` —
+    the author's shelf for what the character IS, twist included — and it
+    reached the graph node, the narrator's context and the vector index with
+    no withheld record and no warning.
+    """
+    _db, repo, graph, _store = rig
+    book = rich_book()
+    book.npcs.append(NPCSpec(
+        id="quiet-man", name="Quiet Man",
+        summary="CANARYZOLTRIX — he set the fire himself.",
+        current_location_id="copper-finch",
+    ))
+    vector = _RecordingVectorStore()
+
+    installed = await install_sourcebook(
+        book, campaign_id="camp", repository=repo, knowledge_graph=graph,
+        world_store=_store, vector_store=vector,
+    )
+
+    assert graph.has_node("quiet-man")          # still a real entity
+    assert graph.get_entity("quiet-man").properties.get("description", "") == ""
+    assert "CANARYZOLTRIX" not in vector.corpus
+    assert "CANARYZOLTRIX" not in _store.state.to_yaml()
+    # And the author is told, rather than the omission being silent.
+    assert any("quiet-man" in w and "appearance nor role" in w
+               for w in installed.compiled.warnings)
+    # Positive control: a described NPC still carries their description.
+    assert "A sharp-eyed woman" in vector.corpus
 
 
 @pytest.mark.asyncio
