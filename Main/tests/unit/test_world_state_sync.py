@@ -352,3 +352,57 @@ class TestSessionBookkeepingSeams:
         store.add_established_fact("The bridge is out")
         store.add_established_fact("")
         assert world.established_facts == ["The bridge is out"]
+
+    def test_play_written_facts_are_not_marked_canon(self, store, world):
+        """The default is play. Only an install claims authorship."""
+        store.add_established_fact("The bridge is out")
+
+        assert world.canon_facts == []
+
+    def test_an_installed_fact_records_its_authorship(self, store, world):
+        store.add_established_fact("The Ash Gate has been shut", canon=True)
+
+        assert world.established_facts == ["The Ash Gate has been shut"]
+        assert world.canon_facts == ["The Ash Gate has been shut"]
+
+    def test_reinstalling_over_a_played_fact_still_claims_it(
+        self, store, world
+    ):
+        """`install_sourcebook` is documented idempotent and re-runnable.
+
+        The dedupe used to return before anything else ran, so a book
+        installed over a ledger that already held one of its lines — a
+        re-run, or a narrator that happened to restate canon — would leave
+        that line looking play-written and evictable forever.
+        """
+        store.add_established_fact("The Ash Gate has been shut")
+        store.add_established_fact("The Ash Gate has been shut", canon=True)
+
+        assert world.established_facts == ["The Ash Gate has been shut"]
+        assert world.canon_facts == ["The Ash Gate has been shut"]
+
+    def test_installing_the_same_fact_twice_marks_it_once(self, store, world):
+        store.add_established_fact("The Ash Gate has been shut", canon=True)
+        store.add_established_fact("The Ash Gate has been shut", canon=True)
+
+        assert world.canon_facts == ["The Ash Gate has been shut"]
+
+    def test_a_superseded_fact_is_not_resurrected_by_an_install(
+        self, store, world
+    ):
+        """Play overturning canon outranks re-asserting it.
+
+        Same rule the rebuild path already follows for dead NPCs: canon says
+        what the book says, and re-running an install must not undo what the
+        table decided.
+        """
+        world.established_facts = ["The Ash Gate has been shut"]
+        world.retire_fact(
+            "The Ash Gate has been shut",
+            superseded_by="The Ash Gate stands open.",
+        )
+
+        store.add_established_fact("The Ash Gate has been shut", canon=True)
+
+        assert world.established_facts == []
+        assert world.canon_facts == []

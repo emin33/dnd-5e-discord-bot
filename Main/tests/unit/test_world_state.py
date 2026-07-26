@@ -880,6 +880,227 @@ class TestActionAnchoredFacts:
         assert facts == [ws.established_facts[0]]
 
 
+class TestCanonOutranksRecency:
+    """Authored canon must survive a long campaign about its own subject.
+
+    Both budgets were pure recency slices, and canon is installed at turn 0
+    — so the book held the oldest ledger positions and was always evicted
+    first, irreversibly. Six later mentions of a subject were enough to make
+    the book's own line about that subject permanently unreachable, and the
+    evidence the feature shipped with was all turn-1 on a fresh ledger,
+    where recency and correctness happen to agree.
+
+    Every fixture here is therefore DEEP, and every "canon is reached"
+    assertion is paired with the same ledger unmarked — which fails on this
+    code, so the marking is provably the only reason canon is in the output.
+    """
+
+    AUTHORED = "Old Bram the ferryman drowned the night the Ash Gate was shut."
+    GATE = "The Ash Gate has been shut for years; its keystone is cracked."
+
+    @classmethod
+    def _bram(cls, newer: int, *, canon: bool) -> WorldState:
+        """Off stage, named by the action, buried under `newer` play facts."""
+        ws = WorldState(current_location="Copper Finch")
+        bram = NPCState(name="Old Bram", location="Ash Gate")
+        ws.npcs[bram.id] = bram
+        ws.established_facts = [cls.AUTHORED] + [
+            f"Old Bram was mentioned in passing, note {n}."
+            for n in range(newer)
+        ]
+        if canon:
+            ws.canon_facts = [cls.AUTHORED]
+        return ws
+
+    @classmethod
+    def _gate(cls, *, at_the_gate: bool, newer: int, canon: bool) -> WorldState:
+        """The gate's canon, buried under facts about its WARDEN.
+
+        The warden facts name Toran Vex, never the gate — so they are scene
+        facts at the gate and invisible from the tavern. That asymmetry is
+        what made the standpoint decide reachability.
+        """
+        ws = WorldState(
+            current_location="Ash Gate" if at_the_gate else "Copper Finch",
+            connected_locations=["Ash Gate"],
+        )
+        warden = NPCState(name="Toran Vex", location="Ash Gate")
+        ws.npcs[warden.id] = warden
+        ws.established_facts = [cls.GATE] + [
+            f"Toran Vex did something unremarkable, note {n}."
+            for n in range(newer)
+        ]
+        if canon:
+            ws.canon_facts = [cls.GATE]
+        return ws
+
+    @staticmethod
+    def _ask_about_bram(ws: WorldState) -> list[str]:
+        return ws.get_scene_relevant_facts(action_text="I ask about Old Bram.")
+
+    @staticmethod
+    def _ask_about_the_gate(ws: WorldState) -> list[str]:
+        return ws.get_scene_relevant_facts(
+            action_text="I ask what is known about the Ash Gate.",
+        )
+
+    # ── The action budget ────────────────────────────────────────────────
+
+    def test_canon_survives_any_depth_of_play_about_its_subject(self):
+        """The measured ceiling: it used to fall at exactly six."""
+        for newer in (6, 12, 40, 200):
+            ws = self._bram(newer, canon=True)
+
+            assert self.AUTHORED in self._ask_about_bram(ws), (
+                f"authored canon lost under {newer} newer facts"
+            )
+
+    def test_recency_alone_loses_canon_at_six(self):
+        """Positive control: the same ledgers, unmarked, still fail.
+
+        Without this the test above would pass on a build that simply
+        returned more facts, and would keep passing if the marking silently
+        stopped being applied.
+        """
+        assert self.AUTHORED in self._ask_about_bram(self._bram(5, canon=False))
+        for newer in (6, 12, 40, 200):
+            ws = self._bram(newer, canon=False)
+
+            assert self.AUTHORED not in self._ask_about_bram(ws)
+
+    def test_the_newest_play_facts_still_arrive_beside_the_canon(self):
+        """Canon takes a floor, not the budget. Recent events still land."""
+        ws = self._bram(40, canon=True)
+
+        facts = self._ask_about_bram(ws)
+
+        assert self.AUTHORED in facts
+        assert "Old Bram was mentioned in passing, note 39." in facts
+        assert len(facts) == 6
+
+    # ── The scene budget, and the standpoint inversion ───────────────────
+
+    def test_standing_at_a_place_never_hides_that_place_s_canon(self):
+        """Closer must not be worse.
+
+        The scene anchor reaches this fact and the scene budget evicted it;
+        the action budget then excluded it for being scene-reachable, so it
+        was reachable by nothing — while the identical question asked from
+        the tavern reached it.
+        """
+        for newer in (25, 100):
+            at_the_gate = self._gate(
+                at_the_gate=True, newer=newer, canon=True
+            )
+            from_the_tavern = self._gate(
+                at_the_gate=False, newer=newer, canon=True
+            )
+
+            assert self.GATE in self._ask_about_the_gate(at_the_gate), (
+                f"standing at the gate hid its canon under {newer} facts"
+            )
+            assert self.GATE in self._ask_about_the_gate(from_the_tavern)
+
+    def test_the_inversion_is_what_the_marking_removed(self):
+        """Positive control: unmarked, the standpoint still decides.
+
+        Reached from the tavern, unreachable at the gate — the same ledger,
+        the same question, opposite answers.
+        """
+        unreachable = self._gate(at_the_gate=True, newer=25, canon=False)
+        reachable = self._gate(at_the_gate=False, newer=25, canon=False)
+
+        assert self.GATE not in self._ask_about_the_gate(unreachable)
+        assert self.GATE in self._ask_about_the_gate(reachable)
+
+    def test_canon_reaches_the_scene_projection_with_no_action_at_all(self):
+        """Not only the answer to a question — the standing room block too."""
+        ws = self._gate(at_the_gate=True, newer=100, canon=True)
+
+        assert self.GATE in ws.get_scene_relevant_facts()
+
+    # ── The floor is a floor, in both directions ─────────────────────────
+
+    def test_canon_cannot_crowd_out_what_just_happened(self):
+        """A book with more facts about a room than the budget holds.
+
+        Canon-always-wins would leave the narrator describing a room by the
+        book while blind to the fight that just ended in it.
+        """
+        ws = WorldState(current_location="Ash Gate")
+        ws.established_facts = (
+            [f"The Ash Gate authored line {n}." for n in range(60)]
+            + [f"The Ash Gate saw something happen just now, {n}." for n in range(5)]
+        )
+        ws.canon_facts = ws.established_facts[:60]
+
+        facts = ws.get_scene_relevant_facts()
+
+        assert len(facts) == 20
+        assert len([f for f in facts if "just now" in f]) == 5
+
+    def test_canon_takes_the_slack_when_play_underfills(self):
+        """The other direction: an unspent play share flows back to canon."""
+        ws = WorldState(current_location="Ash Gate")
+        ws.established_facts = (
+            [f"The Ash Gate authored line {n}." for n in range(60)]
+            + ["The Ash Gate saw something happen just now."]
+        )
+        ws.canon_facts = ws.established_facts[:60]
+
+        facts = ws.get_scene_relevant_facts()
+
+        assert len(facts) == 20
+        # 19 canon, not the bare floor of 10 — play left the room.
+        assert len([f for f in facts if "authored line" in f]) == 19
+
+    def test_canon_is_taken_in_authored_order_and_holds_still(self):
+        """A stable window, not a jittering one.
+
+        Authored order is the author's own ordering, and it does not move as
+        play appends — the narrator sees the same lines turn after turn
+        instead of a churn that costs prompt cache for nothing.
+        """
+        ws = WorldState(current_location="Ash Gate")
+        ws.established_facts = [
+            f"The Ash Gate authored line {n}." for n in range(60)
+        ]
+        ws.canon_facts = list(ws.established_facts)
+
+        before = ws.get_scene_relevant_facts()
+        for n in range(30):
+            ws.established_facts.append(f"The Ash Gate then saw event {n}.")
+        after = ws.get_scene_relevant_facts()
+
+        assert before == [f"The Ash Gate authored line {n}." for n in range(20)]
+        assert [f for f in after if "authored line" in f] == before[:10]
+
+    # ── Campaigns with no canon marking behave exactly as before ─────────
+
+    def test_an_unmarked_ledger_still_ranks_purely_by_recency(self):
+        """No canon is not a new code path — it is the old behaviour.
+
+        Campaigns seeded before this field existed carry no marks, and a
+        scene the book never touched carries none either.
+        """
+        ws = WorldState(current_location="Copper Finch")
+        ws.established_facts = [
+            f"The Copper Finch detail number {n}." for n in range(40)
+        ]
+
+        facts = ws.get_scene_relevant_facts()
+
+        assert facts == ws.established_facts[-20:]
+
+    def test_marking_a_fact_that_is_not_in_the_ledger_changes_nothing(self):
+        """`canon_facts` is provenance on the ledger, never a second ledger."""
+        ws = WorldState(current_location="Copper Finch")
+        ws.established_facts = ["The Copper Finch keeps a copper lamp burning."]
+        ws.canon_facts = ["The Ash Gate has been shut for years."]
+
+        assert ws.get_scene_relevant_facts() == ws.established_facts
+
+
 class TestPhaseStateMachine:
     """Test phase FSM transitions."""
 

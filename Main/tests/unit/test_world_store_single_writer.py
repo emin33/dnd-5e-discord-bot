@@ -65,6 +65,7 @@ MUTATED_CONTAINERS = {
     "recent_transfers",
     "recent_events",
     "established_facts",
+    "canon_facts",
     "connected_locations",
     "active_effects",
     "global_flags",

@@ -110,18 +110,29 @@ class WorldStateStore:
         elif self._state.phase == "combat":
             self._state.phase = "exploration"
 
-    def add_established_fact(self, fact: str) -> None:
+    def add_established_fact(self, fact: str, *, canon: bool = False) -> None:
         """Record a pinned fact once (the memory→world-state fact sync).
 
         A fact the supersession seam retired stays retired — without this
         check the per-turn sync re-adds it from memory every turn.
+
+        ``canon=True`` records that this fact was INSTALLED from an authored
+        sourcebook rather than written during play. That provenance is what
+        the prompt's fact budgets rank on
+        (:meth:`WorldState.get_scene_relevant_facts`), so the marking is
+        applied even when the fact is already in the ledger — a re-run
+        install must not leave the book's own lines looking play-written.
         """
-        if not fact or fact in self._state.established_facts:
+        if not fact:
             return
         if any(
             entry.get("fact") == fact
             for entry in self._state.superseded_facts
         ):
+            return
+        if canon and fact not in self._state.canon_facts:
+            self._state.canon_facts.append(fact)
+        if fact in self._state.established_facts:
             return
         self._state.established_facts.append(fact)
 
