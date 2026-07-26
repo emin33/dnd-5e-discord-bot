@@ -51,6 +51,7 @@ _GENERIC_NPC_TERMS = {
     "an",
     "apothecary",
     "archer",
+    "barkeep",
     "bartender",
     "beggar",
     "boy",
@@ -91,6 +92,9 @@ _GENERIC_NPC_TERMS = {
     "refugee",
     "scavenger",
     "scribe",
+    "serving",
+    "shopkeeper",
+    "single",
     "sister",
     "soldier",
     "stranger",
@@ -110,9 +114,142 @@ _GENERIC_NPC_TERMS = {
     "younger",
 }
 
+# Deliberately ABSENT, though they are role nouns: "smith", "cook", "baker",
+# "fletcher", "mason". They are also ordinary surnames, and this list is used
+# to REFUSE an anchor — a false entry here silently makes a real character
+# unreachable by name, which no test would notice.
+
+
+def _is_generic_word(word: str) -> bool:
+    """One placeholder token, singular or plural.
+
+    The plural arm matters: the extractor writes "the guards" as readily as
+    "the guard", and matching only the singular let every pluralised
+    placeholder through as though it were a name.
+    """
+    if word.isdigit() or word in _GENERIC_NPC_TERMS:
+        return True
+    for suffix in ("es", "s"):
+        if word.endswith(suffix) and word[: -len(suffix)] in _GENERIC_NPC_TERMS:
+            return True
+    return False
+
 
 def _normalized_words(value: str) -> list[str]:
     return re.findall(r"[a-z0-9]+", (value or "").casefold())
+
+
+def normalized_identity_text(value: str) -> str:
+    """Lowercase alphanumeric tokens, single-spaced. The matching surface."""
+    return " ".join(_normalized_words(value))
+
+
+def padded_identity_text(value: str) -> str:
+    """:func:`normalized_identity_text` fenced by sentinel spaces.
+
+    Lets ``f" {anchor} " in padded`` stand in for a word-boundary match.
+    Normalize once, test many anchors against the result.
+    """
+    return f" {normalized_identity_text(value)} "
+
+
+def entity_named_in_text(text: str, names: Iterable[str]) -> list[str]:
+    """An entity's identity-bearing names, IF *text* names it outright.
+
+    One rule for "did the player raise this subject, and under which names
+    can prose about it be recognized?" — so callers that resolve entities
+    differently still agree on the answer.
+
+    Two conditions, both load-bearing. The name must land on token
+    boundaries: substring matching turns "brambles" into Bram and "I pry
+    the grate" into Ron. And the name that lands must be identity-bearing:
+    a placeholder promoted to an alias ("the innkeeper") recurs in most
+    tavern turns, so anchoring on it would make one off-screen NPC salient
+    forever. Aliases still come back on a distinctive hit — the text says
+    "the black arch", the ledger says "Ash Gate".
+    """
+    return names_addressed_in_text(text, [names])[0]
+
+
+def _distinctive(names: Iterable[str]) -> list[str]:
+    """An entity's identity-bearing names.
+
+    A generic label neither addresses the entity nor anchors prose about it:
+    naming "the dwarf" must not raise Grimjaw, because the next sentence
+    about any dwarf would then read as being about him. Which labels count
+    as generic is `is_generic_npc_label`'s judgement, and it is deliberately
+    a narrow one — see the note on `_GENERIC_NPC_TERMS` about what is left
+    out on purpose.
+    """
+    return [
+        name for name in names
+        if name and normalized_identity_text(name)
+        and not is_generic_npc_label(name)
+    ]
+
+
+def _token_spans(haystack: list[str], needle: list[str]) -> list[tuple[int, int]]:
+    """Every [start, end) run where *needle*'s tokens appear in *haystack*."""
+    width = len(needle)
+    if not width or width > len(haystack):
+        return []
+    return [
+        (start, start + width)
+        for start in range(len(haystack) - width + 1)
+        if haystack[start:start + width] == needle
+    ]
+
+
+def names_addressed_in_text(
+    text: str, entities: Iterable[Iterable[str]]
+) -> list[list[str]]:
+    """Which of several entities the text names, longest name winning its span.
+
+    Resolving entities TOGETHER is what makes this safe. Token boundaries are
+    not entity boundaries: a one-word name is always a token of a longer name
+    that contains it, so asking each entity in isolation let "I ask Mara Venn
+    what she saw" anchor an unrelated NPC called Mara — and put HER canon in
+    the narrator's prompt. This codebase makes that common rather than exotic,
+    because naming-promotion routinely leaves bare first names in aliases.
+
+    So the longest name claims its tokens first, and a shorter one survives
+    only where it occurs OUTSIDE every longer claim. "I ask Mara Venn about
+    Mara" still names both; "I ask Mara Venn what she saw" names only her.
+
+    Returns one list per entity, in the order given: all of that entity's
+    identity-bearing names when it was named, empty when it was not.
+    """
+    per_entity = [_distinctive(names) for names in entities]
+    tokens = _normalized_words(text)
+    if not tokens:
+        return [[] for _ in per_entity]
+
+    candidates: list[tuple[int, int, str, list[tuple[int, int]]]] = []
+    for index, names in enumerate(per_entity):
+        for name in names:
+            needle = _normalized_words(name)
+            spans = _token_spans(tokens, needle)
+            if spans:
+                candidates.append((len(needle), index, name, spans))
+    # Longest first; ties broken on the name so the result never depends on
+    # dict or set ordering.
+    candidates.sort(key=lambda item: (-item[0], item[2]))
+
+    claimed = [False] * len(tokens)
+    named: set[int] = set()
+    for _width, index, _name, spans in candidates:
+        free = next(
+            (span for span in spans if not any(claimed[span[0]:span[1]])), None
+        )
+        if free is None:
+            continue
+        for position in range(free[0], free[1]):
+            claimed[position] = True
+        named.add(index)
+    return [
+        names if index in named else []
+        for index, names in enumerate(per_entity)
+    ]
 
 
 def identity_keys(value: str) -> frozenset[str]:
@@ -146,7 +283,7 @@ def is_generic_npc_label(value: str) -> bool:
         return False
     # Bare numerals are spawn-numbering artifacts ("acolyte 1", "guard 2"),
     # not identity-bearing tokens.
-    if all(word in _GENERIC_NPC_TERMS or word.isdigit() for word in words):
+    if all(_is_generic_word(word) for word in words):
         return True
     # A generic role noun plus a prepositional descriptor ("man in apron")
     # is still an unnamed placeholder: the descriptor names clothing or
