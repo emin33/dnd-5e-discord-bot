@@ -317,6 +317,12 @@ def compile_sourcebook(
                   f"relationship {relationship.id} (reverse)")
 
     for quest in book.quests:
+        # A withheld quest has no node, so every edge touching it would report
+        # itself as a dangling reference — an authoring defect the author did
+        # not commit. Its absence is already in withheld_notes; `warnings` is
+        # reserved for mistakes worth acting on.
+        if quest.id not in active_quests:
+            continue
         for giver_id in quest.giver_ids:
             _edge(giver_id, quest.id, RelationType.QUEST_GIVER,
                   f"quest {quest.id} giver")
