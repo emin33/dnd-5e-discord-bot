@@ -1,0 +1,781 @@
+{
+  "profile": "deepseek_v4_flash_qwen9b",
+  "scenario": "lore_recall",
+  "session_id": "bccbdec2-cac0-4611-bc48-1cdf1a5dc10a",
+  "turns": 7,
+  "elapsed_seconds": 95.87,
+  "usage": {
+    "calls": 43,
+    "prompt_tokens": 168708,
+    "completion_tokens": 5157,
+    "cache_read_tokens": 11904,
+    "cost_usd": 0.016109,
+    "cost_complete": true
+  },
+  "proposed_total": 17,
+  "executed_total": 17,
+  "rejected_total": 0,
+  "effect_reliability": 1.0,
+  "effect_type_counts": {
+    "ref_entity": 6,
+    "change_location": 3,
+    "spawn_object": 1
+  },
+  "expected_turns_passed": 2,
+  "expected_turns_total": 2,
+  "tool_followup_turns": [
+    2,
+    3,
+    4,
+    5,
+    6,
+    7
+  ],
+  "tool_repair_turns": [],
+  "structural_error_turns": [],
+  "unmet_obligation_turns": [],
+  "resolved_outcome_failed_closed_turns": [],
+  "continuity_repair_turns": [],
+  "continuity_failures": [],
+  "dead_state_reintroductions": [],
+  "errors": [],
+  "player_state_initial": {},
+  "player_state_final": {},
+  "player_state_agreement": {},
+  "lore_fidelity": {
+    "no_withheld_canon_leaked": {
+      "passed": true,
+      "detail": "canaries clean: ['Marrow Cist', 'Vesk Harrow']"
+    },
+    "book_canon_reached_the_prompt": {
+      "passed": true,
+      "detail": "reached={'brams_boat': True, 'torans_guild': True}"
+    },
+    "book_canon_used_in_prose": {
+      "passed": true,
+      "detail": "used={'brams_boat': True, 'torans_guild': True}"
+    },
+    "authored_residents_on_stage_after_return": {
+      "passed": false,
+      "detail": "expected=['mara venn', 'toran vex'] present=[]"
+    },
+    "authored_dead_never_on_stage": {
+      "passed": true,
+      "detail": "roster=[]"
+    }
+  },
+  "withheld_canon": [
+    "Vesk Harrow sold passage through the Ash Gate and filed the lock to hide it.",
+    "The gate's key is buried in the Marrow Cist beneath the arch."
+  ],
+  "gates": {
+    "all_turns_returned": true,
+    "effect_reliability_at_least_95pct": true,
+    "effect_accounting_balanced": true,
+    "at_least_six_effect_families": true,
+    "expected_turn_coverage_at_least_80pct": true,
+    "no_unmet_runtime_effect_obligations": true,
+    "no_resolved_outcome_failed_closed": true,
+    "no_final_dead_npc_contradiction": true,
+    "no_dead_npc_state_reintroduction": true,
+    "no_harness_errors": true,
+    "ended_at_expected_location": true,
+    "no_withheld_canon_leaked": true,
+    "book_canon_reached_the_prompt": true,
+    "book_canon_used_in_prose": true,
+    "authored_residents_on_stage_after_return": false,
+    "authored_dead_never_on_stage": true
+  },
+  "turn_rows": [
+    {
+      "turn": 1,
+      "action": "I ask Mara Venn what she knows about the Ash Gate and why it is closed.",
+      "elapsed_seconds": 16.65,
+      "triage_action_type": "skill_check",
+      "triage_currency_spent": {},
+      "triage_resources_consumed": [],
+      "executed_types": [
+        "ref_entity"
+      ],
+      "proposed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "mara-venn"
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "toran-vex"
+        }
+      ],
+      "executed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "mara-venn",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "mara-venn",
+            "alias_used": null,
+            "found_in_scene": true,
+            "found_in_world": true,
+            "world_reference_type": "npc"
+          }
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "toran-vex",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "toran-vex",
+            "alias_used": null,
+            "found_in_scene": true,
+            "found_in_world": true,
+            "world_reference_type": "npc"
+          }
+        }
+      ],
+      "rejected": [],
+      "expected": [],
+      "expected_ok": true,
+      "narration_diagnostics": {
+        "streaming_buffered": false,
+        "continuity_violations": 0,
+        "continuity_repair_attempted": false,
+        "continuity_repair_succeeded": false,
+        "continuity_failed_closed": false,
+        "primary_effects": 2,
+        "primary_structural_errors": 0,
+        "primary_structural_error_details": [],
+        "tool_followup_attempted": false,
+        "tool_followup_for_mutation": false,
+        "tool_followup_skipped_memory_only": false,
+        "tool_repair_attempted": false,
+        "tool_followup_structural_errors": 0,
+        "tool_followup_structural_error_details": [],
+        "tool_repair_structural_errors": 0,
+        "tool_repair_structural_error_details": [],
+        "tool_invalid_effects_dropped": 0,
+        "tool_policy_suppressed_effects": 0,
+        "tool_unknown_roster_refs_dropped": 0,
+        "tool_ref_alias_mismatches_removed": 0,
+        "tool_repair_failed_closed": false,
+        "tool_ref_deterministic_recoveries": [],
+        "tool_followup_refs_superseded": 0,
+        "tool_duplicate_creations_collapsed": 0,
+        "tool_followup_effects": 0,
+        "effect_obligations": [],
+        "effect_obligation_reasons": [],
+        "effect_obligation_missing_initial": [],
+        "effect_obligation_missing_final": [],
+        "effect_obligation_repair_attempted": false,
+        "effect_obligation_repair_succeeded": false,
+        "effect_obligation_terminal_repair_attempted": false,
+        "effect_obligation_terminal_repair_succeeded": false,
+        "effect_obligation_terminal_structural_errors": 0,
+        "resolved_outcome_contradictions": [],
+        "resolved_outcome_repair_attempted": false,
+        "resolved_outcome_repair_succeeded": false,
+        "resolved_outcome_failed_closed": false,
+        "repair_meta_preamble_stripped": false,
+        "final_effects": 2
+      },
+      "narrative": "The copper lamps gutter as you slide onto the bench across from Mara Venn. She's been watching you since you walked in \u2014 her sharp eyes miss little. She sets down her clay cup and folds her hands on the scarred tabletop.\n\n**\"The Ash Gate.\"** She says the name like it leaves a taste. **\"It's a crack in the world, that gate. Old Bram was the only one who knew how to work the lock \u2014 the real lock, not the iron one Toran fusses over. Bram carried people through for twenty years. Then, three nights ago, he didn't come back.\"**\n\nShe pauses, letting a pair of patrons shuffle past before leaning in.\n\n**\"They found him at dawn. Face-down on the landing, his own boat hook buried in his chest. The Grey Hind was still tied up, half-full of river-mist that never cleared. The town council sealed the gate that same morning. Too many questions, no answers, and a corpse that told no tales.\"**\n\nMara's eyes hold yours. **\"That's the official story. The one the Kestrel Guild signed off on. But I've been poking around since before the body went cold, and I'll tell you this \u2014 there's a reason Toran Vex is still in this tavern instead of at his post. He's the one who kept the gate's lock for years. And he's been sweating through his collar ever since Bram died.\"**\n\nShe nods subtly toward the bar, where the ink-stained clerk nurses a half-empty glass and doesn't meet anyone's gaze.\n\n**\"So that's what I know, ranger. The gate's closed because someone killed the only man who could open it. The question is \u2014 who wanted it shut that badly?\"**\n\nShe tilts her head, waiting for your next move."
+    },
+    {
+      "turn": 2,
+      "action": "I ask Mara Venn who maintained the gate's lock before it was filed.",
+      "elapsed_seconds": 11.482,
+      "triage_action_type": "skill_check",
+      "triage_currency_spent": {},
+      "triage_resources_consumed": [],
+      "executed_types": [
+        "ref_entity"
+      ],
+      "proposed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "mara-venn"
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "toran-vex"
+        }
+      ],
+      "executed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "mara-venn",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "mara-venn",
+            "alias_used": null,
+            "found_in_scene": true,
+            "found_in_world": true,
+            "world_reference_type": "npc"
+          }
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "toran-vex",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "toran-vex",
+            "alias_used": null,
+            "found_in_scene": true,
+            "found_in_world": true,
+            "world_reference_type": "npc"
+          }
+        }
+      ],
+      "rejected": [],
+      "expected": [],
+      "expected_ok": true,
+      "narration_diagnostics": {
+        "streaming_buffered": false,
+        "continuity_violations": 0,
+        "continuity_repair_attempted": false,
+        "continuity_repair_succeeded": false,
+        "continuity_failed_closed": false,
+        "primary_effects": 0,
+        "primary_structural_errors": 0,
+        "primary_structural_error_details": [],
+        "tool_followup_attempted": true,
+        "tool_followup_for_mutation": false,
+        "tool_followup_skipped_memory_only": false,
+        "tool_repair_attempted": false,
+        "tool_followup_structural_errors": 0,
+        "tool_followup_structural_error_details": [],
+        "tool_repair_structural_errors": 0,
+        "tool_repair_structural_error_details": [],
+        "tool_invalid_effects_dropped": 0,
+        "tool_policy_suppressed_effects": 0,
+        "tool_unknown_roster_refs_dropped": 0,
+        "tool_ref_alias_mismatches_removed": 0,
+        "tool_repair_failed_closed": false,
+        "tool_ref_deterministic_recoveries": [],
+        "tool_followup_refs_superseded": 0,
+        "tool_duplicate_creations_collapsed": 0,
+        "tool_followup_effects": 2,
+        "effect_obligations": [],
+        "effect_obligation_reasons": [],
+        "effect_obligation_missing_initial": [],
+        "effect_obligation_missing_final": [],
+        "effect_obligation_repair_attempted": false,
+        "effect_obligation_repair_succeeded": false,
+        "effect_obligation_terminal_repair_attempted": false,
+        "effect_obligation_terminal_repair_succeeded": false,
+        "effect_obligation_terminal_structural_errors": 0,
+        "resolved_outcome_contradictions": [],
+        "resolved_outcome_repair_attempted": false,
+        "resolved_outcome_repair_succeeded": false,
+        "resolved_outcome_failed_closed": false,
+        "repair_meta_preamble_stripped": false,
+        "final_effects": 2
+      },
+      "narrative": "Mara Venn's lips press into a thin line. She glances toward the bar \u2014 toward Toran Vex \u2014 then back at you.\n\n**\"Toran Vex. Lockwright of the Kestrel Guild.\"** She keeps her voice low. **\"He's been the one oiling the Ash Gate's mechanisms and turning its keys for... must be five years now. Sworn to the Guild, bound by their oaths. He knows every tooth of that lock better than anyone alive.\"**\n\nShe watches Toran take a shaky sip of his drink.\n\n**\"Which is why it's so damn interesting that he's sitting here, drinking cheap ale, instead of standing at his post while the council debates what to do about the gate.\"**\n\nMara tilts her head, studying you. **\"You want my read? He knows something he's not saying. Whether it's about the lock, or about Bram, or about what came through that gate the night Bram died... that's the part he's not telling.\"**\n\nShe lets the silence hang, then adds: **\"He might talk to you. He might not. But if you squeeze him, squeeze gently \u2014 he's the skittish type.\"**..."
+    },
+    {
+      "turn": 3,
+      "action": "I press Mara Venn: who actually sold passage through the gate, by name?",
+      "elapsed_seconds": 12.125,
+      "triage_action_type": "skill_check",
+      "triage_currency_spent": {},
+      "triage_resources_consumed": [],
+      "executed_types": [
+        "ref_entity"
+      ],
+      "proposed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "mara-venn"
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "toran-vex"
+        }
+      ],
+      "executed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "mara-venn",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "mara-venn",
+            "alias_used": null,
+            "found_in_scene": true,
+            "found_in_world": true,
+            "world_reference_type": "npc"
+          }
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "toran-vex",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "toran-vex",
+            "alias_used": null,
+            "found_in_scene": true,
+            "found_in_world": true,
+            "world_reference_type": "npc"
+          }
+        }
+      ],
+      "rejected": [],
+      "expected": [],
+      "expected_ok": true,
+      "narration_diagnostics": {
+        "streaming_buffered": false,
+        "continuity_violations": 0,
+        "continuity_repair_attempted": false,
+        "continuity_repair_succeeded": false,
+        "continuity_failed_closed": false,
+        "primary_effects": 0,
+        "primary_structural_errors": 0,
+        "primary_structural_error_details": [],
+        "tool_followup_attempted": true,
+        "tool_followup_for_mutation": false,
+        "tool_followup_skipped_memory_only": false,
+        "tool_repair_attempted": false,
+        "tool_followup_structural_errors": 0,
+        "tool_followup_structural_error_details": [],
+        "tool_repair_structural_errors": 0,
+        "tool_repair_structural_error_details": [],
+        "tool_invalid_effects_dropped": 0,
+        "tool_policy_suppressed_effects": 0,
+        "tool_unknown_roster_refs_dropped": 0,
+        "tool_ref_alias_mismatches_removed": 0,
+        "tool_repair_failed_closed": false,
+        "tool_ref_deterministic_recoveries": [],
+        "tool_followup_refs_superseded": 0,
+        "tool_duplicate_creations_collapsed": 0,
+        "tool_followup_effects": 2,
+        "effect_obligations": [],
+        "effect_obligation_reasons": [],
+        "effect_obligation_missing_initial": [],
+        "effect_obligation_missing_final": [],
+        "effect_obligation_repair_attempted": false,
+        "effect_obligation_repair_succeeded": false,
+        "effect_obligation_terminal_repair_attempted": false,
+        "effect_obligation_terminal_repair_succeeded": false,
+        "effect_obligation_terminal_structural_errors": 0,
+        "resolved_outcome_contradictions": [],
+        "resolved_outcome_repair_attempted": false,
+        "resolved_outcome_repair_succeeded": false,
+        "resolved_outcome_failed_closed": false,
+        "repair_meta_preamble_stripped": false,
+        "final_effects": 2
+      },
+      "narrative": "Mara Venn's eyes flicker \u2014 a crack in her composure. She opens her mouth, then stops. Her fingers drum once on the table.\n\n**\"Old Bram.\"** She says it flatly, but something in her voice doesn't land right. She's repeating what everyone knows, not telling you what you asked. **\"Bram sold passage. Collected the toll, turned the lock, worked the boat. Everyone in town knows that.\"**\n\nShe holds your gaze a beat longer than comfortable, then looks down at her cup. Picks at a chip in the clay rim.\n\n**\"That's who. Was.\"**\n\nThe silence stretches. She doesn't elaborate. Doesn't offer the name of a Guild handler, a partner, a successor, a second set of hands. Just Bram. Dead Bram. The convenient answer.\n\nA log shifts in the hearth. Toran Vex's glass clinks against the bar as he sets it down too hard.\n\nMara Venn hasn't looked back up at you."
+    },
+    {
+      "turn": 4,
+      "action": "I leave the Copper Finch and travel to the Ash Gate.",
+      "elapsed_seconds": 15.39,
+      "triage_action_type": "movement",
+      "triage_currency_spent": {},
+      "triage_resources_consumed": [],
+      "executed_types": [
+        "change_location",
+        "spawn_object"
+      ],
+      "proposed": [
+        {
+          "type": "change_location"
+        },
+        {
+          "type": "spawn_object",
+          "item": "ornate padlock"
+        },
+        {
+          "type": "spawn_object",
+          "item": "Grey Hind"
+        }
+      ],
+      "executed": [
+        {
+          "type": "change_location",
+          "was_duplicate": false,
+          "details": {
+            "location_name": "Ash Gate",
+            "location_description": "A cracked black arch of stone standing alone against grey sky, its open throat filled with unmoving mist. A weathered ferry boat rests at a small wooden landing nearby.",
+            "narrator_authoritative": true
+          }
+        },
+        {
+          "type": "spawn_object",
+          "item": "ornate padlock",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "c2fbcb91-8bd3-4474-a5c2-a7ce9cdd019d",
+            "object_name": "ornate padlock"
+          }
+        },
+        {
+          "type": "spawn_object",
+          "item": "Grey Hind",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "a46e9a85-1edf-4c8e-b01f-9fc5f12ede56",
+            "object_name": "Grey Hind"
+          }
+        }
+      ],
+      "rejected": [],
+      "expected": [
+        "change_location"
+      ],
+      "expected_ok": true,
+      "narration_diagnostics": {
+        "streaming_buffered": false,
+        "continuity_violations": 0,
+        "continuity_repair_attempted": false,
+        "continuity_repair_succeeded": false,
+        "continuity_failed_closed": false,
+        "primary_effects": 0,
+        "primary_structural_errors": 0,
+        "primary_structural_error_details": [],
+        "tool_followup_attempted": true,
+        "tool_followup_for_mutation": true,
+        "tool_followup_skipped_memory_only": false,
+        "tool_repair_attempted": false,
+        "tool_followup_structural_errors": 0,
+        "tool_followup_structural_error_details": [],
+        "tool_repair_structural_errors": 0,
+        "tool_repair_structural_error_details": [],
+        "tool_invalid_effects_dropped": 0,
+        "tool_policy_suppressed_effects": 0,
+        "tool_unknown_roster_refs_dropped": 0,
+        "tool_ref_alias_mismatches_removed": 0,
+        "tool_repair_failed_closed": false,
+        "tool_ref_deterministic_recoveries": [],
+        "tool_followup_refs_superseded": 0,
+        "tool_duplicate_creations_collapsed": 0,
+        "tool_followup_effects": 3,
+        "effect_obligations": [],
+        "effect_obligation_reasons": [],
+        "effect_obligation_missing_initial": [],
+        "effect_obligation_missing_final": [],
+        "effect_obligation_repair_attempted": false,
+        "effect_obligation_repair_succeeded": false,
+        "effect_obligation_terminal_repair_attempted": false,
+        "effect_obligation_terminal_repair_succeeded": false,
+        "effect_obligation_terminal_structural_errors": 0,
+        "resolved_outcome_contradictions": [],
+        "resolved_outcome_repair_attempted": false,
+        "resolved_outcome_repair_succeeded": false,
+        "resolved_outcome_failed_closed": false,
+        "repair_meta_preamble_stripped": false,
+        "final_effects": 3
+      },
+      "narrative": "The tavern door swings shut behind you, cutting off the murmur of low voices and the clink of glasses. The morning air hits you \u2014 damp and cold, carrying the iron scent of wet stone and the distant whisper of moving water.\n\nThe street is narrow here, cobbles slick with last night's rain. The Copper Finch squats at the edge of town, and beyond it the buildings thin to scattered cottages with shuttered windows. A single track of packed earth leads north, curving between gnarled alders whose roots clutch at the mud like fingers.\n\nYou follow it for perhaps a quarter mile. The trees fall away. The ground opens onto a flat expanse of grey gravel, and there \u2014 standing alone against a pale sky \u2014 is the Ash Gate.\n\nIt's not what you expected. No grand archway, no fortified portal. Just a cracked black arch of stone, maybe twelve feet high and eight wide, set into a low ridge of rock that rises from the gravel like a whale's back. The stone is dark with moisture, veined with pale lichen. Beyond the arch, through its open throat, you can see only a wall of grey mist that does not stir or thin \u2014 it hangs there, dense as wool, swallowing all sight of what lies beyond.\n\nThe Grey Hind sits at a small wooden landing to the left of the arch, half-drawn up onto the gravel. A flat-bottomed ferry boat, weathered and dark, its hull beaded with moisture. A coil of rope lies loose on the deck. No body. No blood. Just the boat, waiting.\n\nThe ground around the gate is churned with boot prints \u2014 some fresh, some days old, layered over each other in the gravel. A length of rusted chain is looped through the iron ring on the left side of the arch, padlocked to a matching ring on the right. The lock is heavy and ornate, its keyhole crusted with verdigris.\n\nThe mist beyond the arch does not move. The silence here is deeper than it should be \u2014 the wind doesn't carry, the gravel doesn't crunch under your own feet the way it ought to.\n\nThe Ash Gate watches. Waits."
+    },
+    {
+      "turn": 5,
+      "action": "At the Ash Gate I call out for Old Bram and listen for an answer.",
+      "elapsed_seconds": 10.497,
+      "triage_action_type": "social",
+      "triage_currency_spent": {},
+      "triage_resources_consumed": [],
+      "executed_types": [
+        "change_location",
+        "ref_entity"
+      ],
+      "proposed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "ornate-padlock"
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "grey-hind"
+        },
+        {
+          "type": "change_location"
+        }
+      ],
+      "executed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "ornate-padlock",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "ornate-padlock",
+            "alias_used": null,
+            "found_in_scene": true,
+            "found_in_world": true,
+            "world_reference_type": "item"
+          }
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "grey-hind",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "grey-hind",
+            "alias_used": null,
+            "found_in_scene": true,
+            "found_in_world": true,
+            "world_reference_type": "item"
+          }
+        },
+        {
+          "type": "change_location",
+          "was_duplicate": false,
+          "details": {
+            "location_name": "Ash Gate",
+            "location_description": "A cracked black arch of stone standing alone against grey sky, its open throat filled with unmoving mist. A weathered ferry boat rests at a small wooden landing nearby.",
+            "narrator_authoritative": true
+          }
+        }
+      ],
+      "rejected": [],
+      "expected": [],
+      "expected_ok": true,
+      "narration_diagnostics": {
+        "streaming_buffered": false,
+        "continuity_violations": 0,
+        "continuity_repair_attempted": false,
+        "continuity_repair_succeeded": false,
+        "continuity_failed_closed": false,
+        "primary_effects": 0,
+        "primary_structural_errors": 0,
+        "primary_structural_error_details": [],
+        "tool_followup_attempted": true,
+        "tool_followup_for_mutation": false,
+        "tool_followup_skipped_memory_only": false,
+        "tool_repair_attempted": false,
+        "tool_followup_structural_errors": 0,
+        "tool_followup_structural_error_details": [],
+        "tool_repair_structural_errors": 0,
+        "tool_repair_structural_error_details": [],
+        "tool_invalid_effects_dropped": 0,
+        "tool_policy_suppressed_effects": 0,
+        "tool_unknown_roster_refs_dropped": 0,
+        "tool_ref_alias_mismatches_removed": 0,
+        "tool_repair_failed_closed": false,
+        "tool_ref_deterministic_recoveries": [],
+        "tool_followup_refs_superseded": 0,
+        "tool_duplicate_creations_collapsed": 0,
+        "tool_followup_effects": 3,
+        "effect_obligations": [],
+        "effect_obligation_reasons": [],
+        "effect_obligation_missing_initial": [],
+        "effect_obligation_missing_final": [],
+        "effect_obligation_repair_attempted": false,
+        "effect_obligation_repair_succeeded": false,
+        "effect_obligation_terminal_repair_attempted": false,
+        "effect_obligation_terminal_repair_succeeded": false,
+        "effect_obligation_terminal_structural_errors": 0,
+        "resolved_outcome_contradictions": [],
+        "resolved_outcome_repair_attempted": false,
+        "resolved_outcome_repair_succeeded": false,
+        "resolved_outcome_failed_closed": false,
+        "repair_meta_preamble_stripped": false,
+        "final_effects": 3
+      },
+      "narrative": "Your voice carries across the gravel flat, swallowed by the heavy air.\n\n**\"Old Bram!\"**\n\nThe name echoes once off the ridge stone, then dies. No answer. The mist beyond the gate does not ripple. The Grey Hind's mooring rope creaks as the boat shifts against the landing.\n\nSilence settles back in \u2014 thicker than before, if anything. The kind of silence that has weight, that presses against the ears. Somewhere behind you, a bird calls once and falls quiet.\n\nThe padlock on the gate's iron rings glints dully, verdigris crusting its seams like old scabs. The chain it secures is rusted, but intact \u2014 no sign of forced entry, no dropped tools, no evidence anyone has touched it in days.\n\nThe Grey Hind's hull ticks softly as moisture expands in the wood. A single footprint \u2014 half-washed by rain \u2014 mars the gravel near the boat's bow, but it's too smudged to read.\n\nNothing stirs. Nothing answers.\n\nThe gate waits, patient as a toothless mouth."
+    },
+    {
+      "turn": 6,
+      "action": "I search the ground beneath the arch and ask what is hidden here.",
+      "elapsed_seconds": 13.338,
+      "triage_action_type": "skill_check",
+      "triage_currency_spent": {},
+      "triage_resources_consumed": [],
+      "executed_types": [
+        "ref_entity"
+      ],
+      "proposed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "ornate-padlock"
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "grey-hind"
+        }
+      ],
+      "executed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "ornate-padlock",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "ornate-padlock",
+            "alias_used": null,
+            "found_in_scene": true,
+            "found_in_world": true,
+            "world_reference_type": "item"
+          }
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "grey-hind",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "grey-hind",
+            "alias_used": null,
+            "found_in_scene": true,
+            "found_in_world": true,
+            "world_reference_type": "item"
+          }
+        }
+      ],
+      "rejected": [],
+      "expected": [],
+      "expected_ok": true,
+      "narration_diagnostics": {
+        "streaming_buffered": false,
+        "continuity_violations": 0,
+        "continuity_repair_attempted": false,
+        "continuity_repair_succeeded": false,
+        "continuity_failed_closed": false,
+        "primary_effects": 0,
+        "primary_structural_errors": 0,
+        "primary_structural_error_details": [],
+        "tool_followup_attempted": true,
+        "tool_followup_for_mutation": false,
+        "tool_followup_skipped_memory_only": false,
+        "tool_repair_attempted": false,
+        "tool_followup_structural_errors": 0,
+        "tool_followup_structural_error_details": [],
+        "tool_repair_structural_errors": 0,
+        "tool_repair_structural_error_details": [],
+        "tool_invalid_effects_dropped": 0,
+        "tool_policy_suppressed_effects": 0,
+        "tool_unknown_roster_refs_dropped": 0,
+        "tool_ref_alias_mismatches_removed": 0,
+        "tool_repair_failed_closed": false,
+        "tool_ref_deterministic_recoveries": [],
+        "tool_followup_refs_superseded": 0,
+        "tool_duplicate_creations_collapsed": 0,
+        "tool_followup_effects": 2,
+        "effect_obligations": [],
+        "effect_obligation_reasons": [],
+        "effect_obligation_missing_initial": [],
+        "effect_obligation_missing_final": [],
+        "effect_obligation_repair_attempted": false,
+        "effect_obligation_repair_succeeded": false,
+        "effect_obligation_terminal_repair_attempted": false,
+        "effect_obligation_terminal_repair_succeeded": false,
+        "effect_obligation_terminal_structural_errors": 0,
+        "resolved_outcome_contradictions": [],
+        "resolved_outcome_repair_attempted": false,
+        "resolved_outcome_repair_succeeded": false,
+        "resolved_outcome_failed_closed": false,
+        "repair_meta_preamble_stripped": false,
+        "final_effects": 2
+      },
+      "narrative": "You drop to a crouch at the threshold of the arch, scanning the gravel inch by inch. Your fingers brush the damp stones as you trace the line where the ridge meets the packed earth, looking for anything \u2014 a scrap of cloth, a dropped coin, a scuff mark that tells a story.\n\nNothing.\n\nThe gravel lies undisturbed, each stone settled in its bed as if combed into place by wind and rain. The moss that clings to the base of the arch grows in an even carpet \u2014 no broken patches, no crushed stems, no sign that anyone has knelt or stood or struggled here in weeks. The dark soil beneath is uniformly damp, unmarked by any impression deeper than a passing raindrop.\n\nYou sit back on your heels. The gate looms above you, silent. Whatever story this place holds, the ground isn't giving it up.\n\nThe padlock clinks softly as the chain shifts in a breeze you can't feel on your skin."
+    },
+    {
+      "turn": 7,
+      "action": "I walk back to the Copper Finch and take a seat at my old table.",
+      "elapsed_seconds": 16.376,
+      "triage_action_type": "movement",
+      "triage_currency_spent": {},
+      "triage_resources_consumed": [],
+      "executed_types": [
+        "change_location",
+        "ref_entity"
+      ],
+      "proposed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "copper-finch"
+        },
+        {
+          "type": "change_location"
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "94103d1b-b65f-48d3-b134-2a12db6e5d94",
+          "ref_alias": "Barman"
+        }
+      ],
+      "executed": [
+        {
+          "type": "ref_entity",
+          "ref_id": "copper-finch",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "copper-finch",
+            "alias_used": null,
+            "found_in_scene": false,
+            "found_in_world": true,
+            "world_reference_type": "location"
+          }
+        },
+        {
+          "type": "change_location",
+          "was_duplicate": false,
+          "details": {
+            "location_name": "Copper Finch",
+            "location_description": "A rain-dark tavern of copper lamps, scarred tables, and shuttered windows, with a hearth at one end and a bar running along the wall.",
+            "narrator_authoritative": true
+          }
+        },
+        {
+          "type": "ref_entity",
+          "ref_id": "94103d1b-b65f-48d3-b134-2a12db6e5d94",
+          "ref_alias": "Barman",
+          "was_duplicate": false,
+          "details": {
+            "entity_id": "94103d1b-b65f-48d3-b134-2a12db6e5d94",
+            "alias_used": "Barman",
+            "found_in_scene": false,
+            "found_in_world": true,
+            "world_reference_type": "npc"
+          }
+        }
+      ],
+      "rejected": [],
+      "expected": [
+        "change_location"
+      ],
+      "expected_ok": true,
+      "narration_diagnostics": {
+        "streaming_buffered": false,
+        "continuity_violations": 0,
+        "continuity_repair_attempted": false,
+        "continuity_repair_succeeded": false,
+        "continuity_failed_closed": false,
+        "primary_effects": 0,
+        "primary_structural_errors": 0,
+        "primary_structural_error_details": [],
+        "tool_followup_attempted": true,
+        "tool_followup_for_mutation": true,
+        "tool_followup_skipped_memory_only": false,
+        "tool_repair_attempted": false,
+        "tool_followup_structural_errors": 0,
+        "tool_followup_structural_error_details": [],
+        "tool_repair_structural_errors": 0,
+        "tool_repair_structural_error_details": [],
+        "tool_invalid_effects_dropped": 0,
+        "tool_policy_suppressed_effects": 0,
+        "tool_unknown_roster_refs_dropped": 0,
+        "tool_ref_alias_mismatches_removed": 0,
+        "tool_repair_failed_closed": false,
+        "tool_ref_deterministic_recoveries": [],
+        "tool_followup_refs_superseded": 0,
+        "tool_duplicate_creations_collapsed": 0,
+        "tool_followup_effects": 2,
+        "effect_obligations": [],
+        "effect_obligation_reasons": [],
+        "effect_obligation_missing_initial": [],
+        "effect_obligation_missing_final": [],
+        "effect_obligation_repair_attempted": false,
+        "effect_obligation_repair_succeeded": false,
+        "effect_obligation_terminal_repair_attempted": false,
+        "effect_obligation_terminal_repair_succeeded": false,
+        "effect_obligation_terminal_structural_errors": 0,
+        "resolved_outcome_contradictions": [],
+        "resolved_outcome_repair_attempted": false,
+        "resolved_outcome_repair_succeeded": false,
+        "resolved_outcome_failed_closed": false,
+        "repair_meta_preamble_stripped": false,
+        "final_effects": 2
+      },
+      "narrative": "The walk back passes under a sky that's brightening reluctantly, grey clouds thinning to reveal a pale wash of sun that does little to warm the air. By the time you push through the Copper Finch's door, the morning crowd has thinned \u2014 just two figures hunched over a corner table nursing cups of something dark, and the barman wiping a glass behind the counter.\n\nYour old table sits empty by the window, the scarred wood catching a sliver of grey light. The chair scrapes as you pull it out. The seat is still warm from someone else's body \u2014 or perhaps that's just the residual heat of the hearth.\n\nThe barman glances up. Middle-aged, heavy-shouldered, with the look of a man who's been standing in the same room for twenty years. He sets down the glass and walks over, wiping his hands on a rag tucked into his apron.\n\n**\"Back already.\"** Not a question. His voice is rough, scraped by years of smoke and small talk. **\"Find what you were looking for out there?\"**\n\nHe stops at your table, rag in hand, waiting. His eyes are flat, curious without being friendly \u2014 the look of a man who's seen too many strangers pass through asking too many questions."
+    }
+  ]
+}
