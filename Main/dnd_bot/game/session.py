@@ -1245,11 +1245,23 @@ class GameSessionManager:
         # we were only using ~3-5K. More verbatim history = better grounding.
         message_history = memory.get_message_history(limit=30)
 
-        # Serialize world state for narrator bookend injection
+        # Serialize world state for narrator bookend injection. The fact
+        # projection is anchored on what this action names as well as where
+        # the party stands — a question about someone off stage otherwise
+        # cannot reach canon about them (see get_scene_relevant_facts).
         world_state_yaml = ""
         last_turn_trace = ""
         if session.world_state:
-            world_state_yaml = session.world_state.to_yaml()
+            # Local import: ``knowledge`` reaches back into game/ (the same
+            # reason ``knowledge_graph`` is typed Any on GameSession).
+            from .knowledge.matcher import action_entity_names
+
+            world_state_yaml = session.world_state.to_yaml(
+                action_text=current_input,
+                action_entities=action_entity_names(
+                    session.knowledge_graph, current_input
+                ),
+            )
             # Build previous-turn trace from recent events
             if session.world_state.recent_events:
                 last_turn_trace = session.world_state.recent_events[-1]
