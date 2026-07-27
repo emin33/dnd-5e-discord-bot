@@ -41,6 +41,63 @@ logger = structlog.get_logger()
 _campaign_players: dict[str, list[int]] = {}  # campaign_id -> [user_ids]
 _campaign_players_lock = asyncio.Lock()
 
+# campaign_id -> sourcebook_key chosen at creation, installed at session start.
+# In memory beside the player list rather than on the campaign row, because
+# the DURABLE record of which book a campaign plays is `campaign_sourcebook`,
+# and that row is written by the install itself. This only has to survive the
+# lobby. A restart between creating a campaign and starting it loses the
+# choice, which is the right failure: nothing was installed, so nothing is
+# half-done — the DM picks again.
+_campaign_sourcebook: dict[str, str] = {}
+
+
+async def _library() -> list:
+    """Every book on the shelf, importing any new files first.
+
+    Scanning here rather than at boot means a DM can drop a book in the
+    folder and see it without restarting the bot. Import is
+    content-addressed, so re-scanning an unchanged shelf writes nothing.
+    """
+    from ...data.repositories.sourcebook_repo import get_sourcebook_repo
+    from ...game.knowledge.sourcebook_library import available_books, scan_library
+
+    repo = await get_sourcebook_repo()
+    try:
+        await scan_library(repo)
+    except Exception as e:
+        # A broken shelf must not take the command down; the DM can still
+        # create an improvised campaign.
+        logger.warning("sourcebook_scan_failed", error=str(e), exc_info=True)
+    return await available_books(repo)
+
+
+async def _sourcebook_choices(ctx: discord.AutocompleteContext) -> list[str]:
+    """Titles for the campaign-creation autocomplete."""
+    try:
+        typed = (ctx.value or "").casefold()
+        return [
+            header.title for header in await _library()
+            if typed in header.title.casefold()
+        ][:25]
+    except Exception as e:
+        logger.warning("sourcebook_autocomplete_failed", error=str(e))
+        return []
+
+
+async def _resolve_sourcebook(choice: str) -> str:
+    """A typed title (or key) -> a sourcebook_key, or "" if nothing matches.
+
+    Accepts the key directly so the value survives if Discord ever hands back
+    something other than the display title.
+    """
+    wanted = (choice or "").strip().casefold()
+    if not wanted:
+        return ""
+    for header in await _library():
+        if wanted in (header.title.casefold(), header.sourcebook_key.casefold()):
+            return header.sourcebook_key
+    return ""
+
 # Serializes "Start Game" attempts so two near-simultaneous clicks can't both
 # pass the `has_active_session` check before either creates the session.
 _session_start_lock = asyncio.Lock()
@@ -766,6 +823,42 @@ class CampaignCog(commands.Cog):
                 ephemeral=True,
             )
 
+    async def _install_sourcebook(
+        self,
+        session,
+        campaign: Campaign,
+        sourcebook_key: str,
+        interaction: discord.Interaction,
+    ) -> tuple[str, str]:
+        """Install the chosen book into the fresh session.
+
+        Returns ``(authored_scene, title)`` for the opening narration, or
+        ``("", "")`` when nothing was installed.
+
+        The install itself lives in ``game.knowledge.sourcebook_library``
+        because it is the only production path that seeds an authored world
+        and therefore the thing most worth testing — and a cog cannot be
+        imported without py-cord. What stays here is the genuinely Discord
+        half: showing the DM why they did not get the world they asked for.
+        """
+        from ...data.repositories.sourcebook_repo import get_sourcebook_repo
+        from ...game.knowledge.sourcebook_library import install_for_campaign
+
+        outcome = await install_for_campaign(
+            await get_sourcebook_repo(), session, campaign.id, sourcebook_key,
+        )
+        if outcome.error:
+            # Reported, not raised. The party is already in a started
+            # session; failing it to punish a bad book would cost them the
+            # session too. They get an improvised world and a visible reason.
+            await interaction.followup.send(
+                f":warning: The sourcebook could not be installed "
+                f"({outcome.error}). The adventure will start with an "
+                "improvised world.",
+                ephemeral=True,
+            )
+        return outcome.scene, outcome.title
+
     async def _handle_start(self, interaction: discord.Interaction, campaign: Campaign):
         """Handle the DM starting the game - actually starts the session.
 
@@ -808,6 +901,17 @@ class CampaignCog(commands.Cog):
                 dm_user_id=None,  # AI is the DM, no human DM
             )
 
+        # Install the authored world, if the DM chose one. After start_session
+        # (the graph and world store exist only from there) and before the
+        # opening narrative, which must describe the seeded room rather than
+        # invent a competing one.
+        authored_scene = ""
+        book_title = ""
+        if _campaign_sourcebook.get(campaign.id):
+            authored_scene, book_title = await self._install_sourcebook(
+                session, campaign, _campaign_sourcebook[campaign.id], interaction,
+            )
+
         # Auto-join all players who have characters
         for character in characters:
             member = interaction.guild.get_member(character.discord_user_id)
@@ -838,6 +942,9 @@ class CampaignCog(commands.Cog):
             inline=False,
         )
 
+        if book_title:
+            embed.add_field(name="Sourcebook", value=book_title, inline=False)
+
         embed.add_field(
             name="How to Play",
             value=(
@@ -858,6 +965,9 @@ class CampaignCog(commands.Cog):
                 campaign_name=campaign.name,
                 world_setting=campaign.world_setting,
                 characters=characters,
+                # Empty for an improvised campaign, which leaves the
+                # invent-a-scene path exactly as it was.
+                authored_scene=authored_scene,
             )
 
             # Process tool call effects (registers NPCs, assigns voices).
@@ -968,10 +1078,32 @@ class CampaignCog(commands.Cog):
             required=False,
             max_length=1000,
         ),
+        sourcebook: discord.Option(
+            str,
+            "Authored sourcebook to start from (optional)",
+            required=False,
+            autocomplete=discord.utils.basic_autocomplete(_sourcebook_choices),
+        ),
     ):
         """Create a new campaign."""
         await ctx.defer()
         repo = await get_campaign_repo()
+
+        # Resolve the book BEFORE creating anything. A typo'd title must not
+        # leave a campaign created and silently bookless -- the DM asked for
+        # an authored world and would not find out until the opening prose
+        # invented one.
+        chosen_key = ""
+        if sourcebook:
+            chosen_key = await _resolve_sourcebook(sourcebook)
+            if not chosen_key:
+                await ctx.respond(
+                    f"No sourcebook matches '{sourcebook}'. "
+                    "Leave it blank for an improvised world, or use the "
+                    "autocomplete to pick one.",
+                    ephemeral=True,
+                )
+                return
 
         # Check if campaign with same name exists
         existing = await repo.get_by_name_and_guild(name, ctx.guild_id)
@@ -998,6 +1130,8 @@ class CampaignCog(commands.Cog):
 
         # Initialize player list
         _campaign_players[campaign.id] = []
+        if chosen_key:
+            _campaign_sourcebook[campaign.id] = chosen_key
 
         # Create lobby view
         view = CampaignLobbyView(

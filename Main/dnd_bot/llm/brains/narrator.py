@@ -192,8 +192,17 @@ class NarratorBrain(Brain):
         campaign_name: str,
         world_setting: str,
         characters: list,
+        authored_scene: str = "",
     ) -> tuple[str, list]:
-        """Generate an opening narrative to start the adventure."""
+        """Generate an opening narrative to start the adventure.
+
+        ``authored_scene`` changes the job entirely. Without it the narrator
+        INVENTS an opening, which is what the scenario templates below are
+        for. With it, a sourcebook has already established the room, its
+        occupants and the situation — and inventing over that produces an
+        opening that contradicts the world the party is standing in before
+        anyone has taken a turn.
+        """
         # Build character descriptions
         char_descriptions = []
         for char in characters:
@@ -275,6 +284,40 @@ Write your narration directly. Use tools for any NPCs or objects you introduce:
 No commentary, no planning, no format headers.""",
             },
         ]
+
+        if authored_scene:
+            # A book already wrote this room, so the scenario menu above is
+            # withheld rather than offered: every template in it says INVENT
+            # a situation, and inventing over authored canon contradicts the
+            # world before anyone has taken a turn. The occupants are already
+            # on the roster too, so the tool guidance inverts — ref_entity,
+            # never add_npc, or the scene grows a second copy of someone
+            # standing in it.
+            messages[1]["content"] = f"""Narrate the opening of a D&D adventure.
+
+Campaign: {campaign_name}
+
+The scene is ALREADY ESTABLISHED. Do not invent a different one, do not
+relocate the party, and do not introduce a premise that competes with this:
+
+{authored_scene}
+
+The Party:
+{party_info}
+
+Write 2-3 short paragraphs that put the party INTO this scene:
+- Ground them in the room as described — its light, sound, weather, texture.
+- Let the situation above be felt rather than explained. Do not summarise it
+  back to the player and do not reveal more than the description gives you.
+- End on an open handoff: "What do you do?"
+
+Anyone already present is on the roster: use ref_entity for them. Only use
+add_npc for someone the description does not already place here, and
+spawn_object only for objects it does not already mention. Invent no names,
+places, or history — this world is authored, and anything you add that the
+book did not say will contradict it later.
+
+No commentary, no planning, no format headers."""
 
         from ..narrator_tools import NARRATOR_TOOLS_CORE
 

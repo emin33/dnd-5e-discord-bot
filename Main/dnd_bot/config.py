@@ -284,6 +284,9 @@ class Settings(BaseSettings):
     # SRD Data
     srd_data_path: str = "../5e-database/src/2014"
 
+    # Authored sourcebooks (*.yaml / *.json) offered at campaign creation
+    sourcebook_path: str = "data/sourcebooks"
+
     # Logging
     log_level: str = "INFO"
 
@@ -330,6 +333,11 @@ class Settings(BaseSettings):
     def chroma_path(self) -> Path:
         """Resolved path to ChromaDB directory."""
         return Path(__file__).parent.parent / self.chroma_persist_path
+
+    @property
+    def sourcebook_dir(self) -> Path:
+        """Resolved path to the authored-sourcebook library."""
+        return Path(__file__).parent.parent / self.sourcebook_path
 
 
 @lru_cache

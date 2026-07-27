@@ -1,0 +1,97 @@
+# The Ash Gate Primer — the worked example of the authoring format.
+#
+# Drop a .yaml/.yml/.json book in this directory and it becomes selectable at
+# campaign creation. The schema is dnd_bot/models/sourcebook.py, which
+# validates on load: dangling references, containment cycles, duplicate ids
+# and a unique item held twice are all refused HERE, with this filename
+# attached, rather than half-installing into a campaign later.
+#
+# The two things worth copying from this book:
+#
+#   visibility — claims default to dm_only. Only `public`/`player_known` AND
+#   canon_status `canon` reach the narrator, so a rumour stays a rumour. The
+#   secrets below (Marrow Cist, Vesk Harrow) are the canaries the lore gates
+#   assert never appear in prose.
+#
+#   appearance vs summary — `summary` is DM-side and is NEVER published;
+#   it is where you write the twist. Give every NPC an `appearance` or a
+#   `role`, or they reach play as a bare name (the compiler warns).
+
+metadata:
+  sourcebook_id: ash-gate-primer
+  title: The Ash Gate Primer
+  pitch: A closed gate, a filed lock, and a ferryman who died.
+locations:
+- id: copper-finch
+  name: Copper Finch
+  aliases:
+  - the tavern
+  - the inn
+  - the Finch
+  location_kind: building
+  description: A rain-dark tavern of copper lamps, scarred tables, and shuttered windows.
+- id: ash-gate
+  name: Ash Gate
+  aliases:
+  - the gate
+  - the arch
+  - the black arch
+  location_kind: site
+  description: A cracked black arch standing alone against grey sky.
+routes:
+- id: finch-to-gate
+  from_location_id: copper-finch
+  to_location_id: ash-gate
+npcs:
+- id: mara-venn
+  name: Mara Venn
+  role: investigator
+  appearance: A sharp-eyed woman in a charcoal coat.
+  current_location_id: copper-finch
+- id: toran-vex
+  name: Toran Vex
+  role: lockwright
+  appearance: A nervous clerk with ink-stained cuffs.
+  current_location_id: copper-finch
+- id: sable-quill
+  name: Sable Quill
+  role: courier
+  appearance: A courier in a travel-stained cloak.
+  current_location_id: ash-gate
+- id: old-bram
+  name: Old Bram
+  summary: The ferryman who once carried people through.
+  status: dead
+  appearance: A river-worn coat still hanging by the landing.
+  current_location_id: ash-gate
+relationships:
+- id: mara-knows-toran
+  source_id: mara-venn
+  target_id: toran-vex
+  kind: knows
+  public_description: Mara Venn consults Toran Vex about locks.
+- id: toran-knows-sable
+  source_id: toran-vex
+  target_id: sable-quill
+  kind: knows
+  public_description: Toran Vex sends letters by Sable Quill.
+claims:
+- id: claim-gate-closed
+  subject_id: ash-gate
+  text: The Ash Gate has been shut to travellers since Old Bram the ferryman died; his boat
+    the Grey Hind still rots at the landing.
+  visibility: public
+- id: claim-toran-locks
+  subject_id: toran-vex
+  text: Toran Vex is the lockwright who maintained the Ash Gate's lock for years, sworn to
+    the Kestrel Guild.
+  visibility: public
+- id: claim-who-sold
+  subject_id: mara-venn
+  text: Vesk Harrow sold passage through the Ash Gate and filed the lock to hide it.
+- id: claim-key-hidden
+  subject_id: ash-gate
+  text: The gate's key is buried in the Marrow Cist beneath the arch.
+starting_state:
+  location_id: copper-finch
+  opening_situation: Rain on the shutters; Mara Venn is waiting.
