@@ -359,11 +359,20 @@ No commentary, no planning, no format headers."""
 
         # Validate non-empty response
         if not prose or not prose.strip():
-            prose = (
-                f"*The adventure begins in {world_setting}. "
-                f"Your party gathers, ready for whatever lies ahead.*\n\n"
-                "What do you do?"
-            )
+            if authored_scene:
+                # Fall back to the BOOK, not to a generic blurb. The world
+                # is authored and already seeded; describing "a classic high
+                # fantasy world" here would contradict the room the party is
+                # standing in on the very first line.
+                prose = (
+                    f"*{authored_scene.strip()}*\n\nWhat do you do?"
+                )
+            else:
+                prose = (
+                    f"*The adventure begins in {world_setting}. "
+                    f"Your party gathers, ready for whatever lies ahead.*\n\n"
+                    "What do you do?"
+                )
         else:
             # Ensure the prose ends with an open-ended handoff question
             # Models often ignore this instruction, so we enforce it

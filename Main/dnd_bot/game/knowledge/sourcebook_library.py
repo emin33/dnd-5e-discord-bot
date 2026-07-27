@@ -129,6 +129,29 @@ async def install_for_campaign(
     from ...game.world_store import WorldStateStore
     from .sourcebook_compiler import install_sourcebook
 
+    # PREFLIGHT, before anything is written. `install_sourcebook` binds the
+    # campaign and rebuilds the graph BEFORE it seeds the scene, so a scene
+    # the store then refuses left canon bound and a fully populated graph
+    # behind an "improvised world" message -- a campaign that reads as
+    # bookless while carrying the book. The refusal is knowable up front:
+    # `seed_opening_scene` declines exactly when the session is already in
+    # play, and this runs at session start where that is a real possibility
+    # only if something else got there first.
+    world_state = getattr(session, "world_state", None)
+    if world_state is not None and (
+        world_state.turn > 0 or bool(world_state.npcs)
+    ):
+        logger.warning(
+            "sourcebook_install_preflight_refused",
+            campaign_id=campaign_id,
+            sourcebook_key=sourcebook_key[:12],
+            turn=world_state.turn,
+            npcs=len(world_state.npcs),
+        )
+        return InstallOutcome(
+            error="the session already had a scene in progress",
+        )
+
     try:
         book = await repository.load_book(sourcebook_key)
         if book is None:

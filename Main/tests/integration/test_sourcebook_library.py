@@ -267,6 +267,14 @@ async def test_a_session_already_in_play_is_not_relocated(repo):
     assert not outcome.installed
     assert "already had a scene" in outcome.error
     assert session.world_state.current_location == "Somewhere Else"
+    # And NOTHING was written. install_sourcebook binds the campaign and
+    # rebuilds the graph BEFORE it seeds the scene, so refusing afterwards
+    # left canon bound and a fully populated graph behind an "improvised
+    # world" message -- a campaign that reads as bookless while carrying the
+    # book. Asserting only the outcome cannot see that; these can.
+    assert await repo.sourcebook_keys_for_campaign("camp") == []
+    assert session.knowledge_graph.node_count() == 0
+    assert session.knowledge_graph.edge_count() == 0
 
 
 class _CollectingRegistry:
@@ -284,8 +292,28 @@ class _CollectingRegistry:
         self.registered.append(entity)
 
 
+@pytest.fixture
+def no_voice_assignment(monkeypatch):
+    """Stub TTS voice assignment out of the add_npc path.
+
+    `_execute_add_npc` best-effort assigns a voice, which reaches the voice
+    catalog and the active profile — global machinery this test has no
+    opinion about and does not shut down, and which hangs the run on some
+    environments. Patched at the import site because the executor imports it
+    inside the function.
+    """
+    import dnd_bot.immersion.voice_assigner as va
+
+    async def _no_voice(**_kwargs):
+        return None
+
+    monkeypatch.setattr(va, "assign_voice", _no_voice)
+
+
 @pytest.mark.asyncio
-async def test_an_opening_npc_resolves_to_the_book_s_cast_not_a_twin(repo):
+async def test_an_opening_npc_resolves_to_the_book_s_cast_not_a_twin(
+    repo, no_voice_assignment,
+):
     """The executor must carry the SESSION, or the roster splits.
 
     `_execute_add_npc` routes through `world_store.ensure_npc` only when it

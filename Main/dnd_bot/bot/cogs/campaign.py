@@ -51,32 +51,61 @@ _campaign_players_lock = asyncio.Lock()
 _campaign_sourcebook: dict[str, str] = {}
 
 
-async def _library() -> list:
-    """Every book on the shelf, importing any new files first.
+async def _bound_sourcebook(campaign_id: str) -> str:
+    """The book this campaign is bound to, surviving a restart.
+
+    The in-memory choice covers the lobby; this covers everything after it.
+    A campaign bound to more than one book (a base module plus a supplement)
+    installs the first — install is per-key and idempotent, so the rest can
+    follow without conflict.
+    """
+    try:
+        from ...data.repositories.sourcebook_repo import get_sourcebook_repo
+
+        keys = await (await get_sourcebook_repo()).sourcebook_keys_for_campaign(
+            campaign_id
+        )
+        return keys[0] if keys else ""
+    except Exception as e:
+        logger.warning(
+            "sourcebook_binding_lookup_failed",
+            campaign_id=campaign_id, error=str(e),
+        )
+        return ""
+
+
+async def _library() -> tuple[list, list[tuple[str, str]]]:
+    """Every book on the shelf, plus the files that would not read.
 
     Scanning here rather than at boot means a DM can drop a book in the
     folder and see it without restarting the bot. Import is
     content-addressed, so re-scanning an unchanged shelf writes nothing.
+
+    The rejects come back with the books because they are the answer to "why
+    is my book not in the menu" — discarding them is how a one-line YAML
+    error becomes an unexplained empty list.
     """
     from ...data.repositories.sourcebook_repo import get_sourcebook_repo
     from ...game.knowledge.sourcebook_library import available_books, scan_library
 
     repo = await get_sourcebook_repo()
+    rejected: list[tuple[str, str]] = []
     try:
-        await scan_library(repo)
+        rejected = (await scan_library(repo)).rejected
     except Exception as e:
         # A broken shelf must not take the command down; the DM can still
         # create an improvised campaign.
         logger.warning("sourcebook_scan_failed", error=str(e), exc_info=True)
-    return await available_books(repo)
+    return await available_books(repo), rejected
 
 
 async def _sourcebook_choices(ctx: discord.AutocompleteContext) -> list[str]:
     """Titles for the campaign-creation autocomplete."""
     try:
         typed = (ctx.value or "").casefold()
+        books, _rejected = await _library()
         return [
-            header.title for header in await _library()
+            header.title for header in books
             if typed in header.title.casefold()
         ][:25]
     except Exception as e:
@@ -84,19 +113,22 @@ async def _sourcebook_choices(ctx: discord.AutocompleteContext) -> list[str]:
         return []
 
 
-async def _resolve_sourcebook(choice: str) -> str:
-    """A typed title (or key) -> a sourcebook_key, or "" if nothing matches.
+async def _resolve_sourcebook(choice: str) -> tuple[str, list[tuple[str, str]]]:
+    """A typed title (or key) -> ``(sourcebook_key, rejected_files)``.
 
-    Accepts the key directly so the value survives if Discord ever hands back
+    The key is "" when nothing matches, and the rejects travel with it so the
+    caller can say WHY the library looks emptier than the folder does.
+    Accepts a key directly, so the value survives if Discord ever hands back
     something other than the display title.
     """
+    books, rejected = await _library()
     wanted = (choice or "").strip().casefold()
     if not wanted:
-        return ""
-    for header in await _library():
+        return "", rejected
+    for header in books:
         if wanted in (header.title.casefold(), header.sourcebook_key.casefold()):
-            return header.sourcebook_key
-    return ""
+            return header.sourcebook_key, rejected
+    return "", rejected
 
 # Serializes "Start Game" attempts so two near-simultaneous clicks can't both
 # pass the `has_active_session` check before either creates the session.
@@ -907,10 +939,25 @@ class CampaignCog(commands.Cog):
         # invent a competing one.
         authored_scene = ""
         book_title = ""
-        if _campaign_sourcebook.get(campaign.id):
+        chosen = _campaign_sourcebook.get(campaign.id) or await _bound_sourcebook(
+            campaign.id
+        )
+        if chosen:
             authored_scene, book_title = await self._install_sourcebook(
-                session, campaign, _campaign_sourcebook[campaign.id], interaction,
+                session, campaign, chosen, interaction,
             )
+            if authored_scene:
+                # Snapshot NOW, not after the first processed turn. The
+                # install has already rewritten location, roster and facts;
+                # a crash before turn 1 would otherwise lose the seeded world
+                # entirely, and recovery has no snapshot to fall back to.
+                try:
+                    await session_manager._persist_world_snapshot(session)
+                except Exception as e:
+                    logger.warning(
+                        "seeded_world_snapshot_failed",
+                        campaign_id=campaign.id, error=str(e), exc_info=True,
+                    )
 
         # Auto-join all players who have characters
         for character in characters:
@@ -954,7 +1001,11 @@ class CampaignCog(commands.Cog):
             inline=False,
         )
 
-        await interaction.response.send_message(embed=embed)
+        # followup, NOT response: the lobby button already deferred (see this
+        # method's docstring), so `response.send_message` raises
+        # InteractionResponded -- after the session has started and, now, after
+        # a sourcebook has installed. The opening narration below never ran.
+        await interaction.followup.send(embed=embed)
 
         # Generate opening narrative from the AI DM
         try:
@@ -974,7 +1025,7 @@ class CampaignCog(commands.Cog):
             # Discord context, so the session_key is f"discord:{channel_id}".
             if opening_effects:
                 from ...game.scene.registry import get_scene_registry
-                from ...llm.effects import EffectExecutor
+                from ...llm.effects import EffectExecutor, EffectValidator
                 _session_key = f"discord:{interaction.channel_id}"
                 scene_registry = get_scene_registry(campaign.id, _session_key)
                 # WITH the session: `_execute_add_npc` only routes through
@@ -988,6 +1039,12 @@ class CampaignCog(commands.Cog):
                 executor = EffectExecutor(
                     scene_registry=scene_registry, session=session,
                 )
+                # VALIDATED, like every other effect path. Executing raw let
+                # the opening do things no later turn is allowed to -- most
+                # sharply, put a canonically dead NPC on stage alive, which
+                # is exactly what a sourcebook that authors a death invites
+                # the narrator to do in its first paragraph.
+                validator = EffectValidator(session=session)
                 for effect in opening_effects:
                     logger.info(
                         "opening_effect",
@@ -996,6 +1053,15 @@ class CampaignCog(commands.Cog):
                         dialogue_indices=effect.dialogue_indices,
                         dialogue_emotions=effect.dialogue_emotions,
                     )
+                    verdict = validator.validate(effect)
+                    if not verdict.valid:
+                        logger.warning(
+                            "opening_effect_rejected",
+                            type=effect.effect_type.value,
+                            npc_name=effect.npc_name,
+                            reason=verdict.rejection_reason,
+                        )
+                        continue
                     await executor.execute(effect)
 
             if opening:
@@ -1105,12 +1171,22 @@ class CampaignCog(commands.Cog):
         # invented one.
         chosen_key = ""
         if sourcebook:
-            chosen_key = await _resolve_sourcebook(sourcebook)
+            chosen_key, rejected = await _resolve_sourcebook(sourcebook)
             if not chosen_key:
+                # Name the unreadable files. The scanner records WHICH file
+                # and WHY, and discarding that left a DM whose book has one
+                # bad line staring at "no sourcebook matches" with nothing
+                # to act on.
+                detail = ""
+                if rejected:
+                    detail = "\n\nUnreadable books in the library:\n" + "\n".join(
+                        f"- `{name}`: {reason.splitlines()[0][:180]}"
+                        for name, reason in rejected[:5]
+                    )
                 await ctx.respond(
                     f"No sourcebook matches '{sourcebook}'. "
                     "Leave it blank for an improvised world, or use the "
-                    "autocomplete to pick one.",
+                    f"autocomplete to pick one.{detail}",
                     ephemeral=True,
                 )
                 return
@@ -1141,7 +1217,26 @@ class CampaignCog(commands.Cog):
         # Initialize player list
         _campaign_players[campaign.id] = []
         if chosen_key:
+            # DURABLE, not just in memory. The lobby can sit for days and a
+            # restart in between used to drop the choice silently -- the DM
+            # got an improvised campaign with no indication the book was
+            # gone, and no command to pick it again. `campaign_sourcebook`
+            # is the table that already answers "which book is this
+            # campaign's"; binding here simply answers it earlier, and the
+            # install is idempotent so binding twice costs nothing.
             _campaign_sourcebook[campaign.id] = chosen_key
+            try:
+                from ...data.repositories.sourcebook_repo import (
+                    get_sourcebook_repo,
+                )
+                await (await get_sourcebook_repo()).bind_campaign(
+                    campaign.id, chosen_key,
+                )
+            except Exception as e:
+                logger.warning(
+                    "sourcebook_prebind_failed",
+                    campaign_id=campaign.id, error=str(e), exc_info=True,
+                )
 
         # Create lobby view
         view = CampaignLobbyView(

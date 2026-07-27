@@ -676,6 +676,29 @@ class EffectValidator:
             )
         return EffectValidationResult(effect=effect, valid=True)
 
+    def _graph_dead_npcs(self) -> list:
+        """Death facts the knowledge graph holds, or [] if it cannot answer.
+
+        Mirrors ``DMOrchestrator._graph_dead_npcs``: a degraded graph must
+        never un-guard the rule, so every failure path returns an empty list
+        and the other death sources still apply.
+        """
+        graph = getattr(self.session, "knowledge_graph", None)
+        reader = getattr(graph, "dead_npcs", None)
+        if not callable(reader):
+            return []
+        try:
+            return list(reader())
+        except Exception as exc:
+            # Imported here, like every other logging site in this module —
+            # there is no module-level logger to reach for.
+            import structlog
+
+            structlog.get_logger().warning(
+                "graph_dead_npc_read_failed", error=str(exc)
+            )
+            return []
+
     def _validate_add_npc(self, effect: ProposedEffect) -> EffectValidationResult:
         """Validate add_npc effect."""
         if not effect.npc_name:
@@ -707,6 +730,13 @@ class EffectValidator:
             dead_npcs.extend(
                 getattr(self.session, "campaign_dead_npcs", {}).values()
             )
+            # The graph too. It is the one campaign-wide store carrying BOTH
+            # authored and played-in deaths, and an authored-dead NPC is in
+            # neither list above: hydration deliberately refuses to restore
+            # the dead, so a book's corpse never reaches world_state.npcs at
+            # all. Without this, the very first thing a sourcebook opening
+            # could do is put the ferryman it killed back on stage alive.
+            dead_npcs.extend(self._graph_dead_npcs())
             dead = resolve_unique_identity(effect.npc_name, dead_npcs)
             if dead is not None:
                 return EffectValidationResult(

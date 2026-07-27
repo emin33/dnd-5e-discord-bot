@@ -285,3 +285,66 @@ def test_a_dead_npc_is_refused_as_dead_not_as_a_duplicate():
 
     assert result.valid is False
     assert "Dead NPC" in result.rejection_reason
+
+
+def test_add_npc_consults_the_graph_for_authored_deaths():
+    """A book's corpse is in NEITHER list the validator used to read.
+
+    Hydration deliberately refuses to restore the dead, so an authored-DEAD
+    NPC never reaches `world_state.npcs`, and nothing has written a campaign
+    dead-NPC row for them either. The graph is the one campaign-wide store
+    carrying authored AND played-in deaths -- without it, the first thing a
+    sourcebook opening could do is put the ferryman the book killed back on
+    stage alive.
+    """
+    class _Graph:
+        def dead_npcs(self):
+            return [SimpleNamespace(id="bram-id", name="Old Bram", alive=False)]
+
+    validator = EffectValidator(session=SimpleNamespace(
+        world_state=WorldState(),          # hydration kept him out
+        campaign_dead_npcs={},             # and nothing recorded him here
+        knowledge_graph=_Graph(),
+    ))
+
+    result = validator.validate(ProposedEffect(
+        effect_type=EffectType.ADD_NPC, npc_name="Old Bram",
+    ))
+
+    assert result.valid is False
+    assert "Dead NPC" in result.rejection_reason
+
+
+def test_a_degraded_graph_does_not_un_guard_the_rule():
+    """Every other death source must still apply when the graph cannot answer."""
+    class _Broken:
+        def dead_npcs(self):
+            raise RuntimeError("graph is unavailable")
+
+    world = WorldState()
+    bram = NPCState(id="bram-id", name="Old Bram", alive=False)
+    world.npcs[bram.id] = bram
+    validator = EffectValidator(session=SimpleNamespace(
+        world_state=world, campaign_dead_npcs={}, knowledge_graph=_Broken(),
+    ))
+
+    result = validator.validate(ProposedEffect(
+        effect_type=EffectType.ADD_NPC, npc_name="Old Bram",
+    ))
+
+    assert result.valid is False
+    assert "Dead NPC" in result.rejection_reason
+
+
+def test_a_graph_with_no_dead_reader_is_simply_skipped():
+    """Not every session has a graph; a missing reader is not a rejection."""
+    validator = EffectValidator(session=SimpleNamespace(
+        world_state=WorldState(), campaign_dead_npcs={},
+        knowledge_graph=object(),
+    ))
+
+    result = validator.validate(ProposedEffect(
+        effect_type=EffectType.ADD_NPC, npc_name="Sable Quill",
+    ))
+
+    assert result.valid is True
