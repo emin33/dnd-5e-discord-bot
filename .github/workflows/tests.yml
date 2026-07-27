@@ -53,17 +53,17 @@ jobs:
 
     steps:
       - name: Check out the bot
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Check out the SRD data as a sibling of Main/
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: 5e-bits/5e-database
           ref: 16bbc79c5c4252deb52052dff03495232a4cc049
           path: 5e-database
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: '3.11'
           cache: pip
