@@ -590,9 +590,17 @@ class WorldStateStore:
         incoherent rather than merely incomplete: a freshly seeded Copper
         Finch used to arrive already carrying "Copper Finch burned to ashes"
         from the campaign before it, at turn 40, with that campaign's exits
-        and flags. Facts, canon provenance, events, quests, connections,
-        transfers, effects, flags and the turn counter all go with the world
-        they described.
+        and flags. Facts, retirements, canon provenance, events, quests,
+        connections, transfers, effects, flags, phase, time of day, the
+        location description and the turn counter all go with the world they
+        described.
+
+        SCOPE, deliberately: this resets ``WorldState`` and nothing else. The
+        knowledge graph, vector memory, scene registry and campaign-level
+        dead-NPC governance live outside the store and survive. Replaying or
+        replacing a campaign in the product needs a reset ABOVE this one that
+        owns all of them; this method cannot reach them and should not
+        pretend to.
 
         Returns True when the seed was applied.
         """
@@ -609,7 +617,10 @@ class WorldStateStore:
             return False
 
         self._state.current_location = location
-        if description:
+        if description or force:
+            # On a forced reseed an EMPTY description still replaces the old
+            # one. Keeping it left the new room wearing the previous
+            # campaign's scenery.
             self._state.location_description = description
         # The roster goes with the scene. A forced reseed is "this is a
         # different world now", and leaving the old cast in place kept an NPC
@@ -625,8 +636,15 @@ class WorldStateStore:
             # install adds this book's facts AFTER this returns, so there is
             # nothing here worth keeping and nothing of the new book to lose.
             self._state.turn = 0
+            self._state.phase = "exploration"
+            self._state.time_of_day = "morning"
             self._state.established_facts.clear()
             self._state.canon_facts.clear()
+            # The retirement list gates add_established_fact, so a sentence
+            # the PREVIOUS campaign overturned silently refused to install
+            # from the new book — the fact was dropped with no error and no
+            # trace, which is the worst shape this bug could take.
+            self._state.superseded_facts.clear()
             self._state.recent_events.clear()
             self._state.recent_transfers.clear()
             self._state.active_effects.clear()

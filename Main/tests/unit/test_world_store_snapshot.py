@@ -138,6 +138,12 @@ def test_a_forced_reseed_leaves_no_trace_of_the_campaign_before_it():
     state.connected_locations.append("Old Sewer")
     state.quests["q"] = QuestState(id="q", name="Old Quest")
     state.global_flags["cellar_flooded"] = True
+    state.phase = "combat"
+    state.time_of_day = "midnight"
+    state.location_description = "A flooded cellar reeking of mould."
+    state.superseded_facts.append(
+        {"fact": "The Ash Gate was closed from the inside.", "reason": "overturned"}
+    )
 
     assert store.seed_opening_scene(
         location="Copper Finch", description="A rain-dark tavern.", force=True,
@@ -153,6 +159,15 @@ def test_a_forced_reseed_leaves_no_trace_of_the_campaign_before_it():
     assert state.connected_locations == []
     assert state.quests == {}
     assert state.global_flags == {}
+    assert state.phase == "exploration"
+    assert state.time_of_day == "morning"
+    assert state.location_description == "A rain-dark tavern."
+    # The retirement list gates add_established_fact, so a sentence the
+    # previous campaign overturned would silently refuse to install from the
+    # new book -- dropped with no error and no trace.
+    assert state.superseded_facts == []
+    store.add_established_fact("The Ash Gate was closed from the inside.")
+    assert state.established_facts == ["The Ash Gate was closed from the inside."]
 
 
 def test_an_unforced_seed_does_not_reset_anything():
@@ -174,3 +189,24 @@ def test_an_unforced_seed_does_not_reset_anything():
 
     assert state.established_facts == ["Seeded before the scene was set."]
     assert state.global_flags == {"prologue_done": True}
+
+
+def test_a_forced_reseed_with_no_description_does_not_keep_the_old_scenery():
+    """An EMPTY description still replaces the old one when forcing.
+
+    Guarding on `if description:` left the new room wearing the previous
+    campaign's scenery -- a book that describes its opening location only
+    through its NPCs would inherit a flooded cellar.
+    """
+    from dnd_bot.game.world_state import WorldState
+    from dnd_bot.game.world_store import WorldStateStore
+
+    state = WorldState(current_location="Old Cellar")
+    state.location_description = "A flooded cellar reeking of mould."
+    store = WorldStateStore(state)
+    state.turn = 12
+
+    assert store.seed_opening_scene(location="Copper Finch", force=True)
+
+    assert state.current_location == "Copper Finch"
+    assert state.location_description == ""
