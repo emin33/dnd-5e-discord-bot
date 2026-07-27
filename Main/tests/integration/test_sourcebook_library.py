@@ -22,7 +22,7 @@ from dnd_bot.game.knowledge.sourcebook_compiler import (
     compile_sourcebook, load_sourcebook,
 )
 from dnd_bot.game.knowledge.sourcebook_library import (
-    available_books, scan_library,
+    available_books, install_for_campaign, scan_library,
 )
 
 from tests.integration.test_sourcebook_canon_repo import make_db, rich_book
@@ -357,3 +357,41 @@ async def test_an_opening_npc_resolves_to_the_book_s_cast_not_a_twin(
     assert sorted(n.name for n in session.world_state.npcs.values()) == [
         "Mara Venn", "Toran Vex",
     ]
+
+
+@pytest.mark.asyncio
+async def test_a_pending_choice_does_not_make_the_book_s_canon_visible(repo):
+    """Intent and installation are different facts.
+
+    `campaign_sourcebook` is the ACTIVE-CANON boundary -- every claim query
+    joins it. Recording the DM's choice there made an uninstalled book's
+    claims answerable: effective and discoverable claims for a campaign
+    whose world did not exist yet. And a later REFUSED install left the
+    binding behind, so a campaign that never got its book still read as
+    playing it.
+    """
+    from dnd_bot.data.repositories.campaign_repo import CampaignRepository
+    from dnd_bot.models.campaign import Campaign
+
+    db = await repo._get_db()
+    campaigns = CampaignRepository(db=db)
+    key = (await repo.import_book(rich_book())).sourcebook_key
+    campaign = Campaign(id="camp", guild_id=1, name="C", dm_user_id=1)
+
+    await campaigns.set_pending_sourcebook(campaign.id, key)
+
+    # Chosen, durable across a restart...
+    reloaded = await campaigns.get_by_id(campaign.id)
+    assert reloaded.pending_sourcebook_key == key
+    # ...and yet the campaign plays nothing, so no canon answers for it.
+    assert await repo.sourcebook_keys_for_campaign(campaign.id) == []
+    assert await repo.effective_claims(campaign.id) == []
+    assert await repo.undiscovered_claims(campaign.id) == []
+
+    # Installing is what makes it real.
+    session = await _session_for(campaign.id)
+    outcome = await install_for_campaign(repo, session, campaign.id, key)
+
+    assert outcome.installed
+    assert await repo.sourcebook_keys_for_campaign(campaign.id) == [key]
+    assert len(await repo.effective_claims(campaign.id)) == 8

@@ -151,7 +151,8 @@ class CampaignRepository:
 
         Column order from schema:
         0: id, 1: guild_id, 2: name, 3: description, 4: world_setting,
-        5: dm_user_id, 6: created_at, 7: last_played_at
+        5: dm_user_id, 6: created_at, 7: last_played_at,
+        8: pending_sourcebook_key (migration 008)
         """
         created_at = datetime.utcnow()
         if row[6]:
@@ -176,7 +177,25 @@ class CampaignRepository:
             dm_user_id=row[5],
             created_at=created_at,
             last_played_at=last_played,
+            pending_sourcebook_key=(row[8] if len(row) > 8 else None) or None,
         )
+
+    async def set_pending_sourcebook(
+        self, campaign_id: str, sourcebook_key: str | None
+    ) -> None:
+        """Record (or clear) the book a campaign intends to play.
+
+        Intent only. The durable record of what a campaign IS playing is
+        `campaign_sourcebook`, written by the install itself — keeping the
+        two apart is what stops an uninstalled book's canon from answering
+        queries.
+        """
+        db = await self._get_db()
+        await db.execute(
+            "UPDATE campaign SET pending_sourcebook_key = ? WHERE id = ?",
+            (sourcebook_key or None, campaign_id),
+        )
+        await db.commit()
 
 
 # Global repository instance

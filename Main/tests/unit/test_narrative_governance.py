@@ -315,8 +315,35 @@ def test_add_npc_consults_the_graph_for_authored_deaths():
     assert "Dead NPC" in result.rejection_reason
 
 
-def test_a_degraded_graph_does_not_un_guard_the_rule():
-    """Every other death source must still apply when the graph cannot answer."""
+def test_a_broken_graph_refuses_rather_than_guesses():
+    """The topology a sourcebook creates, with the graph unavailable.
+
+    Hydration keeps the book's dead OFF the roster and nothing has written a
+    campaign dead-NPC row yet, so every other death source is legitimately
+    empty. Treating "could not ask" as "nobody is dead" fails OPEN exactly
+    here -- an earlier version of this test put Bram in the roster, which
+    proved a DIFFERENT guard survived rather than proving this one closed.
+    """
+    class _Broken:
+        def dead_npcs(self):
+            raise RuntimeError("graph is unavailable")
+
+    validator = EffectValidator(session=SimpleNamespace(
+        world_state=WorldState(),        # empty, as after a book install
+        campaign_dead_npcs={},           # empty, nothing recorded yet
+        knowledge_graph=_Broken(),
+    ))
+
+    result = validator.validate(ProposedEffect(
+        effect_type=EffectType.ADD_NPC, npc_name="Old Bram",
+    ))
+
+    assert result.valid is False
+    assert "Cannot verify" in result.rejection_reason
+
+
+def test_a_broken_graph_still_defers_to_a_death_it_can_see():
+    """A death the roster knows outranks the unverifiable case."""
     class _Broken:
         def dead_npcs(self):
             raise RuntimeError("graph is unavailable")

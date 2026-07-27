@@ -25,6 +25,13 @@ class Campaign(BaseModel):
         default="A classic high fantasy world filled with magic, monsters, and adventure."
     )
 
+    # The sourcebook this campaign INTENDS to play, until the session starts
+    # and installs it. Deliberately not `campaign_sourcebook` (migration 007):
+    # that table is the active-canon boundary every claim query joins, so
+    # recording intent there made an uninstalled book's claims queryable and
+    # left a refused install still reading as bound. Cleared once installed.
+    pending_sourcebook_key: Optional[str] = None
+
     # Metadata
     created_at: datetime = Field(default_factory=datetime.utcnow)
     last_played_at: Optional[datetime] = None

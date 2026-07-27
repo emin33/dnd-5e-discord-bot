@@ -51,24 +51,20 @@ _campaign_players_lock = asyncio.Lock()
 _campaign_sourcebook: dict[str, str] = {}
 
 
-async def _bound_sourcebook(campaign_id: str) -> str:
-    """The book this campaign is bound to, surviving a restart.
+async def _pending_sourcebook(campaign_id: str) -> str:
+    """The book this campaign INTENDS to play, surviving a restart.
 
-    The in-memory choice covers the lobby; this covers everything after it.
-    A campaign bound to more than one book (a base module plus a supplement)
-    installs the first — install is per-key and idempotent, so the rest can
-    follow without conflict.
+    The in-memory choice covers the lobby; this covers a restart during it.
+    Reads intent, never `campaign_sourcebook` — a campaign already bound
+    there has been installed, and re-installing is the install's own
+    idempotent business, not something to rediscover here.
     """
     try:
-        from ...data.repositories.sourcebook_repo import get_sourcebook_repo
-
-        keys = await (await get_sourcebook_repo()).sourcebook_keys_for_campaign(
-            campaign_id
-        )
-        return keys[0] if keys else ""
+        campaign = await (await get_campaign_repo()).get_by_id(campaign_id)
+        return (campaign.pending_sourcebook_key or "") if campaign else ""
     except Exception as e:
         logger.warning(
-            "sourcebook_binding_lookup_failed",
+            "sourcebook_intent_lookup_failed",
             campaign_id=campaign_id, error=str(e),
         )
         return ""
@@ -855,6 +851,18 @@ class CampaignCog(commands.Cog):
                 ephemeral=True,
             )
 
+    @staticmethod
+    async def _snapshot(session_manager, session, campaign_id: str, stage: str) -> None:
+        """Persist the world, best-effort. Never fails the session start."""
+        try:
+            await session_manager._persist_world_snapshot(session)
+        except Exception as e:
+            logger.warning(
+                "seeded_world_snapshot_failed",
+                campaign_id=campaign_id, stage=stage,
+                error=str(e), exc_info=True,
+            )
+
     async def _install_sourcebook(
         self,
         session,
@@ -939,7 +947,7 @@ class CampaignCog(commands.Cog):
         # invent a competing one.
         authored_scene = ""
         book_title = ""
-        chosen = _campaign_sourcebook.get(campaign.id) or await _bound_sourcebook(
+        chosen = _campaign_sourcebook.get(campaign.id) or await _pending_sourcebook(
             campaign.id
         )
         if chosen:
@@ -947,16 +955,17 @@ class CampaignCog(commands.Cog):
                 session, campaign, chosen, interaction,
             )
             if authored_scene:
-                # Snapshot NOW, not after the first processed turn. The
-                # install has already rewritten location, roster and facts;
-                # a crash before turn 1 would otherwise lose the seeded world
-                # entirely, and recovery has no snapshot to fall back to.
+                # Intent is spent: the install bound the campaign for real,
+                # so leaving it pending would reinstall on every later start.
+                _campaign_sourcebook.pop(campaign.id, None)
                 try:
-                    await session_manager._persist_world_snapshot(session)
+                    await (await get_campaign_repo()).set_pending_sourcebook(
+                        campaign.id, None,
+                    )
                 except Exception as e:
                     logger.warning(
-                        "seeded_world_snapshot_failed",
-                        campaign_id=campaign.id, error=str(e), exc_info=True,
+                        "sourcebook_intent_not_cleared",
+                        campaign_id=campaign.id, error=str(e),
                     )
 
         # Auto-join all players who have characters
@@ -969,6 +978,15 @@ class CampaignCog(commands.Cog):
                     user_name=member.display_name,
                     character=character,
                 )
+
+        # Snapshot AFTER the joins and BEFORE the narrator call. The install
+        # has already rewritten location, roster and facts, and the narrator
+        # is the slowest thing in this method — a crash across it would
+        # otherwise lose the seeded world entirely, with no snapshot to
+        # recover from. Taking it before the joins recovered the authored
+        # room with nobody in it.
+        if authored_scene:
+            await self._snapshot(session_manager, session, campaign.id, "seeded")
 
         # Build player list for embed
         player_lines = []
@@ -1063,6 +1081,13 @@ class CampaignCog(commands.Cog):
                         )
                         continue
                     await executor.execute(effect)
+
+                # Again: the opening effects just mutated the world (NPCs on
+                # stage, objects spawned), and the pre-narrator snapshot
+                # predates all of it.
+                await self._snapshot(
+                    session_manager, session, campaign.id, "opening_effects",
+                )
 
             if opening:
                 # Store opening in memory so future narrator calls have scene context
@@ -1226,15 +1251,15 @@ class CampaignCog(commands.Cog):
             # install is idempotent so binding twice costs nothing.
             _campaign_sourcebook[campaign.id] = chosen_key
             try:
-                from ...data.repositories.sourcebook_repo import (
-                    get_sourcebook_repo,
-                )
-                await (await get_sourcebook_repo()).bind_campaign(
-                    campaign.id, chosen_key,
-                )
+                # INTENT, not a binding. `campaign_sourcebook` is the
+                # active-canon boundary every claim query joins, so writing
+                # there now would make an uninstalled book's claims
+                # answerable — and leave a refused install still reading as
+                # bound. The install does the real binding.
+                await repo.set_pending_sourcebook(campaign.id, chosen_key)
             except Exception as e:
                 logger.warning(
-                    "sourcebook_prebind_failed",
+                    "sourcebook_intent_not_persisted",
                     campaign_id=campaign.id, error=str(e), exc_info=True,
                 )
 

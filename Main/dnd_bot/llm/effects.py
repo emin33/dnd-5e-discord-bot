@@ -676,19 +676,26 @@ class EffectValidator:
             )
         return EffectValidationResult(effect=effect, valid=True)
 
-    def _graph_dead_npcs(self) -> list:
-        """Death facts the knowledge graph holds, or [] if it cannot answer.
+    def _graph_dead_npcs(self) -> tuple[list, bool]:
+        """``(death facts, answered)`` from the knowledge graph.
 
-        Mirrors ``DMOrchestrator._graph_dead_npcs``: a degraded graph must
-        never un-guard the rule, so every failure path returns an empty list
-        and the other death sources still apply.
+        The second value is why this returns a tuple. "The graph knows of no
+        dead" and "the graph could not be asked" look identical as an empty
+        list, and treating them the same fails OPEN on precisely the topology
+        a sourcebook creates: hydration keeps the book's dead off the roster,
+        nothing has written a campaign dead-NPC row yet, so a broken graph
+        leaves every death source empty and `add_npc Old Bram` sails through.
+
+        No graph at all is a legitimate answer — plenty of sessions have
+        none, and their deaths live in the roster. A graph that RAISES is
+        not: it means the one store that would know is unavailable.
         """
         graph = getattr(self.session, "knowledge_graph", None)
         reader = getattr(graph, "dead_npcs", None)
         if not callable(reader):
-            return []
+            return [], True
         try:
-            return list(reader())
+            return list(reader()), True
         except Exception as exc:
             # Imported here, like every other logging site in this module —
             # there is no module-level logger to reach for.
@@ -697,7 +704,7 @@ class EffectValidator:
             structlog.get_logger().warning(
                 "graph_dead_npc_read_failed", error=str(exc)
             )
-            return []
+            return [], False
 
     def _validate_add_npc(self, effect: ProposedEffect) -> EffectValidationResult:
         """Validate add_npc effect."""
@@ -736,7 +743,11 @@ class EffectValidator:
             # the dead, so a book's corpse never reaches world_state.npcs at
             # all. Without this, the very first thing a sourcebook opening
             # could do is put the ferryman it killed back on stage alive.
-            dead_npcs.extend(self._graph_dead_npcs())
+            graph_dead, graph_answered = self._graph_dead_npcs()
+            dead_npcs.extend(graph_dead)
+            # A death we can SEE outranks one we merely cannot rule out, so
+            # this runs first: when the answer is known, say which NPC and
+            # why rather than blaming the graph.
             dead = resolve_unique_identity(effect.npc_name, dead_npcs)
             if dead is not None:
                 return EffectValidationResult(
@@ -745,6 +756,21 @@ class EffectValidator:
                     rejection_reason=(
                         f"Dead NPC '{dead.name}' cannot be reintroduced with "
                         "add_npc; an authoritative resurrection mechanic is required"
+                    ),
+                )
+            if not graph_answered:
+                # Refuse rather than guess. "The dead stay dead" is stated to
+                # outrank scene continuity, and with the graph unavailable
+                # this NPC cannot be shown to be alive. The cost is bounded:
+                # ref_entity still works, so the scene continues with the
+                # cast it has until the graph recovers.
+                return EffectValidationResult(
+                    effect=effect,
+                    valid=False,
+                    rejection_reason=(
+                        f"Cannot verify whether '{effect.npc_name}' is dead - "
+                        "the knowledge graph is unavailable; refusing to "
+                        "introduce an NPC that canon may record as dead"
                     ),
                 )
             # Someone already standing here is REFERENCED, not introduced.
