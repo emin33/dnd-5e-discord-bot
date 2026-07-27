@@ -82,8 +82,14 @@ lives in `Main/config/profiles.yaml`, chosen via `ACTIVE_PROFILE`.
 
 ```bash
 pip install -e ".[dev]"
-pytest
+
+REM Windows: the authoritative runner (uses Main/venv)
+Mainun_tests.bat
+Mainun_tests.bat tests/unit/test_world_state.py   REM one file
 ```
+
+Do not run a bare `pytest`. This project requires Python >= 3.11 and py-cord; an interpreter that has neither does not fail loudly, it reports green while silently collecting fewer tests. `tests/conftest.py` now refuses such an environment outright, and `run_tests.bat` /
+`run_typecheck.bat` / `run_longform.bat` / `run_reliability.bat` all use the same venv.
 
 ## License
 

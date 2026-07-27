@@ -686,7 +686,7 @@ both **DONE** (`c0b3d67`; the three helpers now route via `_resolve_player_chara
 5. `archive/audits/AUDIT_FULL_2026_05.md` (the #6/#7 deferred-cluster rationale).
 6. Memory: `audit_quality_2026_05_29.md`, `audit_dataflow_2026_05_29.md`, `roadmap_audit_2026_05.md`.
 7. `git log --oneline -10`; run the suite with the controlled-file pattern
-   (`timeout 180 python -m pytest tests/ --timeout=45 -q > _testout.txt 2>&1; echo EXIT=$?`)
+   (`timeout 180 venv/Scripts/python.exe -m pytest tests/ --timeout=45 -q > _testout.txt 2>&1; echo EXIT=$?`)
    — NOTE: a leaky async fixture once hung pytest on *exit* (tests passed, process didn't
    terminate); fixtures opening a `Database` must `yield` + `await db.disconnect()`.
 
@@ -694,7 +694,7 @@ both **DONE** (`c0b3d67`; the three helpers now route via `_resolve_player_chara
 
 - **Run tests with the controlled-file pattern** (background pytest output buffers and
   won't appear until exit):
-  `timeout 180 python -m pytest tests/ -p no:cacheprovider --timeout=45 -q > _testout.txt 2>&1; echo EXIT=$?; tail -6 _testout.txt`
+  `timeout 180 venv/Scripts/python.exe -m pytest tests/ -p no:cacheprovider --timeout=45 -q > _testout.txt 2>&1; echo EXIT=$?; tail -6 _testout.txt`
 - **A leaky async fixture hangs pytest on exit** (tests PASS, process never terminates,
   orphaning it). Any fixture opening a `Database` must `yield` + `await db.disconnect()`,
   not `return`. This caused days of "the tests never finish" confusion.

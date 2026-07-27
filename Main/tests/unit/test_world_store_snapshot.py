@@ -11,7 +11,6 @@ scene_items, established_facts, recent_events, and the live NPC roster
 import pytest
 import json
 
-import pytest
 from pydantic import ValidationError
 
 from dnd_bot.game.world_state import NPCState, QuestState, WorldState

@@ -7,10 +7,12 @@ REM AND discord.py 2.7.1, two distributions competing for the same `discord`
 REM namespace. The result is not a clean failure: the suite runs, reports
 REM green, and silently collects FOUR TESTS FEWER than it should, because
 REM the Discord frontend tests cannot import `discord.ApplicationContext`.
+REM Measured on one commit: system 1614, venv 1618 -- exactly those four.
+REM tests/conftest.py now refuses the bad environment outright.
 REM
-REM The venv is Python 3.13.14 with py-cord alone: 1617 collected against
-REM the system interpreter's 1613. Same convention as run_typecheck.bat, and
-REM the two now agree on which interpreter is authoritative.
 cd /d "%~dp0"
-venv\Scripts\python.exe -m pytest tests %*
+REM `pytest %*` and not `pytest tests %*`: pyproject's testpaths already
+REM defaults to tests/, and prepending it made a requested single file
+REM collect the whole suite anyway.
+venv\Scripts\python.exe -m pytest %*
 exit /b %ERRORLEVEL%

@@ -1,9 +1,70 @@
 """Pytest configuration and fixtures."""
 
 import itertools
+import sys
 
 import pytest
 from unittest.mock import MagicMock, AsyncMock
+
+
+def pytest_sessionstart(session):
+    """Refuse to run at all on an environment that cannot run the suite.
+
+    This exists because the wrong environment did NOT fail — it reported
+    green. System python is 3.10.11 (below this project's
+    ``requires-python >= 3.11``) and carries py-cord AND discord.py
+    contesting the ``discord`` namespace, so ``ApplicationContext`` is
+    missing and the Discord frontend module skips itself: `0 items /
+    1 skipped`, exit 0, four tests quietly uncollected. A whole session of
+    "green" was reported that way before anyone checked ``sys.version``.
+
+    A skip is the wrong instrument for a broken environment. Skips are for
+    conditions a run may legitimately not cover; this is a run that cannot
+    be trusted, so it fails loudly and says how to fix itself.
+    """
+    problems: list[str] = []
+
+    if sys.version_info < (3, 11):
+        problems.append(
+            f"Python {sys.version_info.major}.{sys.version_info.minor} is below "
+            "this project's requires-python >= 3.11"
+        )
+
+    try:
+        import discord
+    except Exception as exc:
+        problems.append(f"`discord` will not import ({exc})")
+    else:
+        if not hasattr(discord, "ApplicationContext"):
+            problems.append(
+                "`discord.ApplicationContext` is missing — py-cord is not the "
+                "package answering `import discord`"
+            )
+
+    try:
+        from importlib import metadata
+
+        installed = {
+            dist.metadata["Name"].lower()
+            for dist in metadata.distributions()
+            if dist.metadata and dist.metadata["Name"]
+        }
+        if {"py-cord", "discord.py"} <= installed:
+            problems.append(
+                "py-cord AND discord.py are both installed; they contest the "
+                "`discord` namespace and which one wins is not deterministic"
+            )
+    except Exception:
+        pass  # never let the guard's own bookkeeping fail a good environment
+
+    if problems:
+        raise pytest.UsageError(
+            "Unsupported test environment — this suite would report green "
+            "while silently collecting fewer tests:\n"
+            + "\n".join(f"  - {problem}" for problem in problems)
+            + "\n\nRun it the supported way:  Main\\run_tests.bat"
+            + "\n(or Main\\venv\\Scripts\\python.exe -m pytest)"
+        )
 
 from dnd_bot.models import Character, AbilityScores, HitPoints, HitDice, SpellSlots
 
