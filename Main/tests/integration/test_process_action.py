@@ -199,13 +199,21 @@ async def net(tmp_path: Path, monkeypatch):
         ))
 
     # Block real provider I/O for the whole test; fakes bypass the guard.
+    #
+    # The try MUST start on the very next line. This flag is a module-level
+    # global, so anything that raises between flipping it and entering the
+    # try leaves it False for the entire remaining session -- every later test
+    # that legitimately exercises `client.chat()` then fails with a message
+    # about a guard it never touched. That is not hypothetical: building
+    # DMOrchestrator used to sit in this gap, and on a machine without an
+    # ANTHROPIC_API_KEY it raised there, turning one missing environment
+    # variable into 52 setup errors plus 43 unrelated-looking failures.
     llm_client.set_model_requests_allowed(False)
-
-    orch = DMOrchestrator()
-    orch.set_session(session)
-    orch.set_scene_registry(registry)
-
     try:
+        orch = DMOrchestrator()
+        orch.set_session(session)
+        orch.set_scene_registry(registry)
+
         yield _Net(orch, session, wizard, char_repo, inv_repo, monkeypatch)
     finally:
         llm_client.set_model_requests_allowed(True)

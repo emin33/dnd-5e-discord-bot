@@ -12,10 +12,19 @@
 #     commit the suite is green against locally, so upstream SRD edits cannot
 #     turn this red without a deliberate bump here.
 #
-#   * DISCORD_BOT_TOKEN is required by Settings and has no default, but nothing
-#     in the suite connects to Discord. A dummy value satisfies the field. No
-#     secrets are needed by this workflow -- if a change to it ever seems to
-#     need one, that is a signal the suite started reaching the network.
+#   * The env block is all dummies and must stay that way. DISCORD_BOT_TOKEN
+#     and the provider keys have no defaults and are validated at construction,
+#     but nothing in the suite reaches the network: `ALLOW_MODEL_REQUESTS` is
+#     off inside the fixtures, and tests inject fakes. Keys for every provider
+#     that can hard-require one are listed, not just the two the current
+#     profile needs, so changing ACTIVE_PROFILE cannot quietly turn CI red.
+#     If this workflow ever seems to need a *real* secret, that is a signal the
+#     suite started making real calls -- fix that, do not add the secret.
+#
+#   * ACTIVE_PROFILE is pinned rather than left to its default so the run does
+#     not change meaning when the default does. Note this is the shipping
+#     profile; local development commonly runs a different one, so neither run
+#     alone covers both.
 #
 # Python 3.11 is this project's declared floor (`requires-python`). Local
 # development runs 3.13, so CI covering the floor is the complementary choice:
@@ -32,6 +41,15 @@ on:
 jobs:
   suite:
     runs-on: ubuntu-latest
+
+    env:
+      ACTIVE_PROFILE: production
+      DISCORD_BOT_TOKEN: ci-not-a-real-token
+      ANTHROPIC_API_KEY: ci-not-a-real-key
+      GROQ_API_KEY: ci-not-a-real-key
+      GEMINI_API_KEY: ci-not-a-real-key
+      OPENROUTER_API_KEY: ci-not-a-real-key
+      DEEPSEEK_API_KEY: ci-not-a-real-key
 
     steps:
       - name: Check out the bot
@@ -62,12 +80,8 @@ jobs:
       # reporting a green run over a smaller set of tests.
       - name: Suite
         working-directory: Main
-        env:
-          DISCORD_BOT_TOKEN: ci-not-a-real-token
         run: python -m pytest tests -q --timeout=45
 
       - name: Type gate
         working-directory: Main
-        env:
-          DISCORD_BOT_TOKEN: ci-not-a-real-token
         run: python -m mypy dnd_bot
