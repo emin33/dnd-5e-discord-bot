@@ -977,7 +977,17 @@ class CampaignCog(commands.Cog):
                 from ...llm.effects import EffectExecutor
                 _session_key = f"discord:{interaction.channel_id}"
                 scene_registry = get_scene_registry(campaign.id, _session_key)
-                executor = EffectExecutor(scene_registry=scene_registry)
+                # WITH the session: `_execute_add_npc` only routes through
+                # `world_store.ensure_npc` when it has one, and that is the
+                # single place a tool-path NPCState is minted. Sessionless,
+                # every opening NPC became a SceneEntity with no `npc_id` --
+                # unlinked from world state, which is precisely the
+                # split-identity Stage C exists to prevent. With a sourcebook
+                # it is worse: the book has already put its cast on the
+                # roster, so an add_npc for one of them minted a twin.
+                executor = EffectExecutor(
+                    scene_registry=scene_registry, session=session,
+                )
                 for effect in opening_effects:
                     logger.info(
                         "opening_effect",

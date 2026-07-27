@@ -267,3 +267,65 @@ async def test_a_session_already_in_play_is_not_relocated(repo):
     assert not outcome.installed
     assert "already had a scene" in outcome.error
     assert session.world_state.current_location == "Somewhere Else"
+
+
+class _CollectingRegistry:
+    """Just enough registry: `_execute_add_npc` only calls register_entity.
+
+    The real one reaches for Chroma and the voice stack, which this test has
+    no opinion about -- what is under test is whether the executor resolves
+    the NPC through the world store instead of minting a twin.
+    """
+
+    def __init__(self) -> None:
+        self.registered: list = []
+
+    def register_entity(self, entity) -> None:
+        self.registered.append(entity)
+
+
+@pytest.mark.asyncio
+async def test_an_opening_npc_resolves_to_the_book_s_cast_not_a_twin(repo):
+    """The executor must carry the SESSION, or the roster splits.
+
+    `_execute_add_npc` routes through `world_store.ensure_npc` only when it
+    has a session -- and that is the single place a tool-path NPCState is
+    minted. Sessionless, every opening NPC became a SceneEntity with no
+    `npc_id`, unlinked from world state. After a sourcebook install that is
+    worse than untidy: the book has already put its cast on the roster, so
+    an add_npc for one of them mints a second Mara Venn.
+    """
+    from dnd_bot.game.session import GameSession
+    from dnd_bot.llm.effects import EffectExecutor, EffectType, ProposedEffect
+    from dnd_bot.game.knowledge.sourcebook_library import install_for_campaign
+
+    key = (await repo.import_book(rich_book())).sourcebook_key
+    session = await _session_for("camp")
+    await install_for_campaign(repo, session, "camp", key)
+    seeded_ids = {npc.id for npc in session.world_state.npcs.values()}
+    assert len(seeded_ids) == 2
+
+    executor = EffectExecutor(
+        scene_registry=_CollectingRegistry(),
+        session=session,
+    )
+    await executor.execute(ProposedEffect(
+        effect_type=EffectType.ADD_NPC,
+        npc_name="Mara Venn",
+        npc_description="A sharp-eyed woman in a charcoal coat.",
+    ))
+
+    # The DISCRIMINATING fact: the SceneEntity carries the book's NPC id.
+    # Sessionless, `ensure_npc` is never reached and npc_id stays None --
+    # and world_state would be untouched either way, so asserting only that
+    # the roster is unchanged would pass whether or not the fix is present.
+    mara_id = next(
+        npc.id for npc in session.world_state.npcs.values()
+        if npc.name == "Mara Venn"
+    )
+    assert [e.npc_id for e in executor.scene_registry.registered] == [mara_id]
+    # And no twin: the roster is unchanged and still the book's cast.
+    assert {npc.id for npc in session.world_state.npcs.values()} == seeded_ids
+    assert sorted(n.name for n in session.world_state.npcs.values()) == [
+        "Mara Venn", "Toran Vex",
+    ]

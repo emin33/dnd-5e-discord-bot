@@ -224,3 +224,64 @@ def test_add_npc_cannot_reintroduce_cross_session_dead_identity():
 
     assert result.valid is False
     assert "authoritative resurrection mechanic" in result.rejection_reason
+
+
+def test_add_npc_cannot_reintroduce_someone_already_in_the_scene():
+    """Someone standing here is REFERENCED, not introduced.
+
+    This bites hardest right after a sourcebook install: the whole authored
+    cast is on the roster before the narrator has written a word, so an
+    opening that "introduces" Mara Venn is describing someone the party can
+    already see. The prompt asks for ref_entity; this is what makes it true
+    when the model ignores the prompt.
+    """
+    world = WorldState()
+    mara = NPCState(id="mara-id", name="Mara Venn", alive=True)
+    world.npcs[mara.id] = mara
+    validator = EffectValidator(session=SimpleNamespace(
+        world_state=world, campaign_dead_npcs={},
+    ))
+
+    result = validator.validate(ProposedEffect(
+        effect_type=EffectType.ADD_NPC, npc_name="Mara Venn",
+    ))
+
+    assert result.valid is False
+    assert "ref_entity" in result.rejection_reason
+
+
+def test_add_npc_still_introduces_someone_genuinely_new():
+    """The positive control: the guard refuses duplicates, not newcomers."""
+    world = WorldState()
+    mara = NPCState(id="mara-id", name="Mara Venn", alive=True)
+    world.npcs[mara.id] = mara
+    validator = EffectValidator(session=SimpleNamespace(
+        world_state=world, campaign_dead_npcs={},
+    ))
+
+    result = validator.validate(ProposedEffect(
+        effect_type=EffectType.ADD_NPC, npc_name="Sable Quill",
+    ))
+
+    assert result.valid is True
+
+
+def test_a_dead_npc_is_refused_as_dead_not_as_a_duplicate():
+    """Both guards read the roster; the dead one has to win.
+
+    "Old Bram is already in the scene, use ref_entity" would invite the
+    narrator to put a corpse on stage by another route.
+    """
+    world = WorldState()
+    bram = NPCState(id="bram-id", name="Old Bram", alive=False)
+    world.npcs[bram.id] = bram
+    validator = EffectValidator(session=SimpleNamespace(
+        world_state=world, campaign_dead_npcs={},
+    ))
+
+    result = validator.validate(ProposedEffect(
+        effect_type=EffectType.ADD_NPC, npc_name="Old Bram",
+    ))
+
+    assert result.valid is False
+    assert "Dead NPC" in result.rejection_reason

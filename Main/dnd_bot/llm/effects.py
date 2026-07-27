@@ -717,6 +717,26 @@ class EffectValidator:
                         "add_npc; an authoritative resurrection mechanic is required"
                     ),
                 )
+            # Someone already standing here is REFERENCED, not introduced.
+            # `ensure_npc` collapses a duplicate to the existing NPCState, so
+            # this is not the last line of defence — but it is the only one
+            # that reports, and the executor is skipped entirely when there
+            # is no store. It matters most right after a sourcebook install,
+            # where the whole authored cast is on the roster before the
+            # narrator has written a word: an opening that "introduces" Mara
+            # Venn is describing someone the party can already see.
+            if world_state is not None:
+                living = [npc for npc in world_state.npcs.values() if npc.alive]
+                present = resolve_unique_identity(effect.npc_name, living)
+                if present is not None:
+                    return EffectValidationResult(
+                        effect=effect,
+                        valid=False,
+                        rejection_reason=(
+                            f"'{present.name}' is already in the scene; use "
+                            "ref_entity to reference them rather than add_npc"
+                        ),
+                    )
         return EffectValidationResult(effect=effect, valid=True)
 
     def _validate_transfer_item(self, effect: ProposedEffect) -> EffectValidationResult:
