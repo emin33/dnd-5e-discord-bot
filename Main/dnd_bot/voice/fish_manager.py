@@ -32,6 +32,45 @@ def _health_check(port: int, timeout: float = 2.0) -> bool:
         return False
 
 
+def _resolve_python() -> str:
+    """Decide which interpreter runs the Fish Speech server.
+
+    Fish is a separate checkout with its own dependency set, so this is
+    deliberately NOT our venv (`sys.executable`) — importing our interpreter
+    here would just fail on Fish's requirements. But a bare ``python`` in the
+    generated batch file means the server silently inherits whatever the new
+    console's PATH resolves to, which need not be the environment Fish was
+    installed into. So: an explicit setting wins, a venv inside the Fish repo
+    is next, and the PATH fallback is logged as the guess it is.
+    """
+    try:
+        from ..config import get_settings
+
+        configured = get_settings().fish_speech_python.strip()
+    except Exception:
+        configured = ""
+
+    if configured:
+        if not Path(configured).exists():
+            logger.warning("fish_python_configured_but_missing", path=configured)
+        return configured
+
+    for candidate in (
+        _FISH_REPO / "venv" / "Scripts" / "python.exe",
+        _FISH_REPO / ".venv" / "Scripts" / "python.exe",
+        _FISH_REPO / "venv" / "bin" / "python",
+        _FISH_REPO / ".venv" / "bin" / "python",
+    ):
+        if candidate.exists():
+            return str(candidate)
+
+    logger.warning(
+        "fish_python_falling_back_to_path",
+        hint="set FISH_SPEECH_PYTHON to pin the interpreter Fish Speech runs on",
+    )
+    return "python"
+
+
 def _start_instance(port: int, device: str = "cuda") -> Optional[subprocess.Popen]:
     """Start a Fish Speech server in a new terminal window."""
     if not _FISH_REPO.exists():
@@ -45,7 +84,13 @@ def _start_instance(port: int, device: str = "cuda") -> Optional[subprocess.Pope
         logger.warning("fish_checkpoint_not_found", path=codec_path)
         return None
 
-    logger.info("starting_fish_instance", port=port, repo=str(_FISH_REPO))
+    python_exe = _resolve_python()
+    logger.info(
+        "starting_fish_instance",
+        port=port,
+        repo=str(_FISH_REPO),
+        python=python_exe,
+    )
 
     # Write a temporary batch file to avoid shell escaping issues with & in paths
     import tempfile
@@ -53,7 +98,7 @@ def _start_instance(port: int, device: str = "cuda") -> Optional[subprocess.Pope
         f'@echo off\n'
         f'title Fish Speech (port {port})\n'
         f'cd /d "{_FISH_REPO}"\n'
-        f'python tools/api_server.py '
+        f'"{python_exe}" tools/api_server.py '
         f'--llama-checkpoint-path "{llama_path}" '
         f'--decoder-checkpoint-path "{codec_path}" '
         f'--device {device} --half '

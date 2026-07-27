@@ -82,14 +82,25 @@ lives in `Main/config/profiles.yaml`, chosen via `ACTIVE_PROFILE`.
 
 ```bash
 pip install -e ".[dev]"
-
-REM Windows: the authoritative runner (uses Main/venv)
-Mainun_tests.bat
-Mainun_tests.bat tests/unit/test_world_state.py   REM one file
 ```
 
-Do not run a bare `pytest`. This project requires Python >= 3.11 and py-cord; an interpreter that has neither does not fail loudly, it reports green while silently collecting fewer tests. `tests/conftest.py` now refuses such an environment outright, and `run_tests.bat` /
-`run_typecheck.bat` / `run_longform.bat` / `run_reliability.bat` all use the same venv.
+Run the suite with the repo's own runner, from `Main/` (where Setup left you):
+
+```
+./run_tests.bat                                  # the whole suite
+./run_tests.bat tests/unit/test_world_state.py   # one file
+./run_typecheck.bat                              # mypy gate, must exit 0
+```
+
+From the repo root instead, prefix them with `Main/`. Under `cmd.exe`, spell the
+separators as backslashes.
+
+Do not run a bare `pytest`. This project needs Python >= 3.11 and py-cord, and an
+interpreter with neither does not fail loudly -- it reports green while silently
+collecting four tests fewer, the Discord cogs among them. `tests/conftest.py`
+refuses such an environment outright rather than skipping past it, and
+`run_tests.bat`, `run_typecheck.bat`, `run_longform.bat` and `run_reliability.bat`
+all use `Main/venv`.
 
 ## License
 

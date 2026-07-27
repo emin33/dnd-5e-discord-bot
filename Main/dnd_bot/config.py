@@ -310,6 +310,12 @@ class Settings(BaseSettings):
     # Fish Speech (local TTS alternative to Riva)
     fish_speech_url: str = "http://localhost:8080"
     fish_speech_instances: int = 1  # Number of parallel Fish Speech servers on sequential ports from fish_speech_url
+    # Interpreter that runs fish-speech-s1-mini/tools/api_server.py. Fish is a
+    # SEPARATE checkout with its own dependencies, so this is deliberately not
+    # our venv. Empty = look for a venv inside the Fish repo, else fall back to
+    # whatever `python` PATH resolves to (and say so in the log, because that
+    # is a guess, not a choice).
+    fish_speech_python: str = ""
 
     # Voice / Riva (optional, only needed for voice mode). LiveKit and NGC
     # credentials are read from the process environment by the voice stack

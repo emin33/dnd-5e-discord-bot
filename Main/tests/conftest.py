@@ -2,6 +2,7 @@
 
 import itertools
 import sys
+from pathlib import Path
 
 import pytest
 from unittest.mock import MagicMock, AsyncMock
@@ -37,7 +38,7 @@ def pytest_sessionstart(session):
     else:
         if not hasattr(discord, "ApplicationContext"):
             problems.append(
-                "`discord.ApplicationContext` is missing — py-cord is not the "
+                "`discord.ApplicationContext` is missing -- py-cord is not the "
                 "package answering `import discord`"
             )
 
@@ -58,12 +59,21 @@ def pytest_sessionstart(session):
         pass  # never let the guard's own bookkeeping fail a good environment
 
     if problems:
+        # Absolute paths, derived rather than written down: a remedy spelled
+        # relative to some assumed working directory is wrong the moment you
+        # are standing somewhere else, and the reader of this message has
+        # already demonstrated they are somewhere unexpected.
+        main_dir = Path(__file__).resolve().parent.parent  # tests/ -> Main/
         raise pytest.UsageError(
-            "Unsupported test environment — this suite would report green "
+            # ASCII only below: this is read in a Windows console, where the
+            # active code page turns a non-ASCII dash into a replacement
+            # character and makes the message look broken.
+            "Unsupported test environment -- this suite would report green "
             "while silently collecting fewer tests:\n"
             + "\n".join(f"  - {problem}" for problem in problems)
-            + "\n\nRun it the supported way:  Main\\run_tests.bat"
-            + "\n(or Main\\venv\\Scripts\\python.exe -m pytest)"
+            + f"\n\nRun it the supported way:  {main_dir / 'run_tests.bat'}"
+            + f"\n(equivalently: {main_dir / 'venv' / 'Scripts' / 'python.exe'}"
+            " -m pytest)"
         )
 
 from dnd_bot.models import Character, AbilityScores, HitPoints, HitDice, SpellSlots

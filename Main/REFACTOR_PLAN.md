@@ -699,10 +699,20 @@ both **DONE** (`c0b3d67`; the three helpers now route via `_resolve_player_chara
   orphaning it). Any fixture opening a `Database` must `yield` + `await db.disconnect()`,
   not `return`. This caused days of "the tests never finish" confusion.
 - **Don't kill "hung" pytest reflexively** — it's usually just slow-to-flush; wait for the
-  result. Genuinely stuck = a process alive >2 min for a ~20s suite.
-- **Bare `python -c "import dnd_bot.bot.cogs.*"` fails** with `discord has no attribute
-  'ApplicationContext'` — a py-cord vs discord.py env quirk, NOT a real error. The suite
-  never imports the cogs; don't chase it.
+  result. The suite runs ~75s at 1618 tests, so genuinely stuck = alive well past that.
+  `--timeout=45` now caps any single test, which turns a real hang into a named failure
+  instead of a guess about how long to wait. Note also that piping a long run through
+  `tail` buffers everything, so a process that has already raised can *look* hung —
+  redirect to a file and read the file.
+- **`discord has no attribute 'ApplicationContext'` is a real error, not a quirk.**
+  (Superseded 2026-07-27; the previous note here said the opposite and cost a session of
+  false green.) It means the interpreter is not the venv: system python is 3.10.11, below
+  this project's `requires-python >= 3.11`, and carries py-cord *and* discord.py
+  contesting the `discord` namespace. The suite **does** import the cogs — four tests,
+  including the whole Discord frontend, are silently uncollected without them, so a
+  mutation to any cog survives such a run. `tests/conftest.py` now refuses that
+  environment in `pytest_sessionstart` rather than skipping past it. Use
+  `run_tests.bat`.
 - **Type gate exists: `run_typecheck.bat`** (= `venv\Scripts\python -m mypy dnd_bot`,
   must exit 0). Tier map in `pyproject.toml [tool.mypy]`: STRICT on `models`/`data`/
   `memory`/`config.py` — keep those at zero errors; `ignore_errors` (commented why) on

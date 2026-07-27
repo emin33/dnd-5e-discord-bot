@@ -1,0 +1,73 @@
+# The suite and the type gate, run by something other than a person remembering to.
+#
+# Until this existed, `run_tests.bat` was a convention: it made a *wrong* run
+# fail loudly, but nothing made a run *happen*. Both gates below already exist
+# locally -- this only removes the requirement that someone choose to run them.
+#
+# Notes on the two non-obvious steps:
+#
+#   * The SRD data is a separate repository. 22 tests read it, so it is checked
+#     out as a sibling of Main/, which is where `Settings.srd_data_path`
+#     ("../5e-database/src/2014") looks by default. It is pinned to the exact
+#     commit the suite is green against locally, so upstream SRD edits cannot
+#     turn this red without a deliberate bump here.
+#
+#   * DISCORD_BOT_TOKEN is required by Settings and has no default, but nothing
+#     in the suite connects to Discord. A dummy value satisfies the field. No
+#     secrets are needed by this workflow -- if a change to it ever seems to
+#     need one, that is a signal the suite started reaching the network.
+#
+# Python 3.11 is this project's declared floor (`requires-python`). Local
+# development runs 3.13, so CI covering the floor is the complementary choice:
+# between them, both ends of the supported range get exercised.
+
+name: tests
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  suite:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out the bot
+        uses: actions/checkout@v4
+
+      - name: Check out the SRD data as a sibling of Main/
+        uses: actions/checkout@v4
+        with:
+          repository: 5e-bits/5e-database
+          ref: 16bbc79c5c4252deb52052dff03495232a4cc049
+          path: 5e-database
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: Main/pyproject.toml
+
+      - name: Install
+        working-directory: Main
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      # tests/conftest.py refuses an unsupported interpreter in
+      # pytest_sessionstart, so a bad environment fails here rather than
+      # reporting a green run over a smaller set of tests.
+      - name: Suite
+        working-directory: Main
+        env:
+          DISCORD_BOT_TOKEN: ci-not-a-real-token
+        run: python -m pytest tests -q --timeout=45
+
+      - name: Type gate
+        working-directory: Main
+        env:
+          DISCORD_BOT_TOKEN: ci-not-a-real-token
+        run: python -m mypy dnd_bot
