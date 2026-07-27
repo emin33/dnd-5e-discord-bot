@@ -524,8 +524,14 @@ class GameSessionManager:
         except Exception as e:
             logger.warning("npc_preload_failed", error=str(e), exc_info=True)
 
-    async def _persist_world_snapshot(self, session: GameSession) -> None:
+    async def _persist_world_snapshot(self, session: GameSession) -> bool:
         """Write the session's snapshot envelope (ROOT-3, DF-5).
+
+        Returns whether the write actually landed. The swallow-and-log
+        policy below is unchanged — per-turn callers ignore this and keep
+        playing — but a caller with no next turn to retry on (the sourcebook
+        install, which clears its pending-retry marker once durable) needs to
+        know the difference between "persisted" and "logged and moved on".
 
         Called once per processed turn. The envelope carries the world
         state (via the store's owned format) plus the session-level facts
@@ -557,6 +563,7 @@ class GameSessionManager:
             }
             session_repo = await get_session_repo()
             await session_repo.save_world_snapshot(session.id, json.dumps(envelope))
+            return True
         except Exception as e:
             logger.error(
                 "persist_failed",
@@ -565,6 +572,7 @@ class GameSessionManager:
                 error=str(e),
                 exc_info=True,
             )
+            return False
 
     async def _rescope_scene_registry_after_move(
         self,

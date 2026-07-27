@@ -852,16 +852,24 @@ class CampaignCog(commands.Cog):
             )
 
     @staticmethod
-    async def _snapshot(session_manager, session, campaign_id: str, stage: str) -> None:
-        """Persist the world, best-effort. Never fails the session start."""
+    async def _snapshot(
+        session_manager, session, campaign_id: str, stage: str
+    ) -> bool:
+        """Persist the world. Never fails the start; reports whether it landed.
+
+        The bool matters: the caller spends the sourcebook retry marker on
+        it, and "logged the failure and moved on" must not be mistaken for
+        "durable".
+        """
         try:
-            await session_manager._persist_world_snapshot(session)
+            return bool(await session_manager._persist_world_snapshot(session))
         except Exception as e:
             logger.warning(
                 "seeded_world_snapshot_failed",
                 campaign_id=campaign_id, stage=stage,
                 error=str(e), exc_info=True,
             )
+            return False
 
     async def _install_sourcebook(
         self,
@@ -954,19 +962,13 @@ class CampaignCog(commands.Cog):
             authored_scene, book_title = await self._install_sourcebook(
                 session, campaign, chosen, interaction,
             )
-            if authored_scene:
-                # Intent is spent: the install bound the campaign for real,
-                # so leaving it pending would reinstall on every later start.
-                _campaign_sourcebook.pop(campaign.id, None)
-                try:
-                    await (await get_campaign_repo()).set_pending_sourcebook(
-                        campaign.id, None,
-                    )
-                except Exception as e:
-                    logger.warning(
-                        "sourcebook_intent_not_cleared",
-                        campaign_id=campaign.id, error=str(e),
-                    )
+            # Intent is deliberately NOT cleared here. It is the only retry
+            # marker: clearing it the moment the install returned left a
+            # window where the campaign was bound, nothing was snapshotted,
+            # and nothing recorded that a book was owed — recovery ends a
+            # snapshotless session and the next start sees no pending book.
+            # It is cleared below, once a snapshot has CONFIRMED the seeded
+            # world is durable.
 
         # Auto-join all players who have characters
         for character in characters:
@@ -986,7 +988,27 @@ class CampaignCog(commands.Cog):
         # recover from. Taking it before the joins recovered the authored
         # room with nobody in it.
         if authored_scene:
-            await self._snapshot(session_manager, session, campaign.id, "seeded")
+            durable = await self._snapshot(
+                session_manager, session, campaign.id, "seeded",
+            )
+            if durable:
+                # Only now is the book safely installed AND recoverable, so
+                # only now is the retry marker spent.
+                _campaign_sourcebook.pop(campaign.id, None)
+                try:
+                    await (await get_campaign_repo()).set_pending_sourcebook(
+                        campaign.id, None,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "sourcebook_intent_not_cleared",
+                        campaign_id=campaign.id, error=str(e),
+                    )
+            else:
+                logger.warning(
+                    "seeded_world_not_durable_intent_kept",
+                    campaign_id=campaign.id,
+                )
 
         # Build player list for embed
         player_lines = []
@@ -1080,7 +1102,20 @@ class CampaignCog(commands.Cog):
                             reason=verdict.rejection_reason,
                         )
                         continue
-                    await executor.execute(effect)
+                    result = await executor.execute(effect)
+                    # SYNC, the third leg the turn pipeline has and this
+                    # path was missing. Executing alone puts the effect in
+                    # the scene registry only: a spawned object reached the
+                    # registry while world state -- and therefore the
+                    # snapshot taken moments later -- had no scene item at
+                    # all. Duplicates are skipped exactly as the turn path
+                    # skips them.
+                    if (
+                        getattr(result, "success", False)
+                        and not getattr(result, "was_duplicate", False)
+                        and session.world_store is not None
+                    ):
+                        session.world_store.apply_effect(effect)
 
                 # Again: the opening effects just mutated the world (NPCs on
                 # stage, objects spawned), and the pre-narrator snapshot

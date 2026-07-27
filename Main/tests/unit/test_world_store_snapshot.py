@@ -8,6 +8,7 @@ scene_items, established_facts, recent_events, and the live NPC roster
 ... gone" after restart).
 """
 
+import pytest
 import json
 
 import pytest
@@ -210,3 +211,32 @@ def test_a_forced_reseed_with_no_description_does_not_keep_the_old_scenery():
 
     assert state.current_location == "Copper Finch"
     assert state.location_description == ""
+
+
+@pytest.mark.asyncio
+async def test_a_snapshot_reports_whether_it_actually_landed():
+    """The bool the sourcebook install spends its retry marker on.
+
+    `_persist_world_snapshot` logs and swallows -- correct per turn, where
+    the next turn retries -- but a seeded install has no next turn, and
+    "logged the failure and moved on" must not read as "durable".
+    """
+    from unittest.mock import patch
+    from dnd_bot.game.session import GameSession, GameSessionManager
+    from dnd_bot.game.world_state import WorldState
+
+    manager = GameSessionManager.__new__(GameSessionManager)
+    session = GameSession(id="s", channel_id=1, guild_id=1, campaign_id="c")
+    session.world_state = WorldState(current_location="Copper Finch")
+
+    class _OkRepo:
+        async def save_world_snapshot(self, *_a, **_k): return None
+
+    class _BrokenRepo:
+        async def save_world_snapshot(self, *_a, **_k):
+            raise RuntimeError("disk full")
+
+    with patch("dnd_bot.game.session.get_session_repo", return_value=_OkRepo()):
+        assert await manager._persist_world_snapshot(session) is True
+    with patch("dnd_bot.game.session.get_session_repo", return_value=_BrokenRepo()):
+        assert await manager._persist_world_snapshot(session) is False
